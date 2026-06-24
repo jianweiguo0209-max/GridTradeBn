@@ -1,0 +1,14 @@
+{
+  "apps": [
+      {
+          "args": "",
+          "name": "ok_grid0_monitor",
+          "script": "/root/git/Grid_ok/account_0/monitor.py",
+          "exec_interpreter": "python",
+          "merge_logs": false,
+          "watch": false,
+          "error": "/root/quant/logs/ok_grid0_m.pro.error.log",
+          "out_file": "/root/quant/logs/ok_grid0_m.pro.out.log"
+      }
+  ]
+}

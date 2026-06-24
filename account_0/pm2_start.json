@@ -1,0 +1,14 @@
+{
+  "apps": [
+      {
+          "args": "",
+          "name": "ok_grid0_start",
+          "script": "/root/git/Grid_ok/account_0/startup.py",
+          "exec_interpreter": "python",
+          "merge_logs": false,
+          "watch": false,
+          "error": "/root/quant/logs/ok_grid0_s.pro.error.log",
+          "out_file": "/root/quant/logs/ok_grid0_s.pro.out.log"
+      }
+  ]
+}
