@@ -23,15 +23,16 @@ BAR = '1H'
 # 选币因子（与实盘 startup.py:50 硬编码保持一致）
 FACTORS = {'Reg_v2_2': True, 'Sgcz_2': True}
 
-# 时区：必须与实盘服务器一致（通常 UTC=0）。account_0 选币函数内部读机器时区，
-# 运行本程序时请用 `TZ=UTC python prewarm.py ...` 保证 parity。
-UTC_OFFSET = 0
+# 时区：必须与实盘服务器一致。经 orderInfo.pkl 实盘记录验证，本部署服务器跑在 UTC+8（北京时间）。
+# account_0 选币函数内部读机器时区，运行本程序时必须用 `TZ=Asia/Shanghai python prewarm.py ...`，
+# 且此处 UTC_OFFSET 必须与之一致（=8），否则 offset 与因子时间轴漂移、parity 失效。
+UTC_OFFSET = 8
 
 # S0 预热往前多取的暖机天数：选币需 max_candle_num 根 1H bar + 因子回看，留足缓冲。
 WARMUP_DAYS = 12
 
-# 并发（OKX 公共端点限频，worker 不宜过大）
-S0_WORKERS = 8
+# 并发（OKX 公共端点限频 ~20次/2s，worker 不宜过大；实测 8 偶发 50011，降到 5 更稳）
+S0_WORKERS = 5
 
 # 本地代理（服务器上跑置 None）
 PROXIES = None

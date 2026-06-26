@@ -8,8 +8,8 @@
             stage_instruments 票池过滤+冻结复用、_build_tick_manifest 跨天去重、_done_run_times 续跑
 - selection_replay：compute_offset、replay_selection 端到端复用实盘选币管线（合成数据）
 
-运行：  TZ=UTC ../.venv/bin/python -m unittest discover -s tests -v
-（必须 TZ=UTC，与实盘服务器时区一致，否则选币 parity 漂移）
+运行：  TZ=Asia/Shanghai ../.venv/bin/python -m unittest discover -s tests -v
+（必须用与实盘服务器一致的 TZ；本部署为 UTC+8 → TZ=Asia/Shanghai，否则选币 parity 漂移）
 """
 import os
 import sys
@@ -299,6 +299,78 @@ class TestPrewarmMeta(Base):
         self.assertEqual(prewarm._done_run_times(os.path.join(mdir, 'nope.csv')), set())
 
 
+# ===================== prewarm S2: 资金费 + 标记价 =====================
+def make_mark_df(symbol, start, n_hours):
+    df = make_candle_df(symbol, start, n_hours)[['ts', 'open', 'high', 'low', 'close']].copy()
+    df['symbol'] = symbol
+    return df[['ts', 'symbol', 'open', 'high', 'low', 'close']]
+
+
+def make_funding_df(symbol, start, n):
+    ts0 = int(pd.Timestamp(start).value // 1_000_000)
+    rows = [{'ts': ts0 + i * 8 * 3600000, 'symbol': symbol,
+             'fundingRate': 0.0001 * (i + 1), 'realizedRate': 0.0001 * (i + 1)} for i in range(n)]
+    return pd.DataFrame(rows)
+
+
+class TestPrewarmS2(Base):
+    def _write_candidates(self, mdir):
+        os.makedirs(mdir, exist_ok=True)
+        pd.DataFrame([
+            {'run_time': '2024-01-01 18:00:00', 'offset': 6, 'symbol': 'AAA-USDT-SWAP', 'rank': 1.0},
+            {'run_time': '2024-01-02 06:00:00', 'offset': 6, 'symbol': 'AAA-USDT-SWAP', 'rank': 1.0},
+            {'run_time': '2024-01-03 00:00:00', 'offset': 0, 'symbol': '', 'rank': None},
+        ]).to_csv(os.path.join(mdir, 'candidates.csv'), index=False)
+
+    def test_symbol_holding_ranges(self):
+        mdir = os.path.join(self.tmp, 'manifest')
+        self._write_candidates(mdir)
+        ranges = prewarm._symbol_holding_ranges(os.path.join(mdir, 'candidates.csv'), '12H', buffer_days=1)
+        self.assertIn('AAA-USDT-SWAP', ranges)
+        st, en = ranges['AAA-USDT-SWAP']
+        # 最早 run_time 18:00 -1天缓冲；最晚 06:00+12H+1天缓冲
+        self.assertLessEqual(st, pd.Timestamp('2023-12-31 18:00:00'))
+        self.assertGreaterEqual(en, pd.Timestamp('2024-01-03 18:00:00'))
+        self.assertNotIn('', ranges)  # 空标记行不计入
+
+    def test_fetch_symbol_range_idempotent_and_empty(self):
+        calls = {'n': 0}
+
+        def fake_mark(sym, s_ms, e_ms, px):
+            calls['n'] += 1
+            return make_mark_df(sym, '2024-01-01', 48)  # 2 天
+
+        sym, warmed, status = prewarm._fetch_symbol_range(
+            self.cache, 'mark', 'AAA-USDT-SWAP', pd.Timestamp('2024-01-01'), pd.Timestamp('2024-01-02'),
+            fake_mark, prewarm.MARK_COLS, None)
+        self.assertEqual(status, 'fetched'); self.assertEqual(warmed, 2); self.assertEqual(calls['n'], 1)
+        # 再跑：已缓存 → skip，不再取数
+        _, _, status2 = prewarm._fetch_symbol_range(
+            self.cache, 'mark', 'AAA-USDT-SWAP', pd.Timestamp('2024-01-01'), pd.Timestamp('2024-01-02'),
+            fake_mark, prewarm.MARK_COLS, None)
+        self.assertEqual(status2, 'skip'); self.assertEqual(calls['n'], 1)
+        # 空数据 → 空哨兵
+        _, _, status3 = prewarm._fetch_symbol_range(
+            self.cache, 'funding', 'DEAD-USDT-SWAP', pd.Timestamp('2024-01-01'), pd.Timestamp('2024-01-01'),
+            lambda *a: pd.DataFrame(columns=prewarm.FUNDING_COLS), prewarm.FUNDING_COLS, None)
+        self.assertEqual(status3, 'empty')
+        self.assertTrue(self.cache.exists('funding', 'DEAD-USDT-SWAP', '2024-01-01'))
+
+    def test_stage_funding_mark_populates_both(self):
+        mdir = os.path.join(self.tmp, 'manifest')
+        self._write_candidates(mdir)
+        orig_m, orig_f = H.fetch_mark_candles_range, H.fetch_funding_rate_range
+        H.fetch_mark_candles_range = lambda sym, s, e, bar='1H', proxies=None: make_mark_df(sym, '2023-12-31', 24 * 6)
+        H.fetch_funding_rate_range = lambda sym, s, e, proxies=None: make_funding_df(sym, '2023-12-31', 18)
+        try:
+            prewarm.stage_funding_mark(self.cache, mdir, '12H', '1H', workers=2, proxies=None, log=lambda *a: None)
+            # 选中币 AAA 的 mark 与 funding 都应有缓存
+            self.assertTrue(self.cache.exists('mark', 'AAA-USDT-SWAP', '2024-01-01'))
+            self.assertTrue(self.cache.exists('funding', 'AAA-USDT-SWAP', '2024-01-01'))
+        finally:
+            H.fetch_mark_candles_range, H.fetch_funding_rate_range = orig_m, orig_f
+
+
 # ===================== selection_replay：parity 端到端 =====================
 class TestSelectionReplay(Base):
     def _load_cfg(self):
@@ -321,8 +393,8 @@ class TestSelectionReplay(Base):
         run_times = [pd.Timestamp('2024-01-13 06:00:00'), pd.Timestamp('2024-01-13 12:00:00')]
         selected = []
 
-        def on_select(rt, offset, symbol, rank):
-            selected.append((str(rt), offset, symbol))
+        def on_select(rt, offset, row):
+            selected.append((str(rt), offset, row['symbol']))
 
         processed = SR.replay_selection(self.cache, symbols, run_times, cfg, C.FACTORS,
                                         utc_offset=0, on_select=on_select, log=lambda *a: None)

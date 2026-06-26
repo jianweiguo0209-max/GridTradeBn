@@ -1,5 +1,5 @@
 import ccxt
-from config import OK_CONFIG, strategy_config, rebalance, njob
+from config import OK_CONFIG, strategy_config, rebalance, njob, apply_simulated_mode
 from utils.functions import *
 from api.kline import ccxt_fetch_ok_exchangeinfo
 from api.status import check_ok_service_status
@@ -10,8 +10,8 @@ warnings.filterwarnings('ignore')
 
 # ===创建ok交易所
 exchange = ccxt.okex5(OK_CONFIG)
-# 模拟盘配置（需要配置模拟盘的apikey）
-# exchange.set_sandbox_mode(True)
+# 模拟盘配置：由 .env 的 OK_SIMULATED 控制（模拟盘密钥须置 1），实盘时为 no-op
+apply_simulated_mode(exchange)
 
 
 def run():

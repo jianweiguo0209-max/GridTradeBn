@@ -27,13 +27,18 @@
 ### 1.2 ⚠️ 时区（最容易踩的坑）
 
 `account_0` 的选币函数内部读机器时区（`time.localtime()`）。**必须用与实盘服务器一致的时区运行**，
-否则因子时间轴会漂移、与实盘选币结果不一致（parity 失效）。实盘服务器通常是 UTC，所以：
+否则 offset 与因子时间轴会漂移、与实盘选币结果不一致（parity 失效）。
+
+> **本部署实盘服务器跑在 UTC+8（北京时间）**——经 `data/order/orderInfo.pkl` 的历史开仓记录
+> 反推确认（只有 `utc_offset=8` 时 offset 公式才能复现记录里的 offset 列）。因此：
+> - 运行预热必须用 `TZ=Asia/Shanghai`（**不是** `TZ=UTC`）；
+> - `bt_config.py` 的 `UTC_OFFSET` 必须 `=8`，与之一致。
 
 ```bash
-TZ=UTC <python> prewarm.py ...
+TZ=Asia/Shanghai <python> prewarm.py ...
 ```
 
-文档下面所有命令都带 `TZ=UTC`，请勿省略。
+文档下面所有命令都带 `TZ=Asia/Shanghai`，请勿省略。若将来迁到 UTC 服务器，需同时改这里和 `UTC_OFFSET`。
 
 ---
 
@@ -43,7 +48,7 @@ TZ=UTC <python> prewarm.py ...
 cd backtest
 
 # 用 1 周的小窗口先跑通整条流程（强烈建议首次这么做）
-TZ=UTC ../.venv/bin/python prewarm.py --stage all \
+TZ=Asia/Shanghai ../.venv/bin/python prewarm.py --stage all \
     --start "2024-01-01" --end "2024-01-08"
 ```
 
@@ -87,7 +92,7 @@ prewarm.py [--stage {all,s0,s1,s3}]
 冻结后重复运行直接复用（除非 `--refresh-instruments`）。
 
 ```bash
-TZ=UTC ../.venv/bin/python prewarm.py --stage s3
+TZ=Asia/Shanghai ../.venv/bin/python prewarm.py --stage s3
 ```
 
 ### S0 — 全票池 1H K线
@@ -95,7 +100,7 @@ TZ=UTC ../.venv/bin/python prewarm.py --stage s3
 幂等：已缓存的天直接跳过；单个币失败只告警+计数，**不中断整次预热**。
 
 ```bash
-TZ=UTC ../.venv/bin/python prewarm.py --stage s0 --start "2024-01-01" --end "2024-02-01"
+TZ=Asia/Shanghai ../.venv/bin/python prewarm.py --stage s0 --start "2024-01-01" --end "2024-02-01"
 ```
 
 ### S1 — 候选发现 + tick 清单
@@ -104,7 +109,15 @@ TZ=UTC ../.venv/bin/python prewarm.py --stage s0 --start "2024-01-01" --end "202
 幂等：已回放过的 run_time 跳过，可断点续跑。
 
 ```bash
-TZ=UTC ../.venv/bin/python prewarm.py --stage s1
+TZ=Asia/Shanghai ../.venv/bin/python prewarm.py --stage s1
+```
+
+### S2 — 资金费 + 标记价（条件取数）
+依赖 S1 的候选。只对**选中币的持仓周期** `[run_time, run_time+period]`（含 ±1 天缓冲覆盖时区偏移）
+取资金费率(`funding`)和标记价1H(`mark`)，按天落缓存。永续 PnL 必需。幂等、有界并发、空哨兵。
+
+```bash
+TZ=Asia/Shanghai ../.venv/bin/python prewarm.py --stage s2
 ```
 
 > S1 是纯本地计算（用 S0 的缓存），不打网络。实盘每小时触发一次选币，回放一年 ≈ 8760 次
@@ -118,6 +131,8 @@ TZ=UTC ../.venv/bin/python prewarm.py --stage s1
 data/bt_cache/
   instruments/SWAP/frozen.parquet        # S3：冻结的合约规格
   1H/<symbol>/<YYYY-MM-DD>.parquet        # S0：按天 1H K线（无数据的天为 0 行空哨兵）
+  mark/<symbol>/<YYYY-MM-DD>.parquet      # S2：标记价 1H（仅选中币持仓周期）
+  funding/<symbol>/<YYYY-MM-DD>.parquet   # S2：资金费率（仅选中币持仓周期）
 data/bt_manifest/
   candidates.csv                          # S1：选币候选
   tick_manifest.csv                       # S1：tick 下载清单
@@ -155,7 +170,7 @@ data/bt_manifest/
 
 ```bash
 cd backtest
-TZ=UTC ../.venv/bin/python -W ignore -m unittest discover -s tests -v
+TZ=Asia/Shanghai ../.venv/bin/python -W ignore -m unittest discover -s tests -v
 ```
 
 20 个用例，覆盖 cache / okx_history / prewarm / selection_replay 全部流程，
@@ -167,7 +182,7 @@ TZ=UTC ../.venv/bin/python -W ignore -m unittest discover -s tests -v
 
 | 现象 | 原因 / 处理 |
 |---|---|
-| 选币结果与实盘对不上 | 八成是没设 `TZ=UTC`（或与实盘服务器时区不一致）。务必加 `TZ=UTC` |
+| 选币结果与实盘对不上 | 八成是时区不对：本部署须 `TZ=Asia/Shanghai` 且 `UTC_OFFSET=8`（见 §1.2），不是 UTC |
 | `ModuleNotFoundError: talib / pyarrow / ccxt` | 没用 venv 跑。用 `../.venv/bin/python`，或在实盘环境安装依赖 |
 | `resample(base=)` 报 TypeError | pandas ≥ 2.0。需降到 `<2.0`（本地用 1.5.3） |
 | S0 大量 `[WARN] xxx 取数失败` | OKX 限频或网络抖动。调小 `--workers`，或重跑（幂等，只补失败的） |
@@ -175,6 +190,26 @@ TZ=UTC ../.venv/bin/python -W ignore -m unittest discover -s tests -v
 | 本地需要代理 | 在 `bt_config.py` 设 `PROXIES`；服务器上置 `None` |
 
 ---
+
+## 11. 网格成交仿真器（grid_sim.py，v1 原型）
+
+回测出 PnL 的核心：给定网格参数 + 价格路径(OHLC)，逐格模拟买卖、持仓 MTM、TP/SL 终止，
+输出 pnlRatio 轨迹。`simulate_grid(params, bars, fee_rate)` 是纯函数，13 个不变量测试覆盖
+（振荡赚钱 / 崩盘SL / 拉盘TP / 平盘≈0 / 账目自洽 / 手续费）。`apply_exit_rules()` 在 pnlRatio
+轨迹上套用实盘 stop_loss.py 的固定止盈损 + 回撤止盈 L1/L2（复用实盘阈值保证 parity）。
+
+### v1 建模假设（务必知晓）
+- 等比布网(runType=2)，每格固定基础数量（OKX 实际可能等保证金分配，**最大待校准点**）。
+- 中性初始仓位：开网按 entry 买入上方线数对应库存。
+- 成交价=网格线价（无滑点/无部分成交），手续费双边按成交额计。
+- **bar 内路径近似**：阳线假设低→高、阴线高→低。1H bar 误差大，接 1m 可显著降低。
+- 资金费、pv 爆量主动止损未建模（需 S2 资金费 + 1m 数据）。
+
+### ⚠️ fidelity 校准缺口（最重要）
+仿真器目前只验证了**逻辑自洽与方向正确**，**没有**验证「与 OKX 实际 PnL 吻合」。
+校准需要 `data/order/gridResult.csv`（开仓参数 + OKX 实际平仓 totalPnl/pnlRatio）——
+本地暂无（只在实盘服务器，或可经 `tradingBot/grid/orders-algo-history` 拉账户真实平仓结果）。
+**在用仿真 PnL 下任何结论前，必须先用 gridResult.csv 量化仿真偏差。**
 
 ## 10. 已知边界
 

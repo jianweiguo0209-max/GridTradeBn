@@ -11,10 +11,10 @@
   - 幂等短路：每天先 cache.exists() 跳过；S1 跳过已回放的 run_time（可断点续跑）
   - 原子写 + 空哨兵：见 cache.py
 
-用法（务必与实盘服务器同时区，通常 UTC）：
-  TZ=UTC python prewarm.py --stage all
-  TZ=UTC python prewarm.py --stage s0 --start "2024-01-01" --end "2024-02-01"
-  TZ=UTC python prewarm.py --stage s1
+用法（务必与实盘服务器同时区；本部署经 orderInfo.pkl 确认为 UTC+8，须 TZ=Asia/Shanghai）：
+  TZ=Asia/Shanghai python prewarm.py --stage all
+  TZ=Asia/Shanghai python prewarm.py --stage s0 --start "2024-01-01" --end "2024-02-01"
+  TZ=Asia/Shanghai python prewarm.py --stage s1
 """
 import argparse
 import os
@@ -156,9 +156,9 @@ def stage_select(cache, universe, start_dt, end_dt, strategy_config, factors,
         # 即便某 run_time 没选中任何币，也要标记为已完成 → 写一个空标记行避免重复回放
         seen_rt = set()
 
-        def on_select(run_time, offset, symbol, rank):
+        def on_select(run_time, offset, row):
             seen_rt.add(str(run_time))
-            fh.write('%s,%s,%s,%s\n' % (run_time, offset, symbol, rank))
+            fh.write('%s,%s,%s,%s\n' % (run_time, offset, row['symbol'], row.get('rank')))
             fh.flush()
 
         try:
@@ -199,6 +199,99 @@ def _build_tick_manifest(candidates_csv, period, manifest_dir, log=print):
     log('[S1]   候选 (symbol,run_time) 条数=%d, 去重币数=%d' % (len(df), df['symbol'].nunique()))
 
 
+# ===================== S2: 条件取数（资金费 + 标记价）=====================
+# 只对 S1 选中币的持仓周期取数（设计文档「Stage 2 条件取数」），per-day 缓存、幂等。
+MARK_COLS = ['ts', 'symbol', 'open', 'high', 'low', 'close']
+FUNDING_COLS = ['ts', 'symbol', 'fundingRate', 'realizedRate']
+
+
+def _fetch_symbol_range(cache, namespace, symbol, start_dt, end_dt, fetch_fn, columns, proxies):
+    """通用：把某 symbol [start,end] 的数据按天落 namespace 缓存（幂等 + 空哨兵）。"""
+    days = [d.strftime('%Y-%m-%d') for d in pd.date_range(start_dt.normalize(), end_dt.normalize(), freq='D')]
+    missing = [d for d in days if not cache.exists(namespace, symbol, d)]
+    if not missing:
+        return symbol, 0, 'skip'
+    lo = pd.Timestamp(min(missing) + ' 00:00:00')
+    hi = pd.Timestamp(max(missing) + ' 23:59:59')
+    df = fetch_fn(symbol, _to_ms(lo), _to_ms(hi), proxies)
+    if df is None or df.empty:
+        for d in missing:
+            cache.write_empty(namespace, symbol, d, columns)
+        return symbol, len(missing), 'empty'
+    df = df.copy()
+    df['day'] = pd.to_datetime(df['ts'], unit='ms').dt.strftime('%Y-%m-%d')
+    keep = [c for c in columns if c in df.columns]
+    by_day = {d: g[keep] for d, g in df.groupby('day')}
+    warmed = 0
+    for d in missing:
+        if d in by_day and not by_day[d].empty:
+            cache.write(namespace, symbol, d, by_day[d].reset_index(drop=True))
+            warmed += 1
+        else:
+            cache.write_empty(namespace, symbol, d, columns)
+    return symbol, warmed, 'fetched'
+
+
+def _symbol_holding_ranges(candidates_csv, period, buffer_days=1):
+    """从候选派生每个币需要取数的 [min_start, max_end]（含 ±buffer 天，覆盖时区偏移）。"""
+    if not os.path.exists(candidates_csv):
+        return {}
+    df = pd.read_csv(candidates_csv)
+    df = df[df['symbol'].notna() & (df['symbol'].astype(str) != '')]
+    if df.empty:
+        return {}
+    period_td = pd.to_timedelta(period)
+    buf = pd.Timedelta(days=buffer_days)
+    ranges = {}
+    for _, r in df.iterrows():
+        rt = pd.Timestamp(r['run_time'])
+        s = r['symbol']
+        start = rt - buf
+        end = rt + period_td + buf
+        if s not in ranges:
+            ranges[s] = [start, end]
+        else:
+            ranges[s][0] = min(ranges[s][0], start)
+            ranges[s][1] = max(ranges[s][1], end)
+    return ranges
+
+
+def stage_funding_mark(cache, manifest_dir, period, bar, workers, proxies, log=print):
+    candidates_csv = os.path.join(manifest_dir, 'candidates.csv')
+    ranges = _symbol_holding_ranges(candidates_csv, period)
+    if not ranges:
+        log('[S2] 无候选，跳过资金费/标记价取数'); return
+    log('[S2] 条件取数: %d 个选中币的持仓周期（资金费 + 标记价 %s），并发 %d' % (len(ranges), bar, workers))
+    t0 = time.time()
+
+    mark_fn = lambda sym, s, e, px: H.fetch_mark_candles_range(sym, s, e, bar=bar, proxies=px)
+    fund_fn = lambda sym, s, e, px: H.fetch_funding_rate_range(sym, s, e, proxies=px)
+
+    jobs = []  # (namespace, symbol, start, end, fetch_fn, cols)
+    for s, (st, en) in ranges.items():
+        jobs.append(('mark', s, st, en, mark_fn, MARK_COLS))
+        jobs.append(('funding', s, st, en, fund_fn, FUNDING_COLS))
+
+    counts = {'fetched': 0, 'skip': 0, 'empty': 0, 'failed': 0}
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = {ex.submit(_fetch_symbol_range, cache, ns, s, st, en, fn, cols, proxies): (ns, s)
+                for (ns, s, st, en, fn, cols) in jobs}
+        done = 0
+        for fut in as_completed(futs):
+            ns, s = futs[fut]
+            done += 1
+            try:
+                _, _w, status = fut.result()
+                counts[status] += 1
+            except Exception as e:  # noqa
+                counts['failed'] += 1
+                log('[S2][WARN] %s %s 取数失败: %s' % (ns, s, str(e)))
+            if done % 100 == 0:
+                log('[S2] 进度 %d/%d' % (done, len(jobs)))
+    log('[S2] 完成: fetched=%d skip=%d empty=%d failed=%d 耗时=%.1fs'
+        % (counts['fetched'], counts['skip'], counts['empty'], counts['failed'], time.time() - t0))
+
+
 # ===================== main =====================
 def _load_strategy_config():
     """从 account_0/config.py 取 strategy_config（period/weight_list/choose_symbols/max_candle_num）。"""
@@ -211,8 +304,8 @@ def _load_strategy_config():
 
 
 def main():
-    ap = argparse.ArgumentParser(description='OKX 网格回测数据预热 (S0/S1/S3)')
-    ap.add_argument('--stage', choices=['all', 's0', 's1', 's3'], default='all')
+    ap = argparse.ArgumentParser(description='OKX 网格回测数据预热 (S0/S1/S2/S3)')
+    ap.add_argument('--stage', choices=['all', 's0', 's1', 's2', 's3'], default='all')
     ap.add_argument('--start', default=C.WINDOW_START)
     ap.add_argument('--end', default=C.WINDOW_END)
     ap.add_argument('--bar', default=C.BAR)
@@ -251,6 +344,10 @@ def main():
     if args.stage in ('all', 's1'):
         stage_select(cache, universe, window_start, window_end, strategy_config,
                      C.FACTORS, C.UTC_OFFSET, args.manifest_dir)
+
+    if args.stage in ('all', 's2'):
+        # S2 依赖 S1 的候选；单独跑 s2 时复用已有 candidates.csv
+        stage_funding_mark(cache, args.manifest_dir, period, args.bar, args.workers, proxies)
 
     print('预热结束。')
 

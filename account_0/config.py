@@ -107,5 +107,18 @@ OK_CONFIG = {
     'proxies': PROXIES,
 }
 
+# 是否模拟盘(demo/simulated-trading)：由 .env 的 OK_SIMULATED 控制，模拟盘密钥必须置 1
+OK_SIMULATED = os.getenv('OK_SIMULATED', '0').strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def apply_simulated_mode(exchange):
+    """模拟盘：给该 exchange 的所有请求加 x-simulated-trading:1 头并返回它。
+    注意：ccxt 2.0.58 的 set_sandbox_mode 不会加此头，故手动设置 exchange.headers。
+    实盘(OK_SIMULATED=0)时为 no-op。"""
+    if OK_SIMULATED:
+        exchange.headers = dict(getattr(exchange, 'headers', None) or {}, **{'x-simulated-trading': '1'})
+        print('[OK_SIMULATED] 已启用模拟盘模式 (x-simulated-trading:1)')
+    return exchange
+
 # 企业微信机器人
 wechat_webhook_url = os.getenv('WECHAT_WEBHOOK_URL', '')

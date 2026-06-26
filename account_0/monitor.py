@@ -3,7 +3,7 @@ import traceback
 import ccxt
 import pandas as pd
 from datetime import datetime
-from config import stop_loss_period, OK_CONFIG, strategy_config
+from config import stop_loss_period, OK_CONFIG, strategy_config, apply_simulated_mode
 from utils.functions import query_grid, close_grid, calc_stop_grid, update_pnlRatio
 from utils.notification import send_msg_q_wechat
 from utils.tools import retry_wrapper, sleep_until_run_time
@@ -14,8 +14,8 @@ warnings.filterwarnings('ignore')
 
 # ===创建ok交易所
 exchange = ccxt.okex5(OK_CONFIG)
-# 模拟盘配置（需要配置模拟盘的apikey）
-# exchange.set_sandbox_mode(True)
+# 模拟盘配置：由 .env 的 OK_SIMULATED 控制（模拟盘密钥须置 1），实盘时为 no-op
+apply_simulated_mode(exchange)
 
 
 def main():

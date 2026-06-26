@@ -9,7 +9,8 @@ Point-in-time：构造每个 run_time 的 symbol_candle_data 时，严格只用
 这与实盘 api/kline.py:88 的截断逻辑一致。
 
 时区警告：account_0 的选币函数内部读 time.localtime().tm_gmtoff。务必用与实盘服务器
-一致的 TZ 运行本程序（通常 TZ=UTC），否则因子时间轴会漂移、parity 失效。
+一致的 TZ 运行本程序（本部署经 orderInfo.pkl 确认为 UTC+8，须 TZ=Asia/Shanghai），
+否则 offset 与因子时间轴会漂移、parity 失效。
 """
 import os
 import sys
@@ -101,7 +102,8 @@ def replay_selection(cache, symbols, run_times, strategy_config, factors,
             # 只保留当前周期（与 proceed_order_for_strategy_config 一致）
             factor_data = factor_data[(factor_data['time'] + pd.to_timedelta(period)) >= run_time]
             for _, row in factor_data.iterrows():
-                on_select(run_time, offset, row['symbol'], row.get('rank'))
+                # 回调传整行：含 symbol/rank + 布网所需 close/Atr_5/middle_5（供回测复用 calc_grid_params）
+                on_select(run_time, offset, row)
 
             processed += 1
             if processed % 200 == 0:
