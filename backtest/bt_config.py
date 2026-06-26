@@ -20,8 +20,15 @@ WINDOW_END = '2024-01-08 00:00:00'
 # K线周期
 BAR = '1H'
 
-# 选币因子（与实盘 startup.py:50 硬编码保持一致）
-FACTORS = {'Reg_v2_2': True, 'Sgcz_2': True}
+# 选币因子：单一来源——直接读 account_0 strategy_config['factors']，自动跟随实盘 config 改动，
+# 避免回测与实盘因子配置漂移。
+import sys as _sys
+_ACC = os.path.join(ROOT, 'account_0')
+for _p in (_ACC, os.path.join(_ACC, 'utils'), os.path.join(_ACC, 'api')):
+    if _p not in _sys.path:
+        _sys.path.insert(0, _p)
+from config import strategy_config as _SC  # noqa: E402
+FACTORS = dict(_SC['factors'])
 
 # 时区：必须与实盘服务器一致。经 orderInfo.pkl 实盘记录验证，本部署服务器跑在 UTC+8（北京时间）。
 # account_0 选币函数内部读机器时区，运行本程序时必须用 `TZ=Asia/Shanghai python prewarm.py ...`，

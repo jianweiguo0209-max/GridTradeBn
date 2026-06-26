@@ -47,7 +47,7 @@ def run():
         # =====发送刚刚平仓的网格的盈亏情况
         send_last_grid_info(exchange, grid_ids)
 
-        strategy_config['factors'] = {"Reg_v2_2": True, "Sgcz_2": True}
+        # strategy_config['factors'] = {"Reg_v2_2": True, "Sgcz_2": True}
 
         # =====数据整理 & 选币 & 生成下单信息
         all_order_df = proceed_order_for_strategy_config(symbol_dict, symbol_candle_data, run_time, strategy_config, offset)

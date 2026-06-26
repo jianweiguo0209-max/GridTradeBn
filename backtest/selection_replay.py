@@ -65,6 +65,13 @@ def replay_selection(cache, symbols, run_times, strategy_config, factors,
     choose_symbols = strategy_config['choose_symbols']
     max_candle_num = strategy_config['max_candle_num']
 
+    # 防御：weight_list 长度需等于因子数，否则 select_grid_coin 的加权和会维度报错。
+    # （实盘 config 若 factors 与 weight_list 个数不一致，select_grid_coin 同样会报错——应修 config）
+    if len(weight_list) != len(factors):
+        log('[S1][WARN] weight_list(%d) 与因子数(%d) 不匹配，回测改用等权 [1]*%d；请修 config.py 的 weight_list'
+            % (len(weight_list), len(factors), len(factors)))
+        weight_list = [1] * len(factors)
+
     log('[S1] 载入 %d 个币的全量 1H 序列到内存...' % len(symbols))
     t0 = time.time()
     series = _load_full_series(cache, symbols)
