@@ -11,8 +11,7 @@ __pycache__/
 .venv/
 venv/
 
-# Runtime data (kline / order outputs)
-data/kline/
-data/order/
+# Runtime data & backtest cache (klines, orders, parquet caches, manifests, results)
+data/
 *.pkl
 *.log
