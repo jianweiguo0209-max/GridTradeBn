@@ -83,7 +83,9 @@ def Vwapbias_signal(*args):
     return df
 
 def Er_signal(*args):
-    # Er 指标
+    # Er 指标（震荡度因子）
+    # 输出 |BullPower + BearPower|，值越小越震荡，适合 ascending=True 排序
+    # 值大 → 单边趋势（多头或空头主导），值小 → 多空均衡震荡
     df = args[0]
     n  = args[1]
     diff_num = args[2]
@@ -93,7 +95,7 @@ def Er_signal(*args):
     df['ema'] = df['close'].ewm(alpha=a, adjust=False).mean()
     df['BullPower'] = (df['high'] - df['ema']) / df['ema']
     df['BearPower'] = (df['low'] - df['ema']) / df['ema']
-    df[factor_name] = df['BullPower'] + df['BearPower']
+    df[factor_name] = (df['BullPower'] + df['BearPower']).abs()
 
     # 删除多余列
     del df['ema'], df['BullPower'], df['BearPower']
@@ -523,8 +525,17 @@ def cal_factor(df):
     df.loc[df['涨跌幅'] > 0, '上涨'] = 1
     df.loc[df['涨跌幅'] <= 0, '下跌'] = 1
 
+    # 选币因子 - 短周期(N=2)：捕捉近期状态
     Reg_v2_signal(df, 2, 0, 'Reg_v2_2')
     Sgcz_signal(df, 2, 0, 'Sgcz_2')
+
+    # 选币因子 - 长周期(N=5)：确认中期趋势（先下跌）
+    Reg_v2_signal(df, 5, 0, 'Reg_v2_5')
+    Sgcz_signal(df, 5, 0, 'Sgcz_5')
+
+    # 震荡度因子（|BullPower+BearPower|，越小越震荡）
+    # 短周期(N=2)：捕捉"刚刚进入震荡"的择时信号
+    Er_signal(df, 2, 0, 'Er_2')
 
     # 自研因子
     db_volume_v1_signal(df, 2, 0, 'db_volume_v1_2')
@@ -598,8 +609,8 @@ def select_grid_coin(data, factor_info, weight_list, choose_symbols, run_time):
         data['rank_%s' % factor] = data.groupby('time')[factor].rank(method='first', ascending=factor_info[factor])
         rank_col.append('rank_%s' % factor)
 
-    # # 排序相加
-    data['rank_sum'] = data[rank_col].sum(axis=1)  # 因子排名
+    # 排序相加
+    # data['rank_sum'] = data[rank_col].sum(axis=1)  # 因子排名
     data['rank_sum'] = (data[rank_col] * weight_list).sum(axis=1)  # 因子排名加权重
     data['rank'] = data.groupby('time')['rank_sum'].rank(method='first', ascending=True)
 
@@ -617,7 +628,7 @@ def select_grid_coin(data, factor_info, weight_list, choose_symbols, run_time):
     # 选币
     data = data[data['rank'] <= choose_symbols]
 
-    # （大盘择时）筛选条件：10%<上涨比例<90%
+    # （大盘择时）筛选条件：8%<上涨比例<92%
     # con1 = data['上涨比例'] > 0.08
     # con2 = data['上涨比例'] < 0.92
     # data = data[con1 & con2]
