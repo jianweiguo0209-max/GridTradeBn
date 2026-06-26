@@ -9,6 +9,14 @@ pd.set_option('display.unicode.east_asian_width', True)
 # 项目根目录
 _ = os.path.abspath(os.path.dirname(__file__))  # 返回当前文件路径
 root_path = os.path.abspath(os.path.join(_, '..'))  # 返回根目录文件夹
+
+# 从 .env 文件加载敏感配置（API 密钥、webhook 等）。优先读取项目根目录下的 .env
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(root_path, '.env'))
+except ImportError:
+    # 未安装 python-dotenv 时，仍可通过系统环境变量读取配置
+    pass
 # 定义 kline 目录路径，用于存放主动止损的k线数据
 kline_path = os.path.join(root_path, 'data', 'kline')
 if not os.path.exists(kline_path):
@@ -88,11 +96,11 @@ PROXIES = {
     # 'https': 'http://127.0.0.1:9090',  # 根据电脑本地信息自行配置
 }  # 代理配置
 
-# OK交易所配置
+# OK交易所配置（密钥从 .env 环境变量读取，不要直接写在代码里）
 OK_CONFIG = {
-    'apiKey': '',
-    'secret': '',
-    'password': '',  # apikey的密码，不是账号密码
+    'apiKey': os.getenv('OK_API_KEY', ''),
+    'secret': os.getenv('OK_API_SECRET', ''),
+    'password': os.getenv('OK_API_PASSWORD', ''),  # apikey的密码，不是账号密码
     'timeout': EXCHANGE_TIMEOUT,
     # 'rateLimit': 10,
     'enableRateLimit': True,
@@ -100,4 +108,4 @@ OK_CONFIG = {
 }
 
 # 企业微信机器人
-wechat_webhook_url = ''
+wechat_webhook_url = os.getenv('WECHAT_WEBHOOK_URL', '')

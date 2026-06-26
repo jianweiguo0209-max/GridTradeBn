@@ -2,3 +2,8 @@ ccxt==2.0.58
 numpy==1.22.4
 pandas==1.3.5
 requests==2.27.1
+python-dotenv==0.21.1
+# 回测预热（backtest/）按天 parquet 缓存所需；与 pandas 1.3.5 / py3.9 兼容
+pyarrow>=8.0.0,<13.0.0
+# 回测选币回放复用 account_0 的因子计算，需要 TA-Lib（与实盘环境一致）
+# TA-Lib  # 需先装系统库 ta-lib，再 pip install TA-Lib；实盘环境已具备

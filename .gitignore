@@ -1,6 +1,9 @@
 # macOS
 .DS_Store
 
+# Secrets / environment
+.env
+
 # Python
 __pycache__/
 *.py[cod]

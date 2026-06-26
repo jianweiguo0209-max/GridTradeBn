@@ -593,18 +593,18 @@ def select_grid_coin(data, factor_info, weight_list, choose_symbols, run_time):
     ]
 
     # 多因子名次排序
-    # rank_col = []
-    # for factor in factor_info:
-    #     data['rank_%s' % factor] = data.groupby('time')[factor].rank(method='first', ascending=factor_info[factor])
-    #     rank_col.append('rank_%s' % factor)
+    rank_col = []
+    for factor in factor_info:
+        data['rank_%s' % factor] = data.groupby('time')[factor].rank(method='first', ascending=factor_info[factor])
+        rank_col.append('rank_%s' % factor)
 
     # # 排序相加
-    # # data['rank_sum'] = data[rank_col].sum(axis=1)  # 因子排名
-    # data['rank_sum'] = (data[rank_col] * weight_list).sum(axis=1)  # 因子排名加权重
-    # data['rank'] = data.groupby('time')['rank_sum'].rank(method='first', ascending=True)
+    data['rank_sum'] = data[rank_col].sum(axis=1)  # 因子排名
+    data['rank_sum'] = (data[rank_col] * weight_list).sum(axis=1)  # 因子排名加权重
+    data['rank'] = data.groupby('time')['rank_sum'].rank(method='first', ascending=True)
 
     # 交易额分位排序
-    data['rank'] = data.groupby('time')['交易额分位占比'].rank(method='first',ascending=True)  # 注意这里设置为升序
+    # data['rank'] = data.groupby('time')['交易额分位占比'].rank(method='first',ascending=True)  # 注意这里设置为升序
 
     # 测试用：打印当前周期的全集排序
     pdata = data[(data['time'] + pd.to_timedelta('12H')) >= run_time]
