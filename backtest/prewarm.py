@@ -207,6 +207,17 @@ MARK_COLS = ['ts', 'symbol', 'open', 'high', 'low', 'close']
 FUNDING_COLS = ['ts', 'symbol', 'fundingRate', 'realizedRate']
 
 
+def _merge_funding(swap_df, rest_df):
+    """合并早期 swaprate CSV 与近期 REST funding：按 ts 去重，重叠处 REST（权威）优先。"""
+    frames = [d for d in (swap_df, rest_df) if d is not None and not d.empty]
+    if not frames:
+        return pd.DataFrame(columns=FUNDING_COLS)
+    # swap 在前、rest 在后 → 稳定排序后 drop_duplicates(keep='last') 让 REST 覆盖重叠的 ts
+    out = pd.concat(frames, ignore_index=True)
+    out = out.sort_values('ts', kind='stable').drop_duplicates(subset=['ts'], keep='last')
+    return out.reset_index(drop=True)
+
+
 def _fetch_symbol_range(cache, namespace, symbol, start_dt, end_dt, fetch_fn, columns, proxies):
     """通用：把某 symbol [start,end] 的数据按天落 namespace 缓存（幂等 + 空哨兵）。"""
     days = [d.strftime('%Y-%m-%d') for d in pd.date_range(start_dt.normalize(), end_dt.normalize(), freq='D')]
@@ -234,8 +245,10 @@ def _fetch_symbol_range(cache, namespace, symbol, start_dt, end_dt, fetch_fn, co
     return symbol, warmed, 'fetched'
 
 
-def _symbol_holding_ranges(candidates_csv, period, buffer_days=1):
-    """从候选派生每个币需要取数的 [min_start, max_end]（含 ±buffer 天，覆盖时区偏移）。"""
+def _symbol_holding_ranges(candidates_csv, period, buffer_days=1, lead=None):
+    """从候选派生每个币需要取数的 [min_start, max_end]（含 ±buffer 天，覆盖时区偏移）。
+    lead（可选 Timedelta）：在 start 上额外往前回看，用于 15m pv 的 rolling(n) 基线预取，
+    与 backtest_run.compute_pv_spike 的 lo = rt - n*15min - 1天 对齐。"""
     if not os.path.exists(candidates_csv):
         return {}
     df = pd.read_csv(candidates_csv)
@@ -244,11 +257,12 @@ def _symbol_holding_ranges(candidates_csv, period, buffer_days=1):
         return {}
     period_td = pd.to_timedelta(period)
     buf = pd.Timedelta(days=buffer_days)
+    lead = lead if lead is not None else pd.Timedelta(0)
     ranges = {}
     for _, r in df.iterrows():
         rt = pd.Timestamp(r['run_time'])
         s = r['symbol']
-        start = rt - buf
+        start = rt - buf - lead
         end = rt + period_td + buf
         if s not in ranges:
             ranges[s] = [start, end]
@@ -267,7 +281,12 @@ def stage_funding_mark(cache, manifest_dir, period, bar, workers, proxies, log=p
     t0 = time.time()
 
     mark_fn = lambda sym, s, e, px: H.fetch_mark_candles_range(sym, s, e, bar=bar, proxies=px)
-    fund_fn = lambda sym, s, e, px: H.fetch_funding_rate_range(sym, s, e, proxies=px)
+
+    def fund_fn(sym, s, e, px):
+        # 早期(约2021-01~2025-09)走下载中心 swaprate CSV，近期(约3月)走 REST，重叠处 REST 优先。
+        swap = H.fetch_swaprate_csv_range(sym, s, e, proxies=px)
+        rest = H.fetch_funding_rate_range(sym, s, e, proxies=px)
+        return _merge_funding(swap, rest)
 
     jobs = []  # (namespace, symbol, start, end, fetch_fn, cols)
     for s, (st, en) in ranges.items():
@@ -324,6 +343,37 @@ def stage_candles_1m(cache, manifest_dir, period, workers, proxies, log=print):
         % (counts['fetched'], counts['skip'], counts['empty'], counts['failed'], time.time() - t0))
 
 
+# ===================== S15m: 选中币 pv 基线 15m 预取（条件取数）=====================
+def stage_candles_15m(cache, manifest_dir, period, workers, proxies, n=233, log=print):
+    """对 S1 选中币预取 15m K线（含 pv rolling(n) 所需的 n*15min 前置回看），落 namespace='15m'。
+    窗口与 backtest_run.compute_pv_spike 一致，预热后回测的 pv 主动止损纯读缓存、不打网络。"""
+    candidates_csv = os.path.join(manifest_dir, 'candidates.csv')
+    lead = pd.Timedelta(minutes=n * 15)  # rolling(n) 基线所需前置，对齐 compute_pv_spike 的 lo
+    ranges = _symbol_holding_ranges(candidates_csv, period, lead=lead)
+    if not ranges:
+        log('[S15m] 无候选，跳过 15m 预取'); return
+    log('[S15m] pv 基线 15m 预取: %d 个选中币（前置 %d×15min）, 并发 %d' % (len(ranges), n, workers))
+    t0 = time.time()
+    counts = {'fetched': 0, 'skip': 0, 'empty': 0, 'failed': 0}
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = {ex.submit(_fetch_symbol_candles, cache, s, st, en, '15m', proxies): s
+                for s, (st, en) in ranges.items()}
+        done = 0
+        for fut in as_completed(futs):
+            s = futs[fut]
+            done += 1
+            try:
+                _, _w, status = fut.result()
+                counts[status] += 1
+            except Exception as e:  # noqa
+                counts['failed'] += 1
+                log('[S15m][WARN] %s 取数失败: %s' % (s, str(e)))
+            if done % 50 == 0:
+                log('[S15m] 进度 %d/%d' % (done, len(ranges)))
+    log('[S15m] 完成: fetched=%d skip=%d empty=%d failed=%d 耗时=%.1fs'
+        % (counts['fetched'], counts['skip'], counts['empty'], counts['failed'], time.time() - t0))
+
+
 # ===================== main =====================
 def _load_strategy_config():
     """从 account_0/config.py 取 strategy_config（period/weight_list/choose_symbols/max_candle_num）。"""
@@ -337,7 +387,7 @@ def _load_strategy_config():
 
 def main():
     ap = argparse.ArgumentParser(description='OKX 网格回测数据预热 (S0/S1/S2/S3)')
-    ap.add_argument('--stage', choices=['all', 's0', 's1', 's1m', 's2', 's3'], default='all')
+    ap.add_argument('--stage', choices=['all', 's0', 's1', 's1m', 's15m', 's2', 's3'], default='all')
     ap.add_argument('--start', default=C.WINDOW_START)
     ap.add_argument('--end', default=C.WINDOW_END)
     ap.add_argument('--bar', default=C.BAR)
@@ -380,6 +430,10 @@ def main():
     if args.stage in ('all', 's1m'):
         # 依赖 S1 候选；持仓期 1m 预取，供 backtest_run --sim-bar 1m 纯读缓存
         stage_candles_1m(cache, args.manifest_dir, period, args.workers, proxies)
+
+    if args.stage in ('all', 's15m'):
+        # 依赖 S1 候选；pv 基线 15m 预取（含 233×15min 前置），供 backtest_run 的 pv 主动止损纯读缓存
+        stage_candles_15m(cache, args.manifest_dir, period, args.workers, proxies)
 
     if args.stage in ('all', 's2'):
         # S2 依赖 S1 的候选；单独跑 s2 时复用已有 candidates.csv

@@ -333,6 +333,19 @@ class TestPrewarmS2(Base):
         self.assertGreaterEqual(en, pd.Timestamp('2024-01-03 18:00:00'))
         self.assertNotIn('', ranges)  # 空标记行不计入
 
+    def test_symbol_holding_ranges_lead_for_15m_pv(self):
+        # 15m pv 预取需额外前置 233×15min 回看；start 口径须与 backtest_run.compute_pv_spike 的 lo 一致
+        mdir = os.path.join(self.tmp, 'manifest')
+        self._write_candidates(mdir)
+        lead = pd.Timedelta(minutes=233 * 15)
+        ranges = prewarm._symbol_holding_ranges(
+            os.path.join(mdir, 'candidates.csv'), '12H', buffer_days=1, lead=lead)
+        st, en = ranges['AAA-USDT-SWAP']
+        earliest_rt = pd.Timestamp('2024-01-01 18:00:00')
+        latest_rt = pd.Timestamp('2024-01-02 06:00:00')
+        self.assertEqual(st, earliest_rt - lead - pd.Timedelta(days=1))  # rt - 233×15min - 1天
+        self.assertEqual(en, latest_rt + pd.to_timedelta('12H') + pd.Timedelta(days=1))  # end 不受 lead 影响
+
     def test_fetch_symbol_range_idempotent_and_empty(self):
         calls = {'n': 0}
 
