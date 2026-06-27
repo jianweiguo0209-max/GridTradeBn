@@ -61,13 +61,13 @@ strategy_config = {
     },
     'stop_loss_config': {  # 止盈止损配置
         'stop_loss': 0.034,  # 网格止损比例
-        'stop_profit': 0.05,  # 网格止盈比例
-        'stop_risk_l1': 0.00618,  # 网格L1级回撤比例
-        'stop_risk_l2': 0.01,  # 网格L2级回撤比例
         'fundingRate_stop_loss': 0.0015,  # 资金费率止损
         'active_loss_period': '15m',  # 主动止损需要获取k线的周期，OK接口支持 1m/3m/5m/15m/30m/1H/2H/4H
         'active_loss_candle_num': 600,  # 主动止损最少需要获取k线的数量
         'every_times_candle_num': 10,  # 到达时间点之后，获取的k线数量
+        # ========== Chandelier 连续回撤止盈 ==========
+        'trailing_k': 0.3,  # 连续回撤系数：允许回吐峰值利润的比例（0.3=回吐30%）
+        'trailing_floor': 0.00618,  # 连续回撤地板：最小回撤容忍度（保护小利润）
     }
 }
 

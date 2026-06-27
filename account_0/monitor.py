@@ -4,7 +4,7 @@ import ccxt
 import pandas as pd
 from datetime import datetime
 from config import stop_loss_period, OK_CONFIG, strategy_config, apply_simulated_mode
-from utils.functions import query_grid, close_grid, calc_stop_grid, update_pnlRatio
+from utils.functions import query_grid, close_grid, calc_stop_grid, update_pnlRatio, load_df_max, cleanup_df_max
 from utils.notification import send_msg_q_wechat
 from utils.tools import retry_wrapper, sleep_until_run_time
 from api.status import check_ok_service_status
@@ -21,8 +21,8 @@ apply_simulated_mode(exchange)
 def main():
     # 标识整点是否已经发送信息通知
     is_send = False
-    # 新建全局df_max DataFrame，重启程序就会清0
-    df_max = pd.DataFrame(columns=['algoId', 'instId', 'tag', 'pnlRatio'])
+    # 从磁盘加载历史峰值记录（防止重启后移动止盈失忆）
+    df_max = load_df_max()
 
     while True:
         # =====sleep到下一次运行时间
@@ -48,7 +48,8 @@ def main():
         # =====筛选出需要止盈止损的网格
         stop_grid_df = grid_df[grid_df['止盈止损'].notna()]
         if not stop_grid_df.empty:
-            close_grid(exchange, stop_grid_df)  # 停止网格
+            closed_algo_ids = close_grid(exchange, stop_grid_df)  # 停止网格
+            df_max = cleanup_df_max(df_max, closed_algo_ids)  # 清理已关仓的峰值记录
 
         # =====整点发送账户持仓情况
         _now = datetime.now()

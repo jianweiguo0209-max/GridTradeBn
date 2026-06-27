@@ -41,14 +41,20 @@ def fixed_loss_and_profit(total_df, stop_loss_info):
     data['pnlRatio'] = data['pnlRatio'].astype(float)
     data['pnlRatio_max'] = data['pnlRatio_max'].astype(float)
 
-    # 计算止盈止损
-    data.loc[data['pnlRatio'] > stop_loss_info['stop_profit'], '止盈止损'] = '固定止盈'
+    # 固定止损
     data.loc[data['pnlRatio'] < -stop_loss_info['stop_loss'], '止盈止损'] = '固定止损'
-    # data.loc[(data['pnlRatio_max'] - data['pnlRatio'] >= stop_loss_info['stop_loss']), '止盈止损'] = '移动止损'
-    data.loc[(data['pnlRatio_max'] - data['pnlRatio'] >= stop_loss_info['stop_risk_l1']) & (
-                data['pnlRatio_max'] >= 0.01) & (data['pnlRatio_max'] < 0.02), '止盈止损'] = '回撤止盈L1'
-    data.loc[(data['pnlRatio_max'] - data['pnlRatio'] >= stop_loss_info['stop_risk_l2']) & (
-                data['pnlRatio_max'] >= 0.02), '止盈止损'] = '回撤止盈L2'
+
+    # Chandelier 连续回撤止盈
+    # allowed_drawback = max(地板, k × 峰值利润)
+    # 盈利越高容忍越大，让利润奔跑
+    k = stop_loss_info['trailing_k']
+    floor = stop_loss_info['trailing_floor']
+    allowed_drawback = data['pnlRatio_max'].apply(lambda x: max(floor, k * x))
+    actual_drawback = data['pnlRatio_max'] - data['pnlRatio']
+
+    # 触发条件：回撤超过允许值 且 峰值利润 > 地板（避免亏损时误触发）
+    trigger = (actual_drawback >= allowed_drawback) & (data['pnlRatio_max'] > floor)
+    data.loc[trigger, '止盈止损'] = '连续回撤止盈'
 
     return data
 

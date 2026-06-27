@@ -815,7 +815,30 @@ def save_grid_result(grid_his_df):
 
 
 # 更新最大收益率
+def save_df_max(df_max):
+    """将 df_max（pnlRatio 峰值记录）持久化到磁盘，防止 monitor 重启后移动止盈失忆"""
+    file_path = os.path.join(order_path, 'df_max.pkl')
+    df_max.to_pickle(file_path)
+
+
+def load_df_max():
+    """从磁盘加载 df_max（pnlRatio 峰值记录），monitor 启动时调用"""
+    file_path = os.path.join(order_path, 'df_max.pkl')
+    if os.path.exists(file_path):
+        try:
+            df = pd.read_pickle(file_path)
+            print(f'[df_max] 从磁盘加载成功，已有 {len(df)} 条峰值记录')
+            return df
+        except Exception as e:
+            print(f'[df_max] 加载失败，重置为空: {e}')
+    else:
+        print('[df_max] 磁盘无历史文件，首次启动')
+    return pd.DataFrame(columns=['algoId', 'instId', 'tag', 'pnlRatio'])
+
+
 def update_pnlRatio(grid_df, df_max):
+    updated = False  # 标记是否有峰值更新，避免无意义的磁盘写入
+
     # 遍历 grid_df 的每一行
     for index, row in grid_df.iterrows():
         algoId = row['algoId']
@@ -823,19 +846,19 @@ def update_pnlRatio(grid_df, df_max):
         current_tag = row['tag']
         current_pnlRatio = float(row['pnlRatio'])
 
-        # 查找匹配记录 
+        # 查找匹配记录
         condition = (df_max['algoId'] == algoId) & (df_max['instId'] == current_instId)
         matched_rows = df_max[condition]
 
         if not matched_rows.empty:
-            # 比较 pnlRatio 大小并更新 
+            # 比较 pnlRatio 大小并更新
             max_pnl_ratio = float(matched_rows['pnlRatio'].max())
             if current_pnlRatio > max_pnl_ratio:
                 df_max.loc[matched_rows.index, 'pnlRatio'] = current_pnlRatio
-                # 更新 max_pnl_ratio 为最新值
                 max_pnl_ratio = current_pnlRatio
+                updated = True  # 创新高，标记需要写盘
         else:
-            # 新增记录 
+            # 新增记录（新网格）
             new_row = {
                 'algoId': algoId,
                 'instId': current_instId,
@@ -843,10 +866,27 @@ def update_pnlRatio(grid_df, df_max):
                 'pnlRatio': current_pnlRatio
             }
             df_max = df_max.append(new_row, ignore_index=True)
-            # 设置 max_pnl_ratio 为当前值
             max_pnl_ratio = current_pnlRatio
+            updated = True  # 新网格加入，标记需要写盘
 
         # 更新 grid_df 中的 pnlRatio_max 列
         grid_df.loc[index, 'pnlRatio_max'] = max_pnl_ratio
 
+    # 只在有峰值更新或新网格加入时才写入磁盘
+    if updated:
+        save_df_max(df_max)
+
     return grid_df, df_max
+
+
+def cleanup_df_max(df_max, closed_algo_ids):
+    """网格关仓后，清理 df_max 中已关闭的记录，防止长期运行积累脏数据"""
+    if not closed_algo_ids:
+        return df_max
+    before_count = len(df_max)
+    df_max = df_max[~df_max['algoId'].isin(closed_algo_ids)]
+    after_count = len(df_max)
+    if after_count < before_count:
+        print(f'[df_max] 清理了 {before_count - after_count} 条已关仓记录')
+        save_df_max(df_max)
+    return df_max
