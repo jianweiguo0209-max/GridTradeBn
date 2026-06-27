@@ -12,13 +12,17 @@
 | S0 | 全票池 1H K线（选币+布网用） | OKX `market/history-candles` | `data/bt_cache/1H/<symbol>/<day>.parquet` |
 | S1 | 按小时回放实盘选币 → 候选 + tick 下载清单 | 纯本地计算（用 S0 缓存） | `data/bt_manifest/candidates.csv`、`tick_manifest.csv` |
 | S2 | 选中币持仓周期的资金费 + 标记价（条件取数） | OKX `funding-rate-history` / `history-mark-price-candles` | `data/bt_cache/funding/`、`mark/` |
-| 选币 parity | `produce_truth.py` 走实盘取数路径产生真值，对比回放 | 实盘 live fetch vs 离线缓存 | 已验证 3/3 一致 |
-| 网格成交仿真 | `grid_sim.py` 逐格成交+MTM+TP/SL（**原型，未校准**） | grid 参数 + OHLC | `simulate_grid()` 返回 pnlRatio 轨迹 |
-| 端到端回测 | `backtest_run.py` candidates→布网→仿真→聚合（**未校准**） | 全部上游 | `backtest_grids.csv` + 汇总 |
+| 选币 parity | `produce_truth.py` 走实盘取数路径产生真值，对比回放 | 实盘 live fetch vs 离线缓存 | 已验证 3/3 + offset7 4/4 一致 |
+| 网格成交仿真(主) | `grid_engine.py` 移植成熟引擎：净头寸均价/未实现/破网/爆仓/资金费框架 + **OKX 中性初始仓位(默认)** | grid 参数 + 1m | `simulate_grid_engine()` 返回 net_value/pnl_ratio |
+| 网格成交仿真(旧) | `grid_sim.py` 逐格成交+MTM+TP/SL 原型 | grid 参数 + OHLC | `simulate_grid()`（保留对比用） |
+| 端到端回测 | `backtest_run.py` candidates→布网(读 grid_v2_config)→引擎→聚合 | 全部上游 | `backtest_grids.csv` + 汇总 |
+| 仿真校准 | `calibrate_grid_sim.py` 用真实平仓网格对比仿真 PnL；`fetch_grid_history.py` 拉账户平仓历史 | gridResult.csv | 偏差统计 |
 
-**尚未做（下一步）**：逐笔 tick 下载（来自官方下载页，S1 已产出 `tick_manifest.csv` 作为下载清单）、
-把 `simulate_grid` 接入 candidates 跑全回测（含资金费 PnL）、
-**网格仿真器的 fidelity 校准**（需 `gridResult.csv` 真值 + 1m 数据，见 USAGE.md §11）。
+**仿真器校准状态**：用 3 条真实网格初步校准——引擎+中性初始仓位 hold≈4H/max_rate≈0.5 时 **MAE 0.125%**（详见 USAGE.md §11）。
+仍为初步（3 样本 + 拟合旋钮，有过拟合风险），严谨校准需完整 `gridResult.csv`（含关仓时间、更多样本）。
+
+**尚未做（下一步）**：退出逻辑补全（Chandelier 回撤止盈 + 资金费止损 + pv 主动止损，对齐 config）、
+逐笔 tick 下载、严谨校准 max_rate、1m 取数提到 prewarm 阶段。详见 [TODO.md](TODO.md)。
 
 ## 运行
 

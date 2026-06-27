@@ -20,6 +20,7 @@ if _HERE not in sys.path:
 
 import okx_history as H  # noqa: E402
 from grid_sim import simulate_grid  # noqa: E402
+from grid_engine import simulate_grid_engine  # noqa: E402
 
 CLEAN = os.path.join(os.path.dirname(_HERE), 'data', 'order', 'gridResult_clean.csv')
 
@@ -34,6 +35,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--hold-hours', type=float, default=12.0)
     ap.add_argument('--fee-rate', type=float, default=0.0002)  # OKX maker 量级
+    ap.add_argument('--engine', choices=['grid_sim', 'engine'], default='grid_sim')
+    ap.add_argument('--max-rate', type=float, default=0.68)  # 仅 engine：资金系数（校准旋钮）
+    ap.add_argument('--neutral-init', action='store_true')  # 仅 engine：模拟 OKX 中性初始仓位
     ap.add_argument('--csv', default=CLEAN)
     args = ap.parse_args()
 
@@ -48,18 +52,29 @@ def main():
         df = H.fetch_candles_range(sym, open_ms, end_ms, bar='1m')
         if df is None or df.empty:
             print('%-20s 无 1m 数据，跳过' % sym); continue
-        bars = df[['open', 'high', 'low', 'close']].to_dict('records')
-        params = dict(min_px=float(g['minPx']), max_px=float(g['maxPx']), grid_num=int(g['gridNum']),
-                      run_type='2', sz=float(g['sz']), lever=float(g['lever']),
-                      entry_px=float(g['entry']), tp_px=float(g['tpPx']), sl_px=float(g['slPx']))
-        sim = simulate_grid(params, bars, fee_rate=args.fee_rate)
         real = float(g['real_pnl_ratio'])
-        simr = sim['pnl_ratio']
-        rows.append({'symbol': sym, 'bars': len(bars), 'n_fills': sim['n_fills'],
+        if args.engine == 'engine':
+            gp = dict(low_price=float(g['minPx']), high_price=float(g['maxPx']),
+                      grid_count=int(g['gridNum']), stop_high_price=float(g['tpPx']),
+                      stop_low_price=float(g['slPx']))
+            sim = simulate_grid_engine(df, gp, cap=float(g['sz']), leverage=float(g['lever']),
+                                       fee=args.fee_rate, max_rate=args.max_rate,
+                                       stop_loss=None, stop_profit=None, neutral_init=args.neutral_init)
+            simr = sim['pnl_ratio']
+            sim = {'n_fills': sim['n_trades'], 'terminated': sim['terminated'], 'exit_reason': sim['exit_reason'],
+                   'pnl_ratio': simr}
+        else:
+            bars = df[['open', 'high', 'low', 'close']].to_dict('records')
+            params = dict(min_px=float(g['minPx']), max_px=float(g['maxPx']), grid_num=int(g['gridNum']),
+                          run_type='2', sz=float(g['sz']), lever=float(g['lever']),
+                          entry_px=float(g['entry']), tp_px=float(g['tpPx']), sl_px=float(g['slPx']))
+            sim = simulate_grid(params, bars, fee_rate=args.fee_rate)
+            simr = sim['pnl_ratio']
+        rows.append({'symbol': sym, 'bars': len(df), 'n_fills': sim['n_fills'],
                      'sim_terminated': sim['terminated'], 'sim_exit': sim['exit_reason'],
                      'real_pnl_ratio': real, 'sim_pnl_ratio': simr, 'diff': simr - real})
-        print('%-20s bars=%4d fills=%3d | real=%+.4f%% sim=%+.4f%% diff=%+.4f%% %s'
-              % (sym, len(bars), sim['n_fills'], real * 100, simr * 100, (simr - real) * 100,
+        print('%-20s bars=%4d trades=%3d | real=%+.4f%% sim=%+.4f%% diff=%+.4f%% %s'
+              % (sym, len(df), sim['n_fills'], real * 100, simr * 100, (simr - real) * 100,
                  ('[sim ' + str(sim['exit_reason']) + ']') if sim['terminated'] else ''))
 
     if rows:

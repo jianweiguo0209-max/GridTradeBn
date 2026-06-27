@@ -36,6 +36,7 @@ import prewarm  # noqa: E402
 from cache import ParquetCache  # noqa: E402
 import selection_replay as SR  # noqa: E402
 from grid_sim import simulate_grid, apply_exit_rules  # noqa: E402
+from grid_engine import simulate_grid_engine  # noqa: E402  移植的成熟引擎(默认 neutral_init)
 from utils.functions import calc_grid_params_v1, calc_grid_params_v2  # noqa: E402  实盘布网函数
 
 
@@ -81,7 +82,8 @@ def summarize(df):
 
 
 def run_backtest(cache, universe, window_start, window_end, strategy_config,
-                 factors, utc_offset, fee_rate=0.0005, sim_bar='1H', proxies=None, log=print):
+                 factors, utc_offset, fee_rate=0.0005, sim_bar='1H', proxies=None,
+                 engine='engine', max_rate=0.5, log=print):
     period = strategy_config['period']
     price_limit = strategy_config['price_limit']
     stop_limit = strategy_config['stop_limit']
@@ -113,28 +115,40 @@ def run_backtest(cache, universe, window_start, window_end, strategy_config,
         if len(bars_df) == 0:
             continue
         px = calc_fn(row=row, price_limit=price_limit, stop_limit=stop_limit, v2_config=v2cfg)
-        gp = dict(min_px=px['low_price'], max_px=px['high_price'], grid_num=px['grid_count'],
-                  run_type='2', sz=1.0, lever=leverage, entry_px=float(row['close']),
-                  tp_px=px['stop_high_price'], sl_px=px['stop_low_price'])
-        bars = bars_df[['open', 'high', 'low', 'close']].to_dict('records')
-        sim = simulate_grid(gp, bars, fee_rate=fee_rate)
 
-        # pnlRatio 类退出（复用实盘阈值）：取最早触发
-        ei, ereason = apply_exit_rules(sim['pnl_ratio_series'], stop_cfg)
-        if ei is not None:
-            pnl_ratio = sim['pnl_ratio_series'][ei]
-            exit_reason = ereason
-        else:
+        if engine == 'engine':
+            # 移植的成熟引擎（默认 OKX 中性初始仓位）；破网/爆仓/固定止损在引擎内处理
+            gp = dict(low_price=px['low_price'], high_price=px['high_price'], grid_count=px['grid_count'],
+                      stop_high_price=px['stop_high_price'], stop_low_price=px['stop_low_price'])
+            sim = simulate_grid_engine(bars_df, gp, cap=1000.0, leverage=leverage, fee=fee_rate,
+                                       max_rate=max_rate, min_amount=0.0,
+                                       stop_loss=stop_cfg.get('stop_loss'),
+                                       stop_profit=stop_cfg.get('stop_profit'))
             pnl_ratio = sim['pnl_ratio']
             exit_reason = sim['exit_reason']
+            n_fills = sim['n_trades']
+            terminated = sim['terminated']
+        else:
+            gp = dict(min_px=px['low_price'], max_px=px['high_price'], grid_num=px['grid_count'],
+                      run_type='2', sz=1.0, lever=leverage, entry_px=float(row['close']),
+                      tp_px=px['stop_high_price'], sl_px=px['stop_low_price'])
+            bars = bars_df[['open', 'high', 'low', 'close']].to_dict('records')
+            sim = simulate_grid(gp, bars, fee_rate=fee_rate)
+            ei, ereason = apply_exit_rules(sim['pnl_ratio_series'], stop_cfg)
+            if ei is not None:
+                pnl_ratio, exit_reason = sim['pnl_ratio_series'][ei], ereason
+            else:
+                pnl_ratio, exit_reason = sim['pnl_ratio'], sim['exit_reason']
+            n_fills = sim['n_fills']
+            terminated = sim['terminated']
 
         results.append({
             'run_time': rt, 'offset': int(offset), 'symbol': sym,
             'entry': float(row['close']), 'grid_num': int(px['grid_count']),
             'low': round(px['low_price'], 8), 'high': round(px['high_price'], 8),
-            'hold_bars': int(len(bars)), 'n_fills': int(sim['n_fills']),
+            'hold_bars': int(len(bars_df)), 'n_fills': int(n_fills),
             'pnl_ratio': float(pnl_ratio), 'exit_reason': exit_reason,
-            'terminated': bool(sim['terminated']),
+            'terminated': bool(terminated),
         })
     return pd.DataFrame(results)
 
@@ -147,7 +161,10 @@ def main():
     ap.add_argument('--manifest-dir', default=C.MANIFEST_DIR)
     ap.add_argument('--fee-rate', type=float, default=0.0005)
     ap.add_argument('--sim-bar', default='1H', choices=['1H', '1m'],
-                    help='持仓期仿真用的 bar 粒度；1m 更细但按需拉取（公共端点）')
+                    help='持仓期仿真用的 bar 粒度；1m 更细但按需拉取（公共端点）。引擎已校准于 1m')
+    ap.add_argument('--engine', default='engine', choices=['engine', 'grid_sim'],
+                    help='engine=移植的成熟引擎(默认,含中性初始仓位)；grid_sim=旧原型')
+    ap.add_argument('--max-rate', type=float, default=0.5, help='引擎资金系数(校准旋钮,初步~0.5)')
     ap.add_argument('--out', default=None)
     args = ap.parse_args()
 
@@ -156,14 +173,15 @@ def main():
     universe, _ = prewarm.stage_instruments(cache, C.PROXIES, log=print)
 
     print('=' * 60)
-    print('回测窗口 [%s, %s] fee_rate=%s sim_bar=%s TZ=%s' %
-          (args.start, args.end, args.fee_rate, args.sim_bar, os.environ.get('TZ', '<未设置>')))
-    print('⚠️ 仿真器未校准 + 1H 粒度，PnL 绝对值仅供管线验证/相对比较')
+    print('回测窗口 [%s, %s] fee_rate=%s sim_bar=%s engine=%s max_rate=%s TZ=%s' %
+          (args.start, args.end, args.fee_rate, args.sim_bar, args.engine, args.max_rate,
+           os.environ.get('TZ', '<未设置>')))
+    print('⚠️ 仿真器仅初步校准(3条 MAE0.125%%) + max_rate/hold 有过拟合风险，绝对 PnL 仍需更多真值标定')
     print('=' * 60)
 
     df = run_backtest(cache, universe, pd.Timestamp(args.start), pd.Timestamp(args.end),
                       strategy_config, C.FACTORS, C.UTC_OFFSET, fee_rate=args.fee_rate,
-                      sim_bar=args.sim_bar, proxies=C.PROXIES)
+                      sim_bar=args.sim_bar, proxies=C.PROXIES, engine=args.engine, max_rate=args.max_rate)
 
     out = args.out or os.path.join(args.manifest_dir, 'backtest_grids.csv')
     os.makedirs(os.path.dirname(out), exist_ok=True)

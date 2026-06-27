@@ -205,15 +205,43 @@ TZ=Asia/Shanghai ../.venv/bin/python -W ignore -m unittest discover -s tests -v
 - **bar 内路径近似**：阳线假设低→高、阴线高→低。1H bar 误差大，接 1m 可显著降低。
 - 资金费、pv 爆量主动止损未建模（需 S2 资金费 + 1m 数据）。
 
-### ⚠️ fidelity 校准缺口（最重要）
-仿真器目前只验证了**逻辑自洽与方向正确**，**没有**验证「与 OKX 实际 PnL 吻合」。
-校准需要 `data/order/gridResult.csv`（开仓参数 + OKX 实际平仓 totalPnl/pnlRatio）——
-本地暂无（只在实盘服务器，或可经 `tradingBot/grid/orders-algo-history` 拉账户真实平仓结果）。
-**在用仿真 PnL 下任何结论前，必须先用 gridResult.csv 量化仿真偏差。**
+> 注：默认引擎已升级为 `grid_engine.py`（移植的成熟引擎 + OKX 中性初始仓位），账目更完整
+> （净头寸均价/未实现/破网/爆仓/资金费框架）。`grid_sim.py` 保留作对比。
+
+### ⚠️ fidelity 校准状态
+已用 **3 条真实平仓网格** 初步校准（见 §12）：引擎+中性初始仓位、hold≈4H、max_rate≈0.5 时
+**MAE 0.125%、三条同号**——证实「OKX 中性网格 PnL = 网格利润 + 初始仓位」。
+**但仍为初步**：3 样本 + 2 个拟合旋钮(hold/max_rate)有过拟合风险；持仓窗口极敏感（换 12H→MAE 2.3%）。
+严谨校准需完整 `gridResult.csv`（**含关仓时间** + 含止盈/止损/亏损的多样样本）。
+**用仿真 PnL 下结论前，务必知道：网格 PnL 核心已初步吻合，但止损行为(Chandelier/资金费/pv)尚未建模/校准。**
+
+## 12. 端到端回测 + 校准
+
+### 跑全回测（默认用 grid_engine 引擎 + 中性初始仓位）
+```bash
+cd backtest
+TZ=Asia/Shanghai ../.venv/bin/python backtest_run.py \
+    --start "2026-06-23 00:00:00" --end "2026-06-24 00:00:00" \
+    --sim-bar 1m --engine engine --max-rate 0.5 \
+    --cache-dir ../data/bt_verify/cache --manifest-dir ../data/bt_verify/manifest
+```
+- `--sim-bar 1m`：引擎校准于 1m，强烈建议 1m（1H 影线会造假止损）。
+- `--engine engine`(默认)：成熟引擎；`grid_sim` 为旧原型。
+- `--max-rate 0.5`：资金系数（初步校准值，待更多真值标定）。
+- 产物 `backtest_grids.csv`（逐格）+ 汇总（胜率/均值/组合复利/退出归因）。
+
+### 校准（对比仿真 vs 真实平仓 PnL）
+```bash
+# 拉账户真实平仓历史（只读；.env OK_SIMULATED 控制实盘/模拟盘）
+TZ=Asia/Shanghai ../.venv/bin/python fetch_grid_history.py
+# 对比（用 data/order/gridResult_clean.csv 的真实网格参数 + 1m 跑仿真）
+TZ=Asia/Shanghai ../.venv/bin/python calibrate_grid_sim.py \
+    --engine engine --neutral-init --hold-hours 4 --max-rate 0.5
+```
 
 ## 10. 已知边界
 
 - **Survivorship bias**：`instruments` 只含当前存活的币，历史上被选过但已退市的币缺失，回测票池偏乐观（v1 接受的妥协）。
 - **tick 历史下界 2021-09**：OKX 官方下载页 tick 起始时间，早于此的窗口做不了高保真成交回放。
-- **本版范围**：只做 API 部分（S0/S1/S3）+ 产出 tick 清单。**资金费 / 标记价**取数函数已在
-  `okx_history.py` 备好但默认未接；**逐笔 tick 实际下载**（来自官方下载页）与**网格成交仿真器**尚未实现。
+- **退出逻辑未完整**：引擎现含破网/爆仓/固定止损；实盘的 Chandelier 回撤止盈、资金费止损、pv 主动止损尚未接入（见 TODO.md）。
+- **校准为初步**：3 样本，max_rate/hold 待更多带关仓时间的真值标定。
