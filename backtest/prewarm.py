@@ -5,6 +5,8 @@
   S3 元数据   : 拉合约规格(instruments)，冻结票池 + tickSz（与窗口无关，先做以确定票池）
   S0 共享日线 : 对票池每个币拉 [start-warmup, end] 的 1H K线，按天落 parquet 缓存
   S1 候选发现 : 按小时回放实盘选币，产出 candidates.csv；并派生 tick 下载清单 tick_manifest.csv
+  S1m 持仓1m : 对选中币持仓周期(±1天)预取 1m K线(条件取数)，供 backtest_run --sim-bar 1m 纯读缓存
+  S2 条件取数: 选中币持仓周期的资金费 + 标记价
 
 三条工程约束：
   - 有界并发：S0 用 ThreadPoolExecutor(max_workers) + as_completed 流式回收
@@ -292,6 +294,36 @@ def stage_funding_mark(cache, manifest_dir, period, bar, workers, proxies, log=p
         % (counts['fetched'], counts['skip'], counts['empty'], counts['failed'], time.time() - t0))
 
 
+# ===================== S1m: 选中币持仓期 1m 预取（条件取数）=====================
+def stage_candles_1m(cache, manifest_dir, period, workers, proxies, log=print):
+    """对 S1 选中币的持仓周期(含±1天缓冲)并发预取 1m K线，落 namespace='1m' 缓存。
+    与 backtest_run.load_1m_holding 的窗口一致，预热后回测纯读缓存、不打网络。"""
+    candidates_csv = os.path.join(manifest_dir, 'candidates.csv')
+    ranges = _symbol_holding_ranges(candidates_csv, period)  # {sym: [min_start, max_end]}
+    if not ranges:
+        log('[S1m] 无候选，跳过 1m 预取'); return
+    log('[S1m] 持仓期 1m 预取: %d 个选中币, 并发 %d' % (len(ranges), workers))
+    t0 = time.time()
+    counts = {'fetched': 0, 'skip': 0, 'empty': 0, 'failed': 0}
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = {ex.submit(_fetch_symbol_candles, cache, s, st, en, '1m', proxies): s
+                for s, (st, en) in ranges.items()}
+        done = 0
+        for fut in as_completed(futs):
+            s = futs[fut]
+            done += 1
+            try:
+                _, _w, status = fut.result()
+                counts[status] += 1
+            except Exception as e:  # noqa
+                counts['failed'] += 1
+                log('[S1m][WARN] %s 取数失败: %s' % (s, str(e)))
+            if done % 50 == 0:
+                log('[S1m] 进度 %d/%d' % (done, len(ranges)))
+    log('[S1m] 完成: fetched=%d skip=%d empty=%d failed=%d 耗时=%.1fs'
+        % (counts['fetched'], counts['skip'], counts['empty'], counts['failed'], time.time() - t0))
+
+
 # ===================== main =====================
 def _load_strategy_config():
     """从 account_0/config.py 取 strategy_config（period/weight_list/choose_symbols/max_candle_num）。"""
@@ -305,7 +337,7 @@ def _load_strategy_config():
 
 def main():
     ap = argparse.ArgumentParser(description='OKX 网格回测数据预热 (S0/S1/S2/S3)')
-    ap.add_argument('--stage', choices=['all', 's0', 's1', 's2', 's3'], default='all')
+    ap.add_argument('--stage', choices=['all', 's0', 's1', 's1m', 's2', 's3'], default='all')
     ap.add_argument('--start', default=C.WINDOW_START)
     ap.add_argument('--end', default=C.WINDOW_END)
     ap.add_argument('--bar', default=C.BAR)
@@ -344,6 +376,10 @@ def main():
     if args.stage in ('all', 's1'):
         stage_select(cache, universe, window_start, window_end, strategy_config,
                      C.FACTORS, C.UTC_OFFSET, args.manifest_dir)
+
+    if args.stage in ('all', 's1m'):
+        # 依赖 S1 候选；持仓期 1m 预取，供 backtest_run --sim-bar 1m 纯读缓存
+        stage_candles_1m(cache, args.manifest_dir, period, args.workers, proxies)
 
     if args.stage in ('all', 's2'):
         # S2 依赖 S1 的候选；单独跑 s2 时复用已有 candidates.csv

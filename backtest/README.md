@@ -11,6 +11,7 @@
 | S3 | 合约规格 / 票池（冻结） | OKX `public/instruments` | `data/bt_cache/instruments/SWAP/frozen.parquet` |
 | S0 | 全票池 1H K线（选币+布网用） | OKX `market/history-candles` | `data/bt_cache/1H/<symbol>/<day>.parquet` |
 | S1 | 按小时回放实盘选币 → 候选 + tick 下载清单 | 纯本地计算（用 S0 缓存） | `data/bt_manifest/candidates.csv`、`tick_manifest.csv` |
+| S1m | 选中币持仓周期 1m K线预取（条件取数） | OKX `history-candles` (1m) | `data/bt_cache/1m/` |
 | S2 | 选中币持仓周期的资金费 + 标记价（条件取数） | OKX `funding-rate-history` / `history-mark-price-candles` | `data/bt_cache/funding/`、`mark/` |
 | 选币 parity | `produce_truth.py` 走实盘取数路径产生真值，对比回放 | 实盘 live fetch vs 离线缓存 | 已验证 3/3 + offset7 4/4 一致 |
 | 网格成交仿真(主) | `grid_engine.py` 移植成熟引擎：净头寸均价/未实现/破网/爆仓/资金费框架 + **OKX 中性初始仓位(默认)** | grid 参数 + 1m | `simulate_grid_engine()` 返回 net_value/pnl_ratio |

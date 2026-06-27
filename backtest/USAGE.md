@@ -112,6 +112,14 @@ TZ=Asia/Shanghai ../.venv/bin/python prewarm.py --stage s0 --start "2024-01-01" 
 TZ=Asia/Shanghai ../.venv/bin/python prewarm.py --stage s1
 ```
 
+### S1m — 持仓期 1m 预取（条件取数）
+依赖 S1 的候选。对**选中币的持仓周期**（±1 天缓冲）并发预取 1m K线，落 `1m/` 缓存。
+预热后 `backtest_run --sim-bar 1m` 纯读缓存、不在跑回测时打网络（取数与计算分离）。
+
+```bash
+TZ=Asia/Shanghai ../.venv/bin/python prewarm.py --stage s1m
+```
+
 ### S2 — 资金费 + 标记价（条件取数）
 依赖 S1 的候选。只对**选中币的持仓周期** `[run_time, run_time+period]`（含 ±1 天缓冲覆盖时区偏移）
 取资金费率(`funding`)和标记价1H(`mark`)，按天落缓存。永续 PnL 必需。幂等、有界并发、空哨兵。
