@@ -59,6 +59,27 @@ def load_1m_holding(cache, symbol, run_time, period, utc_offset, proxies):
     return holding_bars(df, run_time, period, utc_offset)
 
 
+def compute_pv_spike(cache, symbol, bars_df, run_time, period, proxies, n=233, mult=3):
+    """pv 量能爆增信号（正式版）：拉含 n 根前置的 15m 历史 → rolling(n) 完整均值 → 映射到持仓 1m bars。
+    复刻 calc_active_loss_signal_pv 的量能条件；pnlRatio<-0.015 由 _apply_exit 在 net_value 上判断。"""
+    if bars_df is None or bars_df.empty:
+        return None
+    lo = run_time - pd.Timedelta(minutes=n * 15) - pd.Timedelta(days=1)
+    hi = run_time + pd.to_timedelta(period) + pd.Timedelta(days=1)
+    prewarm._fetch_symbol_candles(cache, symbol, lo, hi, '15m', proxies)  # 缓存 15m，幂等
+    df15 = cache.read_all_days('15m', symbol)
+    if df15 is None or df15.empty:
+        return None
+    df15 = df15[['candle_begin_time', 'quote_volume']].sort_values('candle_begin_time')
+    df15 = df15.drop_duplicates('candle_begin_time')
+    df15['mean_n'] = df15['quote_volume'].rolling(n, min_periods=n).mean()  # 要求满 n 根，缺则 NaN→不触发
+    df15['pv_spike'] = (df15['quote_volume'] > mult * df15['mean_n']).fillna(False).astype(int)
+    out = bars_df[['candle_begin_time']].sort_values('candle_begin_time')
+    out = pd.merge_asof(out, df15[['candle_begin_time', 'pv_spike']], on='candle_begin_time', direction='backward')
+    out['pv_spike'] = out['pv_spike'].fillna(0).astype(int)
+    return out[['candle_begin_time', 'pv_spike']]
+
+
 def summarize(df):
     """聚合：按 offset 复利，组合等权平均。pnl_ratio 是网格 margin 回报，offset 间等权。"""
     if df.empty:
@@ -121,9 +142,10 @@ def run_backtest(cache, universe, window_start, window_end, strategy_config,
             gp = dict(low_price=px['low_price'], high_price=px['high_price'], grid_count=px['grid_count'],
                       stop_high_price=px['stop_high_price'], stop_low_price=px['stop_low_price'])
             funding_df = cache.read_all_days('funding', sym)  # S2 缓存的资金费(若有)；None 则资金费止损不生效
+            pv_df = compute_pv_spike(cache, sym, bars_df, rt, period, proxies)  # 正式版 pv(15m 充分历史)
             sim = simulate_grid_engine(bars_df, gp, cap=1000.0, leverage=leverage, fee=fee_rate,
                                        max_rate=max_rate, min_amount=0.0,
-                                       stop_cfg=stop_cfg, funding_df=funding_df)
+                                       stop_cfg=stop_cfg, funding_df=funding_df, pv_spike_df=pv_df)
             pnl_ratio = sim['pnl_ratio']
             exit_reason = sim['exit_reason']
             n_fills = sim['n_trades']

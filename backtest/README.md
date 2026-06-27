@@ -22,8 +22,11 @@
 **仿真器校准状态**：用 3 条真实网格初步校准——引擎+中性初始仓位 hold≈4H/max_rate≈0.5 时 **MAE 0.125%**（详见 USAGE.md §11）。
 仍为初步（3 样本 + 拟合旋钮，有过拟合风险），严谨校准需完整 `gridResult.csv`（含关仓时间、更多样本）。
 
-**尚未做（下一步）**：退出逻辑补全（Chandelier 回撤止盈 + 资金费止损 + pv 主动止损，对齐 config）、
-逐笔 tick 下载、严谨校准 max_rate、1m 取数提到 prewarm 阶段。详见 [TODO.md](TODO.md)。
+**退出逻辑**：已对齐实盘 `calc_loss_or_profit` 优先级——固定止损 > Chandelier 回撤止盈 >
+资金费率止损(需 S2 数据) > pv 主动止损(15m 充分历史) > 爆仓（见 `grid_engine._apply_exit`）。
+
+**尚未做（下一步）**：逐笔 tick 下载、严谨校准 max_rate（需完整 gridResult.csv）、
+更大窗口回测验证。详见 [TODO.md](TODO.md)。
 
 ## 运行
 

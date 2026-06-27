@@ -252,7 +252,7 @@ def cal_equity_curve(candle_df, trade_df, fee, cap, c_rate_taker=0.0005, funding
 def simulate_grid_engine(bars_df, grid_params, cap=10000.0, leverage=5.0, fee=0.0002,
                          min_amount=0.0, max_rate=0.68, margin_rate=0.05,
                          stop_cfg=None, c_rate_taker=0.0005,
-                         funding_df=None, neutral_init=True):
+                         funding_df=None, neutral_init=True, pv_spike_df=None):
     """
     端到端封装：bars(本项目 1m df) + 布网参数 → 资金曲线终值。
     grid_params: dict(low_price, high_price, grid_count, stop_high_price, stop_low_price)
@@ -295,8 +295,9 @@ def simulate_grid_engine(bars_df, grid_params, cap=10000.0, leverage=5.0, fee=0.
     bars = bars[bars['candle_begin_time'] <= tick_df['candle_begin_time'].iloc[-1]]
     eq = cal_equity_curve(bars, trade_df, fee, cap, c_rate_taker, funding_df)
 
-    # pv 量能信号（需 quote_volume）；窗口内 rolling(233) 近似，缺前置历史（fidelity 限制）
-    pv_spike_df = calc_pv_spike(bars) if (stop_cfg is not None and 'quote_volume' in bars.columns) else None
+    # pv 量能信号：优先用外部传入(基于充分 15m 历史)；否则窗口内近似(缺前置历史，fidelity 限制)
+    if pv_spike_df is None and stop_cfg is not None and 'quote_volume' in bars.columns:
+        pv_spike_df = calc_pv_spike(bars)
 
     eq, stop_reason, blown = _apply_exit(eq, cap, c_rate_taker, stop_cfg, margin_rate, pv_spike_df)
     nv = float(eq['net_value'].iloc[-1])

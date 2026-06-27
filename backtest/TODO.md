@@ -19,13 +19,14 @@
 - ⬜ **每格数量模型校准**：当前"等量"假设，OKX 实际可能等保证金分配——最大待校准建模点
 - ⬜ **bar 内路径**：已支持 1m；如需更高保真再接 tick
 
-## 三、退出逻辑完整性（PnL parity 关键）
-实盘退出是多层的，回测目前只覆盖一部分：
-- ✅ OKX 原生 TP/SL 价格触发
-- ✅ 固定止盈损 + 回撤止盈 L1/L2（pnlRatio）
-- ⬜ **资金费率止损**（S2 已缓存 funding，未接入退出判断）
-- ⬜ **pv 爆量主动止损**（calc_active_loss_signal_pv，需 1m 量能，未复刻）
-- 🟡 **监控粒度**：实盘每 5s 检查，回测按 bar 检查——颗粒度差异
+## 三、退出逻辑完整性（PnL parity 关键）—— ✅ 已完成
+`grid_engine._apply_exit` 复刻实盘 calc_loss_or_profit 优先级，逐 bar 取最早触发：
+- ✅ 固定止损（pnlRatio < -stop_loss）
+- ✅ Chandelier 连续回撤止盈（trailing_k/trailing_floor，已替代旧 L1/L2，对齐最新 config）
+- ✅ 资金费率止损（|fundingRate| > 阈值；需 S2 funding 数据在缓存才生效）
+- ✅ pv 爆量主动止损（backtest_run.compute_pv_spike：15m 充分历史 rolling(233)）
+- ✅ OKX 原生 TP/SL（破网）+ 爆仓（liquidation）
+- 🟡 **监控粒度**：实盘每 5s，回测按 bar（1m）——仍有颗粒度差异（可接受）
 
 ## 四、PnL 模型完整性
 - ⬜ **资金费 PnL 并入 `simulate_grid`**（永续持仓应按 funding 时点收/扣；数据已在 S2 缓存）

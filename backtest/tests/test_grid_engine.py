@@ -45,6 +45,20 @@ class TestApplyExit(unittest.TestCase):
         self.assertEqual(reason, '资金费率止损')
         self.assertEqual(len(df), 2)
 
+    def test_pv_stop(self):
+        # pv 量能爆增信号 + pnlRatio<-0.015 → pv主动止损
+        df = _df([1.0, 0.99, 0.98])  # idx2 pr=-0.02 < -0.015
+        pv = pd.DataFrame({'candle_begin_time': df['candle_begin_time'], 'pv_spike': [0, 0, 1]})
+        out, reason, blown = _apply_exit(df, 1000, 0.0005, CFG, pv_spike_df=pv)
+        self.assertEqual(reason, 'pv主动止损')
+
+    def test_pv_not_triggered_when_profitable(self):
+        # pv 量能爆增但未亏损(pnlRatio≥-0.015) → 不触发 pv
+        df = _df([1.0, 1.0, 1.0])
+        pv = pd.DataFrame({'candle_begin_time': df['candle_begin_time'], 'pv_spike': [0, 1, 1]})
+        out, reason, blown = _apply_exit(df, 1000, 0.0005, CFG, pv_spike_df=pv)
+        self.assertIsNone(reason)
+
     def test_no_trigger(self):
         # 峰值 0.005 < floor 0.00618 → chandelier 不触发；无固定止损/资金费
         df, reason, blown = _apply_exit(_df([1.0, 1.005, 1.004]), 1000, 0.0005, CFG)
