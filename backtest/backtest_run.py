@@ -120,10 +120,10 @@ def run_backtest(cache, universe, window_start, window_end, strategy_config,
             # 移植的成熟引擎（默认 OKX 中性初始仓位）；破网/爆仓/固定止损在引擎内处理
             gp = dict(low_price=px['low_price'], high_price=px['high_price'], grid_count=px['grid_count'],
                       stop_high_price=px['stop_high_price'], stop_low_price=px['stop_low_price'])
+            funding_df = cache.read_all_days('funding', sym)  # S2 缓存的资金费(若有)；None 则资金费止损不生效
             sim = simulate_grid_engine(bars_df, gp, cap=1000.0, leverage=leverage, fee=fee_rate,
                                        max_rate=max_rate, min_amount=0.0,
-                                       stop_loss=stop_cfg.get('stop_loss'),
-                                       stop_profit=stop_cfg.get('stop_profit'))
+                                       stop_cfg=stop_cfg, funding_df=funding_df)
             pnl_ratio = sim['pnl_ratio']
             exit_reason = sim['exit_reason']
             n_fills = sim['n_trades']

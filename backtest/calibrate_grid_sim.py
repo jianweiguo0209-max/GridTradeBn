@@ -59,7 +59,7 @@ def main():
                       stop_low_price=float(g['slPx']))
             sim = simulate_grid_engine(df, gp, cap=float(g['sz']), leverage=float(g['lever']),
                                        fee=args.fee_rate, max_rate=args.max_rate,
-                                       stop_loss=None, stop_profit=None, neutral_init=args.neutral_init)
+                                       stop_cfg=None, neutral_init=args.neutral_init)
             simr = sim['pnl_ratio']
             sim = {'n_fills': sim['n_trades'], 'terminated': sim['terminated'], 'exit_reason': sim['exit_reason'],
                    'pnl_ratio': simr}

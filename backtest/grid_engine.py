@@ -120,33 +120,79 @@ def get_trade_info(touch_df, open_price, grid_info):
     return trade_df[['candle_begin_time', 'last_touch', 'touch', 'order_dir', 'order_num']]
 
 
-def _apply_stop(df, cap, stop_loss, stop_profit, c_rate_taker):
-    """固定止盈损 + 主动止损信号(stop_signal 列，若有)。截断到首次触发并扣平仓手续费。"""
-    df['stop'] = np.nan
-    if 'stop_signal' in df.columns:
-        df.loc[df['stop_signal'] == 1, 'stop'] = 1
-    if stop_loss is not None:
-        df.loc[df['net_value'] < 1 - stop_loss, 'stop'] = 1
-    if stop_profit is not None:
-        df.loc[df['net_value'] > 1 + stop_profit, 'stop'] = 1
-    df['stop'].fillna(method='ffill', inplace=True)
-    df['stop'].fillna(value=0, inplace=True)
-    temp = df[df['stop'] == 1]
-    reason = None
-    if not temp.empty:
-        inx = temp.index[0]
-        df = df[:inx + 1]
-        row = df.iloc[-1]
-        fee_rate = abs(row['hold_num']) * row['close'] * c_rate_taker / cap
-        df.loc[row.name, 'net_value'] = row['net_value'] - fee_rate
-        reason = '止损/止盈触发'
-    return df, reason
+def calc_pv_spike(bars_df, active_period='15m', mult=3, n=233):
+    """复刻 calc_active_loss_signal_pv 的量能部分：active_period 重采样后 quote_volume > mult×rolling(n).mean。
+    返回 (candle_begin_time, pv_spike) 逐 1m 映射。需 bars 含 quote_volume。
+    注：窗口内 1m 数据有限，rolling(n) 用 min_periods 近似，缺 n 根前置历史（fidelity 限制，已知）。"""
+    if 'quote_volume' not in bars_df.columns:
+        return None
+    b = bars_df[['candle_begin_time', 'quote_volume']].copy()
+    b = b.set_index('candle_begin_time').resample(active_period).agg({'quote_volume': 'sum'})
+    b['mean_n'] = b['quote_volume'].rolling(n, min_periods=1).mean()
+    b['pv_spike'] = (b['quote_volume'] > mult * b['mean_n']).astype(int)
+    b = b.reset_index()[['candle_begin_time', 'pv_spike']]
+    # 映射回 1m：用 merge_asof 取每个 1m bar 所属的 active_period 信号
+    out = bars_df[['candle_begin_time']].copy().sort_values('candle_begin_time')
+    out = pd.merge_asof(out, b.sort_values('candle_begin_time'), on='candle_begin_time', direction='backward')
+    out['pv_spike'].fillna(value=0, inplace=True)
+    return out[['candle_begin_time', 'pv_spike']]
 
 
-def cal_equity_curve(candle_df, trade_df, fee, cap, margin_rate=0.05,
-                     stop_loss=None, stop_profit=None, c_rate_taker=0.0005,
-                     funding_df=None):
-    """计算资金曲线。funding_df(可选): 列 ts(ms,UTC)/fundingRate，按持仓收/扣资金费。"""
+def _apply_exit(df, cap, c_rate_taker, stop_cfg=None, margin_rate=0.05, pv_spike_df=None):
+    """
+    复刻实盘 calc_loss_or_profit 的退出优先级，对 net_value 序列逐 bar 取最早触发：
+      1) 固定止损     pnlRatio < -stop_loss
+      2) Chandelier   回撤 >= max(trailing_floor, trailing_k×峰值) 且 峰值 > floor
+      3) 资金费率止损 |fundingRate| > fundingRate_stop_loss（需 df 有 fundingRate 列）
+      4) pv 主动止损  量能爆增 且 pnlRatio < -0.015（需 pv_spike_df）
+      5) 爆仓         net_value < margin_rate
+    返回 (截断后的 df, reason, blown)。stop_cfg=None 时仅查爆仓。
+    """
+    df = df.reset_index(drop=True)
+    pr = (df['net_value'] - 1.0).values
+    pr_max = np.maximum.accumulate(pr)
+    n = len(df)
+    reason_at = [None] * n
+
+    def mark(mask, name):
+        idx = np.where(mask)[0]
+        for i in idx:
+            if reason_at[i] is None:
+                reason_at[i] = name
+
+    # 按优先级从高到低标注（同 bar 高优先级覆盖）
+    if stop_cfg is not None:
+        mark(pr < -stop_cfg['stop_loss'], '固定止损')
+        k = stop_cfg.get('trailing_k'); floor = stop_cfg.get('trailing_floor')
+        if k is not None and floor is not None:
+            allowed = np.maximum(floor, k * pr_max)
+            mark((pr_max - pr >= allowed) & (pr_max > floor), '连续回撤止盈')
+        fr_thr = stop_cfg.get('fundingRate_stop_loss')
+        if fr_thr is not None and 'fundingRate' in df.columns:
+            mark(np.abs(df['fundingRate'].values) > fr_thr, '资金费率止损')
+        if pv_spike_df is not None:
+            m = pd.merge(df[['candle_begin_time']], pv_spike_df, on='candle_begin_time', how='left')
+            mark((m['pv_spike'].fillna(0).values == 1) & (pr < -0.015), 'pv主动止损')
+    # 爆仓（最低优先级，通常被固定止损先触发）
+    mark(pr < margin_rate - 1.0, '爆仓')
+
+    first = next((i for i in range(n) if reason_at[i] is not None), None)
+    if first is None:
+        return df, None, False
+    reason = reason_at[first]
+    df = df[:first + 1].copy()
+    row = df.iloc[-1]
+    if reason == '爆仓':
+        df.loc[row.name, 'net_value'] = 0.0
+        return df, reason, True
+    # 平仓扣 taker 手续费
+    fee_rate = abs(row['hold_num']) * row['close'] * c_rate_taker / cap
+    df.loc[row.name, 'net_value'] = row['net_value'] - fee_rate
+    return df, reason, False
+
+
+def cal_equity_curve(candle_df, trade_df, fee, cap, c_rate_taker=0.0005, funding_df=None):
+    """计算资金曲线（不套退出，退出由 _apply_exit 负责）。funding_df(可选): 列 ts(ms,UTC)/fundingRate。"""
     trade_data = trade_df.copy()
     candle_data = candle_df.copy()
 
@@ -184,12 +230,14 @@ def cal_equity_curve(candle_df, trade_df, fee, cap, margin_rate=0.05,
 
     # 资金费：+给出/-收回 = hold_num * close * fundingRate（用 close 近似 mark，微小误差）
     df['fr_fee'] = 0.0
+    df['fundingRate'] = 0.0
     if funding_df is not None and not funding_df.empty:
         fr = funding_df.copy()
         fr['candle_begin_time'] = pd.to_datetime(fr['ts'], unit='ms')  # UTC，与缓存 candle_begin_time 同口径
-        fr = fr[['candle_begin_time', 'fundingRate']]
+        fr = fr[['candle_begin_time', 'fundingRate']].rename(columns={'fundingRate': '_fr'})
         df = pd.merge(left=df, right=fr, on='candle_begin_time', how='left')
-        df['fundingRate'].fillna(value=0.0, inplace=True)
+        df['fundingRate'] = df['_fr'].fillna(value=0.0)
+        del df['_fr']
         df['fr_fee'] = df['hold_num'] * df['close'] * df['fundingRate']
 
     df['fee'] = df['fee'].expanding().sum()
@@ -198,30 +246,26 @@ def cal_equity_curve(candle_df, trade_df, fee, cap, margin_rate=0.05,
     df['profit'] = df['real_profit'] - df['fr_fee'] - df['fee'] + df['unreal_profit']
     df['net_value'] = (df['profit'] + cap) / cap
     df['net_value'].fillna(value=1, inplace=True)
-
-    df, stop_reason = _apply_stop(df, cap, stop_loss, stop_profit, c_rate_taker)
-
-    blown = False
-    df['爆仓'] = np.nan
-    df.loc[df['net_value'] < margin_rate, '爆仓'] = 1
-    df['爆仓'].fillna(method='ffill', inplace=True)
-    if 1 in df['爆仓'].to_list():
-        df.loc[df['爆仓'] == 1, 'net_value'] = 0.0
-        blown = True
-    return df, stop_reason, blown
+    return df
 
 
 def simulate_grid_engine(bars_df, grid_params, cap=10000.0, leverage=5.0, fee=0.0002,
                          min_amount=0.0, max_rate=0.68, margin_rate=0.05,
-                         stop_loss=None, stop_profit=None, c_rate_taker=0.0005,
+                         stop_cfg=None, c_rate_taker=0.0005,
                          funding_df=None, neutral_init=True):
     """
     端到端封装：bars(本项目 1m df) + 布网参数 → 资金曲线终值。
     grid_params: dict(low_price, high_price, grid_count, stop_high_price, stop_low_price)
     neutral_init: True 时模拟 OKX 中性网格的初始仓位（开网即按 entry 预置 grids_above×每格量 多头）。
+    stop_cfg: 实盘 stop_loss_config（stop_loss/trailing_k/trailing_floor/fundingRate_stop_loss）；
+              None=不套退出(仅破网/爆仓)，跑到窗口末（校准手动停止网格用）。
+    funding_df: 列 ts(ms,UTC)/fundingRate，用于资金费 PnL + 资金费率止损。
     返回: dict(pnl_ratio, net_value_final, terminated, exit_reason, blown_up, n_trades, broke)
     """
-    bars = bars_df[['candle_begin_time', 'open', 'high', 'low', 'close']].copy()
+    cols = ['candle_begin_time', 'open', 'high', 'low', 'close']
+    if 'quote_volume' in bars_df.columns:
+        cols = cols + ['quote_volume']
+    bars = bars_df[cols].copy()
     if 'symbol' in bars_df.columns:
         bars['symbol'] = bars_df['symbol'].values
     gi = grid_order_info(cap, leverage, grid_params['low_price'], grid_params['high_price'],
@@ -249,9 +293,14 @@ def simulate_grid_engine(bars_df, grid_params, cap=10000.0, leverage=5.0, fee=0.
         return {'pnl_ratio': 0.0, 'net_value_final': 1.0, 'terminated': broke,
                 'exit_reason': '破网' if broke else '未触网', 'blown_up': False, 'n_trades': 0, 'broke': broke}
     bars = bars[bars['candle_begin_time'] <= tick_df['candle_begin_time'].iloc[-1]]
-    eq, stop_reason, blown = cal_equity_curve(bars, trade_df, fee, cap, margin_rate,
-                                              stop_loss, stop_profit, c_rate_taker, funding_df)
+    eq = cal_equity_curve(bars, trade_df, fee, cap, c_rate_taker, funding_df)
+
+    # pv 量能信号（需 quote_volume）；窗口内 rolling(233) 近似，缺前置历史（fidelity 限制）
+    pv_spike_df = calc_pv_spike(bars) if (stop_cfg is not None and 'quote_volume' in bars.columns) else None
+
+    eq, stop_reason, blown = _apply_exit(eq, cap, c_rate_taker, stop_cfg, margin_rate, pv_spike_df)
     nv = float(eq['net_value'].iloc[-1])
-    exit_reason = '爆仓' if blown else (stop_reason or ('破网' if broke else '窗口结束'))
-    return {'pnl_ratio': nv - 1.0, 'net_value_final': nv, 'terminated': bool(stop_reason or broke or blown),
+    exit_reason = stop_reason or ('破网' if broke else '窗口结束')
+    return {'pnl_ratio': nv - 1.0, 'net_value_final': nv,
+            'terminated': bool(stop_reason or broke or blown),
             'exit_reason': exit_reason, 'blown_up': blown, 'n_trades': int(len(trade_df)), 'broke': broke}
