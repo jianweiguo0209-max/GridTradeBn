@@ -10,12 +10,17 @@ class HyperliquidAdapter(CcxtAdapter):
     def __init__(self, client):
         super().__init__(client, name='hyperliquid')
 
-    # 规范 'BTC/USDT:USDT' <-> HL 原生 'BTC/USDC:USDC'
+    # 规范 'BTC/USDT:USDT' <-> HL 原生 'BTC/USDC:USDC'（None 原样返回：
+    # HL createOrder 响应不带 symbol，ccxt 解析出 None，勿在其上 .split 崩溃）
     def to_native(self, symbol: str) -> str:
+        if not symbol:
+            return symbol
         base = symbol.split('/')[0]
         return f'{base}/USDC:USDC'
 
     def to_canonical(self, native: str) -> str:
+        if not native:
+            return native
         base = native.split('/')[0]
         return f'{base}/USDT:USDT'
 

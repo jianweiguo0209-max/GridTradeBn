@@ -18,7 +18,9 @@ class StateStore:
         # 规范成 postgresql://（默认 psycopg2 方言）。
         if url.startswith('postgres://'):
             url = 'postgresql://' + url[len('postgres://'):]
-        return cls(create_engine(url, future=True))
+        # pool_pre_ping：用前校验连接、失效自动重连（Fly Postgres 关空闲连接，
+        # 否则复用死连接报 "server closed the connection unexpectedly"）。
+        return cls(create_engine(url, future=True, pool_pre_ping=True))
 
     @classmethod
     def in_memory(cls) -> 'StateStore':
