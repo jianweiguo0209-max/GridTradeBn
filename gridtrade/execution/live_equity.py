@@ -37,6 +37,15 @@ class LiveEquity:
         })
         self._last_ts = int(ts_ms)
 
+    def add_funding(self, amount):
+        self.funding_paid += float(amount)
+
+    def replay(self, fills) -> 'LiveEquity':
+        """fills: 可迭代的 (price, side, size, ts_ms)。供 reconciler 从持久化成交重建。"""
+        for price, side, size, ts_ms in fills:
+            self.record_fill(price, side, size, ts_ms)
+        return self
+
     def snapshot(self, mark_price) -> dict:
         if not self._fills:
             return {'net_value': 1.0, 'pnl_ratio': 0.0, 'net_position': 0.0,

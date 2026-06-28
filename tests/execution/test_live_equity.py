@@ -90,3 +90,26 @@ def test_bad_side_raises():
     import pytest
     with pytest.raises(ValueError):
         _le().record_fill(100.0, 'long', 0.5, 60_000)
+
+
+def test_add_funding_reduces_net_value():
+    le = _le(entry=100.0)
+    le.record_fill(99.0, 'buy', 0.5, 60_000)
+    before = le.snapshot(101.0)['net_value']
+    le.add_funding(5.0)                       # 支付 5 USDT 资金费
+    after = le.snapshot(101.0)
+    assert abs((before - after['net_value']) - 5.0 / CAP) < 1e-12
+    assert after['funding_paid'] == 5.0
+
+
+def test_replay_matches_incremental():
+    fills = [(99.0, 'buy', 0.5, 60_000), (98.0, 'buy', 0.5, 120_000),
+             (99.0, 'sell', 0.5, 180_000)]
+    inc = _le(entry=100.0)
+    for price, side, size, ts in fills:
+        inc.record_fill(price, side, size, ts)
+    rep = _le(entry=100.0).replay(fills)
+    a, b = inc.snapshot(100.0), rep.snapshot(100.0)
+    assert abs(a['net_value'] - b['net_value']) < 1e-12
+    assert abs(a['net_position'] - b['net_position']) < 1e-12
+    assert abs(a['realized_pnl'] - b['realized_pnl']) < 1e-12
