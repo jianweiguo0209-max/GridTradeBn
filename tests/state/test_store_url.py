@@ -16,3 +16,9 @@ def test_from_url_keeps_explicit_driver():
 def test_from_url_keeps_sqlite():
     store = StateStore.from_url('sqlite://')
     assert store.engine.url.drivername == 'sqlite'
+
+
+def test_from_url_enables_pool_pre_ping():
+    # Fly Postgres 会关闭空闲连接；pre_ping 用前校验+重连，避免 "server closed the connection"
+    store = StateStore.from_url('postgresql+psycopg2://u:p@h/db')
+    assert store.engine.pool._pre_ping is True
