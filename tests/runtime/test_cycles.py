@@ -71,6 +71,20 @@ def test_restore_all_empty_when_no_active():
     assert restore_all(Reconciler(gx)) == []
 
 
+def test_monitor_cycle_lazy_restores_grid_opened_by_another_process():
+    # 跨进程：scheduler 进程开网格（gx 内存有），monitor 进程（gx2 空内存、共享同 store/ex）
+    # 直接 sync 会 KeyError；run_monitor_cycle 应先惰性 restore 再 monitor。
+    from gridtrade.runtime.cycles import run_monitor_cycle
+    ex, store, gx, mgr = _setup(100.0)
+    mgr.open_proposals([_proposal()])
+    gx2 = GridExecutor(ex, store, cap=1000.0, leverage=5.0)   # 新进程：空 _geom
+    from gridtrade.execution.gates import GateChain, SymbolLockGate
+    mgr2 = GridManager(gx2, GateChain([SymbolLockGate(gx2.grids)]), stop_cfg=STOP_CFG)
+    out = run_monitor_cycle(Reconciler(gx2), mgr2)            # 不应 KeyError
+    assert out['monitored'][0]['closed'] is False
+    assert gx2.is_loaded(out['monitored'][0]['grid_id'])     # 已被惰性重建
+
+
 class _FixedTrigger(TriggerCondition):
     def __init__(self, props):
         self._props = props

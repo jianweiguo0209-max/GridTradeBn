@@ -22,9 +22,12 @@ def restore_all(reconciler) -> List[str]:
 
 
 def run_monitor_cycle(reconciler, manager) -> dict:
-    """monitor 机循环体：先逐网格对账补单，再 monitor_all 止盈止损。"""
+    """monitor 机循环体：惰性重建内存态（他进程开的/重启后的网格）→ 逐网格对账补单 → monitor_all。"""
+    ex = manager.executor
     reconciled = {}
-    for grid in _active_grids(manager.executor.grids):
+    for grid in _active_grids(ex.grids):
+        if not ex.is_loaded(grid.id):
+            reconciler.restore(grid.id)   # 他进程开的或本进程重启 -> 先重建几何/游标/记账
         reconciled[grid.id] = reconciler.reconcile_open_orders(grid.id, grid.symbol)
     monitored = manager.monitor_all()
     return {'reconciled': reconciled, 'monitored': monitored}

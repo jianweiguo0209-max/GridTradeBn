@@ -38,6 +38,10 @@ class GridExecutor:
     def _next_oid(self, grid_id, line_index):
         return '%s:%d:%d' % (grid_id, line_index, next(self._seq[grid_id]))
 
+    def is_loaded(self, grid_id) -> bool:
+        """内存态是否已就绪（同进程 open 或 reconciler.restore 重建后）。"""
+        return grid_id in self._geom
+
     def open(self, exchange, symbol, grid_params, *, offset=0, tag=''):
         gi = grid_order_info(self.cap, self.leverage, grid_params['low_price'],
                              grid_params['high_price'], int(grid_params['grid_count']),
