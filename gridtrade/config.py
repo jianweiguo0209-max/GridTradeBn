@@ -31,6 +31,13 @@ def _s(env, key, default=''):
     return v if v not in (None,) else default
 
 
+def _csv(env, key):
+    v = env.get(key)
+    if not v:
+        return ()
+    return tuple(s.strip() for s in v.split(',') if s.strip())
+
+
 @dataclass
 class DeployConfig:
     exchange: str
@@ -46,6 +53,7 @@ class DeployConfig:
     total_budget: float
     default_cap: float
     utc_offset: int
+    blacklist: tuple = ()
 
 
 def load_deploy_config(env=None) -> DeployConfig:
@@ -65,6 +73,7 @@ def load_deploy_config(env=None) -> DeployConfig:
         total_budget=_f(env, 'TOTAL_BUDGET', 1_000_000.0),
         default_cap=_f(env, 'DEFAULT_CAP', cap),   # 未设 -> 用 cap
         utc_offset=_i(env, 'UTC_OFFSET', 8),
+        blacklist=_csv(env, 'BLACKLIST_SYMBOLS'),
     )
 
 

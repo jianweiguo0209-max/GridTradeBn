@@ -137,6 +137,12 @@ grid_fills = Table(
     Index('ix_grid_fills_grid', 'grid_id'),
 )
 
+heartbeats = Table(
+    'heartbeats', metadata,
+    Column('machine', String, primary_key=True),
+    Column('last_beat_ts', Integer, nullable=False),
+)
+
 
 # ---- 数据类（仓储层入参/出参）----
 @dataclass
@@ -217,3 +223,9 @@ class Fill:
     size: float
     ts: int
     created_at: int = 0
+
+
+@dataclass
+class Heartbeat:
+    machine: str
+    last_beat_ts: int
