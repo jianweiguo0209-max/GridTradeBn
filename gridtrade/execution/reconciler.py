@@ -29,9 +29,12 @@ class Reconciler:
             live.record_fill(g.entry_price, 'buy', order_num, 0)
         for f in ex.fills.list_by_grid(grid_id):   # 已按 ts 升序
             live.record_fill(f.price, f.side, f.size, f.ts)
+        acc = ex.accounting.get(grid_id)
+        if acc is not None:
+            live.funding_paid = acc.funding_paid      # recover cumulative funding (durable)
         ex.live[grid_id] = live
         ex._trade_cursor[grid_id] = ex.fills.max_ts(grid_id)
-        ex._funding_cursor[grid_id] = 0
+        ex._funding_cursor[grid_id] = acc.funding_cursor if acc is not None else 0
 
     def reconcile_open_orders(self, grid_id, symbol):
         ex = self.ex

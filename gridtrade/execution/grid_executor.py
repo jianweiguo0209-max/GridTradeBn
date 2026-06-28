@@ -144,6 +144,7 @@ class GridExecutor:
             acc.funding_paid = snap['funding_paid']
             acc.net_position = snap['net_position']
             acc.avg_price = snap['avg_price']
+            acc.funding_cursor = self._funding_cursor.get(grid_id, 0)
             self.accounting.save(acc)
             self.accounting.bump_peak(grid_id, snap['pnl_ratio'])
         return {'new_fills': new_count, 'snapshot': snap}

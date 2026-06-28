@@ -76,3 +76,27 @@ def test_reconcile_cancels_orphan_and_replaces_missing():
     out2 = rec.reconcile_open_orders(gid, SYM)
     assert out2['canceled'] == 1
     assert all(o.client_oid != 'zzz:orphan:0' for o in ex.fetch_open_orders(SYM))
+
+
+def test_restore_preserves_funding_without_refetching_full_history():
+    ex = FakeExchange(instruments=[Instrument(SYM, 0.1, 0.001, 0.001, 'live', 0)], price=100.0)
+    ex.set_price(SYM, 100.0)
+    store = StateStore.in_memory(); store.create_all()
+    gx = _new_executor(ex, store)
+    gid = gx.open('fake', SYM, GP)
+    ex.set_price(SYM, 100.6)
+    ex.seed_funding_payments(SYM, [(10_000, 2.0)])   # paid 2.0 before restart
+    gx.sync(gid, SYM)
+    funding_before = gx.accounting.get(gid).funding_paid
+    assert abs(funding_before - 2.0) < 1e-9
+
+    # restart: fresh executor, restore from durable state
+    gx2 = _new_executor(ex, store)
+    from gridtrade.execution.reconciler import Reconciler
+    Reconciler(gx2).restore(gid)
+    assert abs(gx2.live[gid].funding_paid - 2.0) < 1e-9          # recovered, not lost
+    # simulate the exchange having dropped the old payment from its window (page-limited):
+    ex.seed_funding_payments(SYM, [])                            # no payments returned now
+    gx2.sync(gid, SYM)
+    # funding must NOT reset to 0 just because the exchange no longer returns the old payment
+    assert abs(gx2.accounting.get(gid).funding_paid - 2.0) < 1e-9

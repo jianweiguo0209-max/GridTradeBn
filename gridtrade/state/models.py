@@ -101,6 +101,7 @@ grid_accounting = Table(
     Column('net_position', Float, nullable=False, default=0.0),
     Column('avg_price', Float, nullable=False, default=0.0),
     Column('pnl_ratio_max', Float, nullable=False, default=0.0),
+    Column('funding_cursor', Integer, nullable=False, default=0),
     Column('updated_at', Integer, nullable=False),
     Column('version', Integer, nullable=False, default=1),
 )
@@ -184,6 +185,7 @@ class Accounting:
     net_position: float = 0.0
     avg_price: float = 0.0
     pnl_ratio_max: float = 0.0
+    funding_cursor: int = 0
     updated_at: int = 0
     version: int = 1
 
