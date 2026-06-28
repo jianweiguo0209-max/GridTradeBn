@@ -2,16 +2,10 @@
 
 
 def resolve_universe(datasource, *, quote='USDT', min_list_age_days=15, limit=None):
-    out = []
-    for inst in datasource.list_instruments():
-        if inst.state != 'live':
-            continue
-        # list_ts==0 视为未知，放行；否则可按需扩展上市时长过滤（此处保留接口）
-        sym = inst.symbol
-        if (':%s' % quote) in sym or ('/%s:' % quote) in sym or sym.endswith('/%s' % quote):
-            out.append(sym)
-        else:
-            out.append(sym)  # 规范符号已由 adapter 统一；不强制 quote 形态
+    """返回可交易票池（规范符号）。当前仅过滤 state=='live' + 去重排序 + 可选 limit。
+    quote / min_list_age_days 为**预留参数、暂未生效**：符号已由 adapter 统一为规范形态，
+    且 list_ts 多为 0/未知，无可靠上市时长可过滤；待 adapter 提供可靠 list_ts 后再实现。"""
+    out = [inst.symbol for inst in datasource.list_instruments() if inst.state == 'live']
     out = sorted(set(out))
     return out[:limit] if limit else out
 
