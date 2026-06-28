@@ -72,6 +72,10 @@ class ExchangeAdapter(ABC):
 
     name: str = 'base'
 
+    def encode_cloid(self, client_oid):
+        """下单时发给交易所的 client order id。默认原样；返回 None=省略（如 HL）。"""
+        return client_oid
+
     # ---- 行情（公共）----
     @abstractmethod
     def list_instruments(self) -> List[Instrument]: ...

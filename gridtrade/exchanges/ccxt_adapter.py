@@ -137,8 +137,9 @@ class CcxtAdapter(ExchangeAdapter):
 
     def _params(self, reduce_only, client_oid, post_only=False):
         p = {}
-        if client_oid:
-            p['clientOrderId'] = client_oid
+        coid = self.encode_cloid(client_oid) if client_oid else None
+        if coid:
+            p['clientOrderId'] = coid
         if reduce_only:
             p['reduceOnly'] = True
         if post_only:

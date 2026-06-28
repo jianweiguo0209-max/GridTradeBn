@@ -19,6 +19,11 @@ class HyperliquidAdapter(CcxtAdapter):
         base = native.split('/')[0]
         return f'{base}/USDT:USDT'
 
+    def encode_cloid(self, client_oid):
+        # HL 的 cloid 须 128-bit hex；我们的 client_oid 是字符串。省略 cloid，
+        # 改按 exchange order id 匹配 fill/对账（HL fill/open order 只带 oid）。
+        return None
+
     def create_market_order(self, symbol, side, size, *,
                             reduce_only=False, client_oid=None):
         # HL 无真正市价单：ccxt 需一个参考价来算滑点上限（默认 5%）。传当前价。
