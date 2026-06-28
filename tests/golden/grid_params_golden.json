@@ -1,0 +1,16 @@
+{
+  "v1": {
+    "high_price": 138.264,
+    "low_price": 108.63600000000001,
+    "stop_high_price": 155.855625,
+    "stop_low_price": 91.661625,
+    "grid_count": 17
+  },
+  "v2": {
+    "high_price": 138.264,
+    "low_price": 108.63600000000001,
+    "stop_high_price": 139.64664000000002,
+    "stop_low_price": 107.54964000000001,
+    "grid_count": 25
+  }
+}
