@@ -73,3 +73,23 @@ def test_existing_fixed_client_still_terminates():
     a = _adapter(FixedClient())
     df = a.fetch_ohlcv('BTC/USDT:USDT', '1h', 0, 10 ** 13)
     assert len(df) == 2 and list(df.columns) == CANDLE_COLS
+
+
+class OneRowClient:
+    """Edge page cap: returns at most 1 bar per call from `since`."""
+    def __init__(self, start, n, tf_ms=3600_000):
+        self.bars = [[start + i * tf_ms, 1.0, 2.0, 0.5, 1.5, 10.0] for i in range(n)]
+        self.tf_ms = tf_ms
+    def parse_timeframe(self, tf):
+        return self.tf_ms // 1000
+    def fetch_ohlcv(self, symbol, timeframe, since=None, limit=None):
+        since = since or 0
+        page = [b for b in self.bars if b[0] >= since][:1]
+        return page
+
+
+def test_fetch_ohlcv_single_row_page_cap_fetches_full_range():
+    start = 1_700_000_000_000
+    a = _adapter(OneRowClient(start, n=10))
+    df = a.fetch_ohlcv('BTC/USDT:USDT', '1h', start, start + 9 * 3600_000)
+    assert len(df) == 10        # must not stop after the first 1-row page

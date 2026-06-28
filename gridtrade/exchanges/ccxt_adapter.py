@@ -55,7 +55,7 @@ class CcxtAdapter(ExchangeAdapter):
             if last_ts < cursor:          # 无进展
                 break
             cursor = last_ts + tf_ms
-            if len(batch) < 2:            # 末页
+            if last_ts >= end_ms:         # 已覆盖区间
                 break
         if not all_rows:
             return pd.DataFrame(columns=CANDLE_COLS)
@@ -87,7 +87,7 @@ class CcxtAdapter(ExchangeAdapter):
             if last_ts < cursor:
                 break
             cursor = last_ts + 1
-            if len(batch) < 2:
+            if last_ts >= end_ms:
                 break
         if not all_rows:
             return pd.DataFrame(columns=FUNDING_COLS)
