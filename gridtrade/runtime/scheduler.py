@@ -1,4 +1,9 @@
-"""scheduler 机入口（scale-to-zero 一次性）：关旧 tag → 选币 → 准入 → 开新 → 心跳。"""
+"""scheduler 机入口（常驻 process group）：每整点关旧 tag → 选币 → 准入 → 开新 → 心跳。
+
+默认仅整点跑（避免部署 mid-hour 重处理当前 offset 而 churn）；SCHEDULER_RUN_ON_START
+=true 时启动立即跑一次（testnet 调试）。单轮异常降级续跑不退出，SIGTERM 优雅停。
+"""
+import signal
 import time
 
 import pandas as pd
@@ -40,11 +45,44 @@ def run_scheduler_once(runtime, *, now_fn=time.time,
     return result
 
 
+def _seconds_to_next_hour(now_epoch) -> int:
+    return 3600 - (int(now_epoch) % 3600)
+
+
+def _safe_run(runtime, run_once_fn, now_fn, log):
+    try:
+        run_once_fn(runtime, now_fn=now_fn)
+    except Exception as exc:          # 降级：记录 + 续跑，绝不退出
+        log('[scheduler] degraded: %r' % exc)
+
+
+def run_scheduler(runtime, *, once=False, sleep=time.sleep, now_fn=time.time,
+                  log=print, run_once_fn=run_scheduler_once,
+                  should_stop=None, run_on_start=False):
+    if run_on_start:
+        _safe_run(runtime, run_once_fn, now_fn, log)
+        if once:
+            return
+    while True:
+        sleep(_seconds_to_next_hour(now_fn()))
+        _safe_run(runtime, run_once_fn, now_fn, log)
+        if once:
+            return
+        if should_stop is not None and should_stop():
+            return
+
+
 def main() -> None:   # composition root（不单测）
     rt = build_runtime(load_deploy_config())
-    out = run_scheduler_once(rt)
-    print('[scheduler] closed=%d opened=%d' % (len(out['closed']),
-                                               len(out['opened'])))
+    stop = {'flag': False}
+
+    def _graceful(signum, frame):
+        stop['flag'] = True
+
+    signal.signal(signal.SIGTERM, _graceful)
+    signal.signal(signal.SIGINT, _graceful)
+    run_scheduler(rt, should_stop=lambda: stop['flag'],
+                  run_on_start=rt.config.scheduler_run_on_start)
 
 
 if __name__ == '__main__':

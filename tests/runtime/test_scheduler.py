@@ -41,3 +41,53 @@ def test_fetch_universe_candles_skips_empty_and_collects_nonempty():
                                  pd.Timestamp('2025-06-24 14:00:00'),
                                  max_candle_num=10)
     assert 'BTC/USDC:USDC' in out and 'NONE/USDC:USDC' not in out
+
+
+def test_seconds_to_next_hour():
+    from gridtrade.runtime.scheduler import _seconds_to_next_hour
+    assert _seconds_to_next_hour(1_750_000_000.0) == 3200
+    assert _seconds_to_next_hour(3600.0) == 3600       # 整点 -> 整一小时
+    assert _seconds_to_next_hour(3601.0) == 3599
+
+
+def test_run_scheduler_run_on_start_runs_immediately():
+    from gridtrade.runtime.scheduler import run_scheduler
+    rt = _rt()
+    calls, sleeps = [], []
+    run_scheduler(rt, once=True, run_on_start=True, sleep=sleeps.append,
+                  now_fn=lambda: 1_750_000_000.0,
+                  run_once_fn=lambda runtime, now_fn: calls.append('run'))
+    assert calls == ['run'] and sleeps == []   # 启动即跑、无 sleep
+
+
+def test_run_scheduler_sleeps_to_hour_then_runs_when_not_run_on_start():
+    from gridtrade.runtime.scheduler import run_scheduler
+    rt = _rt()
+    calls, sleeps = [], []
+    run_scheduler(rt, once=True, run_on_start=False, sleep=sleeps.append,
+                  now_fn=lambda: 1_750_000_000.0,
+                  run_once_fn=lambda runtime, now_fn: calls.append('run'))
+    assert sleeps == [3200] and calls == ['run']   # 先睡到整点再跑
+
+
+def test_run_scheduler_loops_until_should_stop():
+    from gridtrade.runtime.scheduler import run_scheduler
+    rt = _rt()
+    n = {'i': 0}
+    def _run(runtime, now_fn):
+        n['i'] += 1
+    run_scheduler(rt, sleep=lambda d: None, now_fn=lambda: 1_750_000_000.0,
+                  run_once_fn=_run, should_stop=lambda: n['i'] >= 3)
+    assert n['i'] == 3
+
+
+def test_run_scheduler_degrades_on_error_and_continues():
+    from gridtrade.runtime.scheduler import run_scheduler
+    rt = _rt()
+    logs = []
+    def _boom(runtime, now_fn):
+        raise RuntimeError('boom')
+    run_scheduler(rt, once=True, run_on_start=True, sleep=lambda d: None,
+                  now_fn=lambda: 1_750_000_000.0, log=logs.append,
+                  run_once_fn=_boom)
+    assert any('boom' in s or 'degraded' in s for s in logs)
