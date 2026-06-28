@@ -60,6 +60,12 @@ class Trade:
     ts: int           # 毫秒
 
 
+@dataclass
+class FundingPayment:
+    ts: int       # 毫秒
+    amount: float  # >0 表示支付（净值下降）
+
+
 class ExchangeAdapter(ABC):
     """所有交易所适配器的统一端口。规范符号入参，统一 schema 出参。"""
 
@@ -118,6 +124,11 @@ class ExchangeAdapter(ABC):
     @abstractmethod
     def exchange_status(self) -> str:
         """'ok' 或 'maintenance'。"""
+
+    @abstractmethod
+    def fetch_funding_payments(self, symbol: str,
+                               since_ms: Optional[int] = None) -> List[FundingPayment]:
+        """账户级资金费扣款流水；amount>0 表示支付。按 ts 升序。"""
 
     # ---- 可选：标记价 K线（默认未实现）----
     def fetch_mark_ohlcv(self, symbol: str, timeframe: str,
