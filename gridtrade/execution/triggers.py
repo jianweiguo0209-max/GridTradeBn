@@ -38,3 +38,67 @@ class TriggerEngine:
         for trigger in self.triggers:
             proposals.extend(trigger.propose(ctx))
         return proposals
+
+
+def _default_select_fn(strategy_config, factors, weight_list):
+    period = strategy_config['period']
+    choose_symbols = strategy_config['choose_symbols']
+
+    def _fn(symbol_candle_data, run_time, offset):
+        all_df = proceed_calc_symbol_factor(symbol_candle_data, run_time,
+                                            period, offset)
+        if all_df is None or all_df.empty:
+            return all_df
+        return select_grid_coin(all_df, factors, weight_list, choose_symbols,
+                                run_time)
+
+    return _fn
+
+
+class ScheduledSelectionTrigger(TriggerCondition):
+    """offset + 因子选币 → 网格提议（legacy 主流程原样保留）。
+
+    产出 raw-float grid_params（来自已金标的 core.grid_params），tick 精度由适配器
+    下单层负责，本触发器不格式化、不套用 legacy 的 round 碰撞护栏。
+    """
+
+    def __init__(self, strategy_config, factors, weight_list, *,
+                 utc_offset=8, select_fn=None,
+                 source='ScheduledSelectionTrigger'):
+        self.strategy_config = strategy_config
+        self.factors = factors
+        self.weight_list = weight_list
+        self.utc_offset = int(utc_offset)
+        self.source = source
+        self.select_fn = select_fn or _default_select_fn(
+            strategy_config, factors, weight_list)
+
+    def propose(self, ctx: TriggerContext) -> List[GridProposal]:
+        cfg = self.strategy_config
+        period = cfg['period']
+        offset = compute_offset(ctx.run_time, period, self.utc_offset)
+        factor_data = self.select_fn(ctx.symbol_candle_data, ctx.run_time, offset)
+        if factor_data is None or factor_data.empty:
+            return []
+        # point-in-time 新鲜度过滤（同 selection_replay）
+        factor_data = factor_data[
+            (factor_data['time'] + pd.to_timedelta(period)) >= ctx.run_time]
+        if factor_data.empty:
+            return []
+        factor_data = factor_data.sort_values('rank')
+
+        grid_version = cfg.get('grid_version', 1)
+        calc_fn = calc_grid_params_v2 if grid_version == 2 else calc_grid_params_v1
+        price_limit = cfg['price_limit']
+        stop_limit = cfg['stop_limit']
+        v2_config = cfg.get('grid_v2_config', {})
+        tag = '%s%d' % (cfg['strategy_tag'], offset)
+
+        proposals: List[GridProposal] = []
+        for _, row in factor_data.iterrows():
+            params = calc_fn(row=row, price_limit=price_limit,
+                             stop_limit=stop_limit, v2_config=v2_config)
+            proposals.append(GridProposal(
+                exchange=ctx.exchange, symbol=row['symbol'], grid_params=params,
+                offset=offset, tag=tag, source=self.source))
+        return proposals
