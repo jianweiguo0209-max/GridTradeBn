@@ -49,3 +49,15 @@ class GridManager:
                     reason=res['reason'], pnl_ratio=res['pnl_ratio']))
             results.append({'grid_id': grid.id, **res})
         return results
+
+    def close_by_tag(self, tag: str, reason: str) -> List[str]:
+        closed: List[str] = []
+        active = [g for g in self.executor.grids.list_active()
+                  if g.status == ACTIVE and g.tag == tag]
+        for grid in active:
+            res = self.executor.close(grid.id, grid.symbol, reason)
+            self._publish(GridClosed(
+                grid_id=grid.id, exchange=grid.exchange, symbol=grid.symbol,
+                reason=reason, pnl_ratio=res['pnl_ratio']))
+            closed.append(grid.id)
+        return closed
