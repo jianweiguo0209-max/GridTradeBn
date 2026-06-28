@@ -40,11 +40,27 @@ class CcxtAdapter(ExchangeAdapter):
         return out
 
     def fetch_ohlcv(self, symbol, timeframe, start_ms, end_ms) -> pd.DataFrame:
-        rows = self.client.fetch_ohlcv(self.to_native(symbol), timeframe,
-                                       since=start_ms, limit=None)
-        if not rows:
+        native = self.to_native(symbol)
+        tf_ms = int(self.client.parse_timeframe(timeframe) * 1000)
+        all_rows = []
+        cursor = int(start_ms)
+        guard = 0
+        while cursor <= end_ms and guard < 10000:
+            guard += 1
+            batch = self.client.fetch_ohlcv(native, timeframe, since=cursor, limit=1000)
+            if not batch:
+                break
+            all_rows.extend(batch)
+            last_ts = int(batch[-1][0])
+            if last_ts < cursor:          # 无进展
+                break
+            cursor = last_ts + tf_ms
+            if last_ts >= end_ms:         # 已覆盖区间
+                break
+        if not all_rows:
             return pd.DataFrame(columns=CANDLE_COLS)
-        df = pd.DataFrame(rows, columns=['ts', 'open', 'high', 'low', 'close', 'vol'])
+        df = pd.DataFrame(all_rows, columns=['ts', 'open', 'high', 'low', 'close', 'vol'])
+        df = df.drop_duplicates(subset=['ts'])
         df = df[(df['ts'] >= start_ms) & (df['ts'] <= end_ms)]
         df['candle_begin_time'] = pd.to_datetime(df['ts'], unit='ms')
         df['symbol'] = symbol
@@ -57,15 +73,28 @@ class CcxtAdapter(ExchangeAdapter):
         return df
 
     def fetch_funding_history(self, symbol, start_ms, end_ms) -> pd.DataFrame:
-        rows = self.client.fetch_funding_rate_history(self.to_native(symbol),
-                                                      since=start_ms, limit=None)
-        if not rows:
+        native = self.to_native(symbol)
+        all_rows = []
+        cursor = int(start_ms)
+        guard = 0
+        while cursor <= end_ms and guard < 10000:
+            guard += 1
+            batch = self.client.fetch_funding_rate_history(native, since=cursor, limit=1000)
+            if not batch:
+                break
+            all_rows.extend(batch)
+            last_ts = int(batch[-1]['timestamp'])
+            if last_ts < cursor:
+                break
+            cursor = last_ts + 1
+            if last_ts >= end_ms:
+                break
+        if not all_rows:
             return pd.DataFrame(columns=FUNDING_COLS)
-        df = pd.DataFrame([{
-            'ts': int(r['timestamp']), 'symbol': symbol,
-            'fundingRate': float(r['fundingRate']),
-            'realizedRate': float(r['fundingRate']),
-        } for r in rows])
+        df = pd.DataFrame([{'ts': int(r['timestamp']), 'symbol': symbol,
+                            'fundingRate': float(r['fundingRate']),
+                            'realizedRate': float(r['fundingRate'])} for r in all_rows])
+        df = df.drop_duplicates(subset=['ts'])
         df = df[(df['ts'] >= start_ms) & (df['ts'] <= end_ms)]
         return df[FUNDING_COLS].sort_values('ts').reset_index(drop=True)
 
