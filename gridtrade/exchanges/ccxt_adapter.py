@@ -48,6 +48,9 @@ class CcxtAdapter(ExchangeAdapter):
         df = df[(df['ts'] >= start_ms) & (df['ts'] <= end_ms)]
         df['candle_begin_time'] = pd.to_datetime(df['ts'], unit='ms')
         df['symbol'] = symbol
+        # TODO(P5): quote_volume=vol*close makes vwap=quote_volume/volCcy collapse to close,
+        # degrading Vwapbias/MarketPl on real data. P5 datasource must map quote_volume from
+        # the exchange's true turnover field (OKX volCcyQuote / HL turnover); vol*close is a fallback only.
         df['volCcy'] = df['vol']
         df['quote_volume'] = df['vol'] * df['close']
         df = df[CANDLE_COLS].sort_values('candle_begin_time').reset_index(drop=True)
