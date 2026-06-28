@@ -24,7 +24,7 @@ primary_region = "nrt"
   SCHEDULER_PERIOD = "12H"
   UTC_OFFSET = "8"
   MAX_CONCURRENT = "20"
-  # SCHEDULER_RUN_ON_START = "true"   # testnet 调试：scheduler 启动即跑一次；稳定后删/置 false
+  SCHEDULER_RUN_ON_START = "true"   # testnet 调试：scheduler 启动即跑一次；稳定后置 "false"
   # CAP / LEVERAGE / TOTAL_BUDGET / BLACKLIST_SYMBOLS 按需在此或 secrets 配置
 
 [processes]
