@@ -272,6 +272,89 @@ def _symbol_holding_ranges(candidates_csv, period, buffer_days=1, lead=None):
     return ranges
 
 
+def _holding_windows(candidates_csv, period, lead=None):
+    """每个选中网格的持仓取数窗口 (symbol, lo, hi)，lo=rt-lead-1天, hi=rt+period+1天。
+    与 backtest_run.load_*_holding 的逐格窗口一致——只取实际需要的天，
+    避免 _symbol_holding_ranges 的 min-max 连续区间在多年窗口上过度取数(实测可达 4x)。"""
+    if not os.path.exists(candidates_csv):
+        return []
+    df = pd.read_csv(candidates_csv)
+    df = df[df['symbol'].notna() & (df['symbol'].astype(str) != '')]
+    if df.empty:
+        return []
+    ptd = pd.to_timedelta(period)
+    lead = lead if lead is not None else pd.Timedelta(0)
+    wins = []
+    for _, r in df.iterrows():
+        rt = pd.Timestamp(r['run_time'])
+        wins.append((r['symbol'], rt - lead - pd.Timedelta(days=1), rt + ptd + pd.Timedelta(days=1)))
+    return wins
+
+
+def stage_holding_candles(cache, manifest_dir, period, bar, workers, proxies, n_pv=233, log=print):
+    """按每个网格的持仓窗口并行预取 bar('1m'/'15m')，只取实际需要的天(非 min-max 连续区间)。
+    幂等：重叠/已缓存的天自动跳过；供 backtest_run --sim-bar 1m 纯读缓存。"""
+    lead = pd.Timedelta(minutes=n_pv * 15) if bar == '15m' else pd.Timedelta(0)
+    wins = _holding_windows(os.path.join(manifest_dir, 'candidates.csv'), period, lead=lead)
+    if not wins:
+        log('[PF-%s] 无候选，跳过' % bar); return
+    log('[PF-%s] %d 个网格持仓窗口并行预取, 并发 %d' % (bar, len(wins), workers))
+    t0 = time.time()
+    counts = {'fetched': 0, 'skip': 0, 'empty': 0, 'failed': 0}
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = {ex.submit(_fetch_symbol_candles, cache, s, lo, hi, bar, proxies): s for (s, lo, hi) in wins}
+        done = 0
+        for fut in as_completed(futs):
+            done += 1
+            try:
+                _, _w, status = fut.result()
+                counts[status] += 1
+            except Exception as e:  # noqa
+                counts['failed'] += 1
+                log('[PF-%s][WARN] %s 取数失败: %s' % (bar, futs[fut], str(e)))
+            if done % 500 == 0:
+                log('[PF-%s] 进度 %d/%d' % (bar, done, len(wins)))
+    log('[PF-%s] 完成: fetched=%d skip=%d empty=%d failed=%d 耗时=%.1fs'
+        % (bar, counts['fetched'], counts['skip'], counts['empty'], counts['failed'], time.time() - t0))
+
+
+def stage_holding_funding_mark(cache, manifest_dir, period, bar, workers, proxies, log=print):
+    """按每个网格的持仓窗口并行预取 funding(swaprate+REST 合并) + mark，只取需要的天。"""
+    wins = _holding_windows(os.path.join(manifest_dir, 'candidates.csv'), period)
+    if not wins:
+        log('[PF-fm] 无候选，跳过'); return
+    mark_fn = lambda sym, s, e, px: H.fetch_mark_candles_range(sym, s, e, bar=bar, proxies=px)
+
+    def fund_fn(sym, s, e, px):
+        swap = H.fetch_swaprate_csv_range(sym, s, e, proxies=px)
+        rest = H.fetch_funding_rate_range(sym, s, e, proxies=px)
+        return _merge_funding(swap, rest)
+
+    jobs = []
+    for (s, lo, hi) in wins:
+        jobs.append(('mark', s, lo, hi, mark_fn, MARK_COLS))
+        jobs.append(('funding', s, lo, hi, fund_fn, FUNDING_COLS))
+    log('[PF-fm] %d 个网格 × (funding+mark) 并行预取, 并发 %d' % (len(wins), workers))
+    t0 = time.time()
+    counts = {'fetched': 0, 'skip': 0, 'empty': 0, 'failed': 0}
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = {ex.submit(_fetch_symbol_range, cache, ns, s, lo, hi, fn, cols, proxies): (ns, s)
+                for (ns, s, lo, hi, fn, cols) in jobs}
+        done = 0
+        for fut in as_completed(futs):
+            done += 1
+            try:
+                _, _w, status = fut.result()
+                counts[status] += 1
+            except Exception as e:  # noqa
+                counts['failed'] += 1
+                log('[PF-fm][WARN] %s 取数失败: %s' % (futs[fut], str(e)))
+            if done % 500 == 0:
+                log('[PF-fm] 进度 %d/%d' % (done, len(jobs)))
+    log('[PF-fm] 完成: fetched=%d skip=%d empty=%d failed=%d 耗时=%.1fs'
+        % (counts['fetched'], counts['skip'], counts['empty'], counts['failed'], time.time() - t0))
+
+
 def stage_funding_mark(cache, manifest_dir, period, bar, workers, proxies, log=print):
     candidates_csv = os.path.join(manifest_dir, 'candidates.csv')
     ranges = _symbol_holding_ranges(candidates_csv, period)
@@ -387,7 +470,8 @@ def _load_strategy_config():
 
 def main():
     ap = argparse.ArgumentParser(description='OKX 网格回测数据预热 (S0/S1/S2/S3)')
-    ap.add_argument('--stage', choices=['all', 's0', 's1', 's1m', 's15m', 's2', 's3'], default='all')
+    ap.add_argument('--stage', choices=['all', 's0', 's1', 's1m', 's15m', 's2', 's3',
+                                        'h1m', 'h15m', 'hfm'], default='all')
     ap.add_argument('--start', default=C.WINDOW_START)
     ap.add_argument('--end', default=C.WINDOW_END)
     ap.add_argument('--bar', default=C.BAR)
@@ -438,6 +522,14 @@ def main():
     if args.stage in ('all', 's2'):
         # S2 依赖 S1 的候选；单独跑 s2 时复用已有 candidates.csv
         stage_funding_mark(cache, args.manifest_dir, period, args.bar, args.workers, proxies)
+
+    # 高效 per-grid 预取（只取持仓窗口的天，避免 min-max 连续区间的多年过度取数）；不入 'all'
+    if args.stage == 'h1m':
+        stage_holding_candles(cache, args.manifest_dir, period, '1m', args.workers, proxies)
+    if args.stage == 'h15m':
+        stage_holding_candles(cache, args.manifest_dir, period, '15m', args.workers, proxies)
+    if args.stage == 'hfm':
+        stage_holding_funding_mark(cache, args.manifest_dir, period, args.bar, args.workers, proxies)
 
     print('预热结束。')
 

@@ -60,6 +60,22 @@ def holding_bars(series_df, run_time, period, utc_offset):
     return sub.sort_values('candle_begin_time')
 
 
+def load_1H_holding(cache, symbol, run_time, period, utc_offset, proxies):
+    """按需补取并缓存某网格持仓期的 1H bars（fetch-on-miss，幂等），返回持仓期切片。
+    与 load_1m_holding 对称地支持 1H 动态缓存；只读窗口涉及的天（不读全历史，
+    避免 read_all_days 把 symbol 的多年 1H 全量读入）。"""
+    lo = run_time - pd.Timedelta(days=1)
+    hi = run_time + pd.to_timedelta(period) + pd.Timedelta(days=1)
+    prewarm._fetch_symbol_candles(cache, symbol, lo, hi, '1H', proxies)  # 幂等：已缓存的天跳过
+    days = [d.strftime('%Y-%m-%d') for d in pd.date_range(lo.normalize(), hi.normalize(), freq='D')]
+    frames = [cache.read('1H', symbol, d) for d in days]
+    frames = [f for f in frames if f is not None and not f.empty]
+    if not frames:
+        return pd.DataFrame()
+    df = pd.concat(frames, ignore_index=True)
+    return holding_bars(df, run_time, period, utc_offset)
+
+
 def load_1m_holding(cache, symbol, run_time, period, utc_offset, proxies):
     """按需拉取并缓存某网格持仓期的 1m bars（namespace='1m'，per-day 幂等），返回持仓期切片。"""
     lo = run_time - pd.Timedelta(days=1)
@@ -144,7 +160,10 @@ def run_backtest(cache, universe, window_start, window_end, strategy_config,
         if sim_bar == '1m':
             bars_df = load_1m_holding(cache, sym, rt, period, utc_offset, proxies)
         else:
+            # 1H：优先用已预载的全量 series 切片（快）；窗口未覆盖则按需补取（动态缓存）
             bars_df = holding_bars(series[sym], rt, period, utc_offset)
+            if len(bars_df) == 0:
+                bars_df = load_1H_holding(cache, sym, rt, period, utc_offset, proxies)
         if len(bars_df) == 0:
             continue
         px = calc_fn(row=row, price_limit=price_limit, stop_limit=stop_limit, v2_config=v2cfg)

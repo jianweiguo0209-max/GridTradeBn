@@ -1,6 +1,8 @@
 """backtest_run 的纯逻辑单测（持仓 bar 切片 + 聚合）。整链路由真实跑验证。"""
 import os
+import shutil
 import sys
+import tempfile
 import unittest
 
 import pandas as pd
@@ -11,6 +13,8 @@ if _BT_DIR not in sys.path:
     sys.path.insert(0, _BT_DIR)
 
 import backtest_run as BT
+import prewarm
+from cache import ParquetCache
 
 
 class TestHoldingBars(unittest.TestCase):
@@ -32,6 +36,51 @@ class TestHoldingBars(unittest.TestCase):
     def test_empty_when_no_bars(self):
         s = self._series()
         sub = BT.holding_bars(s, pd.Timestamp('2030-01-01 00:00:00'), '12H', utc_offset=8)
+        self.assertEqual(len(sub), 0)
+
+
+class TestLoad1HHolding(unittest.TestCase):
+    """1H 动态缓存：缓存 miss 时按需补取，只读窗口涉及的天，再切持仓段。"""
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.cache = ParquetCache(self.tmp)
+        self._orig = prewarm._fetch_symbol_candles
+
+    def tearDown(self):
+        prewarm._fetch_symbol_candles = self._orig
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write_1H(self, sym, start, periods):
+        t = pd.date_range(start, periods=periods, freq='1H')
+        df = pd.DataFrame({'symbol': sym, 'candle_begin_time': t, 'open': 1.0, 'high': 1.0,
+                           'low': 1.0, 'close': 1.0, 'vol': 0.0, 'volCcy': 0.0, 'quote_volume': 0.0})
+        for d, g in df.groupby(df['candle_begin_time'].dt.strftime('%Y-%m-%d')):
+            self.cache.write('1H', sym, d, g.reset_index(drop=True))
+
+    def test_fetches_1H_on_miss_then_slices(self):
+        sym = 'AAA-USDT-SWAP'
+        calls = {'n': 0}
+
+        def fake_fetch(cache, symbol, lo, hi, bar, proxies):
+            calls['n'] += 1
+            self.assertEqual(bar, '1H')        # 必须按 1H 取数
+            self._write_1H(symbol, '2024-01-01 00:00:00', 72)  # 模拟取数：写 3 天 1H
+            return symbol, 72, 'fetched'
+        prewarm._fetch_symbol_candles = fake_fetch
+
+        rt = pd.Timestamp('2024-01-01 20:00:00')  # UTC+8 墙钟 → 持仓 UTC 12:00..23:00
+        sub = BT.load_1H_holding(self.cache, sym, rt, '12H', utc_offset=8, proxies=None)
+        self.assertEqual(calls['n'], 1)        # 缓存空 → 触发了补取
+        self.assertEqual(len(sub), 12)         # 持仓窗口 12 根
+        self.assertEqual(sub.iloc[0]['candle_begin_time'], pd.Timestamp('2024-01-01 12:00:00'))
+        self.assertEqual(sub.iloc[-1]['candle_begin_time'], pd.Timestamp('2024-01-01 23:00:00'))
+
+    def test_empty_when_fetch_yields_no_data(self):
+        def fake_fetch(cache, symbol, lo, hi, bar, proxies):
+            return symbol, 0, 'empty'          # 补取后仍无数据
+        prewarm._fetch_symbol_candles = fake_fetch
+        sub = BT.load_1H_holding(self.cache, 'DEAD-USDT-SWAP',
+                                 pd.Timestamp('2024-01-01 20:00:00'), '12H', 8, None)
         self.assertEqual(len(sub), 0)
 
 

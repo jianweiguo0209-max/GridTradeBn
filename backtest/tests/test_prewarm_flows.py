@@ -333,6 +333,31 @@ class TestPrewarmS2(Base):
         self.assertGreaterEqual(en, pd.Timestamp('2024-01-03 18:00:00'))
         self.assertNotIn('', ranges)  # 空标记行不计入
 
+    def test_holding_windows_per_grid(self):
+        # 按"每个网格的持仓窗口"取数（避免 min-max 连续区间的多年过度取数）
+        mdir = os.path.join(self.tmp, 'manifest')
+        self._write_candidates(mdir)
+        wins = prewarm._holding_windows(os.path.join(mdir, 'candidates.csv'), '12H', lead=pd.Timedelta(0))
+        # 两条有效候选(AAA × 2 个 run_time)，空行不计 → 每个网格一个窗口
+        self.assertEqual(len(wins), 2)
+        syms = sorted(set(s for s, lo, hi in wins))
+        self.assertEqual(syms, ['AAA-USDT-SWAP'])
+        # 每个窗口 = [rt-1天, rt+period+1天]
+        by_rt = {lo: (lo, hi) for (s, lo, hi) in wins}
+        rt1 = pd.Timestamp('2024-01-01 18:00:00')
+        self.assertIn(rt1 - pd.Timedelta(days=1), by_rt)
+        lo, hi = by_rt[rt1 - pd.Timedelta(days=1)]
+        self.assertEqual(hi, rt1 + pd.to_timedelta('12H') + pd.Timedelta(days=1))
+
+    def test_holding_windows_lead_for_15m(self):
+        mdir = os.path.join(self.tmp, 'manifest')
+        self._write_candidates(mdir)
+        lead = pd.Timedelta(minutes=233 * 15)
+        wins = prewarm._holding_windows(os.path.join(mdir, 'candidates.csv'), '12H', lead=lead)
+        rt1 = pd.Timestamp('2024-01-01 18:00:00')
+        los = [lo for (s, lo, hi) in wins]
+        self.assertIn(rt1 - lead - pd.Timedelta(days=1), los)  # 含 233×15min 前置
+
     def test_symbol_holding_ranges_lead_for_15m_pv(self):
         # 15m pv 预取需额外前置 233×15min 回看；start 口径须与 backtest_run.compute_pv_spike 的 lo 一致
         mdir = os.path.join(self.tmp, 'manifest')
