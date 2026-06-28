@@ -101,6 +101,7 @@ grid_accounting = Table(
     Column('net_position', Float, nullable=False, default=0.0),
     Column('avg_price', Float, nullable=False, default=0.0),
     Column('pnl_ratio_max', Float, nullable=False, default=0.0),
+    Column('funding_cursor', Integer, nullable=False, default=0),
     Column('updated_at', Integer, nullable=False),
     Column('version', Integer, nullable=False, default=1),
 )
@@ -121,6 +122,19 @@ order_records = Table(
     Column('exit_reason', String, nullable=True),
     Column('created_at', Integer, nullable=False),
     Index('ix_order_records_tag', 'tag'),
+)
+
+grid_fills = Table(
+    'grid_fills', metadata,
+    Column('trade_id', String, primary_key=True),
+    Column('grid_id', String, nullable=False),
+    Column('line_index', Integer, nullable=False),
+    Column('side', String, nullable=False),
+    Column('price', Float, nullable=False),
+    Column('size', Float, nullable=False),
+    Column('ts', Integer, nullable=False),
+    Column('created_at', Integer, nullable=False),
+    Index('ix_grid_fills_grid', 'grid_id'),
 )
 
 
@@ -171,6 +185,7 @@ class Accounting:
     net_position: float = 0.0
     avg_price: float = 0.0
     pnl_ratio_max: float = 0.0
+    funding_cursor: int = 0
     updated_at: int = 0
     version: int = 1
 
@@ -189,4 +204,16 @@ class Record:
     total_pnl: Optional[float] = None
     pnl_ratio: Optional[float] = None
     exit_reason: Optional[str] = None
+    created_at: int = 0
+
+
+@dataclass
+class Fill:
+    trade_id: str
+    grid_id: str
+    line_index: int
+    side: str
+    price: float
+    size: float
+    ts: int
     created_at: int = 0

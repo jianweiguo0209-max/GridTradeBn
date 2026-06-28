@@ -7,7 +7,7 @@ from gridtrade.state.models import (Accounting, ConcurrencyError, grid_accountin
                                     now_ms)
 
 _FIELDS = ('grid_id', 'realized_pnl', 'fee_paid', 'funding_paid', 'net_position',
-           'avg_price', 'pnl_ratio_max', 'updated_at', 'version')
+           'avg_price', 'pnl_ratio_max', 'funding_cursor', 'updated_at', 'version')
 
 
 def _to_acc(row) -> Accounting:
@@ -26,7 +26,7 @@ class AccountingRepository:
                 c.execute(insert(grid_accounting), {
                     'grid_id': grid_id, 'realized_pnl': 0.0, 'fee_paid': 0.0,
                     'funding_paid': 0.0, 'net_position': 0.0, 'avg_price': 0.0,
-                    'pnl_ratio_max': 0.0, 'updated_at': now_ms(), 'version': 1,
+                    'pnl_ratio_max': 0.0, 'funding_cursor': 0, 'updated_at': now_ms(), 'version': 1,
                 })
         except sa.exc.IntegrityError:
             pass  # already initialized by a prior/concurrent caller
@@ -48,6 +48,7 @@ class AccountingRepository:
                 .values(realized_pnl=acc.realized_pnl, fee_paid=acc.fee_paid,
                         funding_paid=acc.funding_paid, net_position=acc.net_position,
                         avg_price=acc.avg_price, pnl_ratio_max=acc.pnl_ratio_max,
+                        funding_cursor=acc.funding_cursor,
                         version=acc.version + 1, updated_at=now_ms())
             )
             if res.rowcount == 0:
