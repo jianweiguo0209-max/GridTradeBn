@@ -1,11 +1,12 @@
 # Fly.io 部署配置 —— GridTradeGP（Hyperliquid）。
 # 区域 nrt（东京）：HL 验证节点在 AWS ap-northeast-1，nrt 同城最近。
 #
-# 两个角色：
-#   - monitor：常驻 ~5s 循环（对账补单 + 记账 + 止盈止损 + 重启自愈）。本 fly.toml 的
-#     [processes] 把它跑成常驻机；进程退出由 fly 按 restart policy 自动重启。
-#   - scheduler：scale-to-zero 一次性（每小时唤醒跑一遍）。fly.toml 的 process group 不带
-#     cron，故 scheduler 用 **scheduled machine** 单独创建（见 deploy/DEPLOY.md ops 步骤）。
+# 两个常驻角色（各一台机器，同一镜像；fly deploy 一键同时更新）：
+#   - monitor：~5s 循环（对账补单 + 记账 + 止盈止损 + 重启自愈）。
+#   - scheduler：自己睡到整点跑一遍（关旧 tag → 选币 → 准入 → 开新）。
+#     做成 process group 而非 scale-to-zero 定时机，这样 CI/CD 的 fly deploy 能随 monitor
+#     一起更新它的镜像（定时机不属于 process group，deploy 不会刷新其代码）。
+#   进程退出由 fly 按 restart policy 自动重启。
 #
 # 健康判活：用库内 heartbeats 行（HeartbeatRepository），不暴露 HTTP，故无 [http_service]。
 
@@ -23,12 +24,14 @@ primary_region = "nrt"
   SCHEDULER_PERIOD = "12H"
   UTC_OFFSET = "8"
   MAX_CONCURRENT = "20"
+  # SCHEDULER_RUN_ON_START = "true"   # testnet 调试：scheduler 启动即跑一次；稳定后删/置 false
   # CAP / LEVERAGE / TOTAL_BUDGET / BLACKLIST_SYMBOLS 按需在此或 secrets 配置
 
 [processes]
   monitor = "python -m gridtrade.runtime.monitor"
+  scheduler = "python -m gridtrade.runtime.scheduler"
 
 [[vm]]
   size = "shared-cpu-1x"
   memory = "512mb"
-  processes = ["monitor"]
+  processes = ["monitor", "scheduler"]

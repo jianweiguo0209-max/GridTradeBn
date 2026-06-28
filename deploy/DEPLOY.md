@@ -40,15 +40,12 @@ fly deploy --config deploy/fly.toml --dockerfile deploy/Dockerfile --remote-only
 # 进入 ~5s 循环）。进程崩溃由 fly 自动重启。
 ```
 
-## 5. 建 scheduler 定时机（scale-to-zero，每小时唤醒一次）
-fly.toml 的 process group 不带 cron，scheduler 用 **scheduled machine** 单独建：
-```bash
-fly machine run . --app gridtrade-hl --region nrt --schedule hourly \
-  --dockerfile deploy/Dockerfile \
-  --entrypoint "python -m gridtrade.runtime.scheduler"
-# 每小时唤醒跑一遍 run_scheduler_once（关旧 tag→选币→准入→开新→心跳）后退出（scale-to-zero）。
-# 注：scheduled machine 用与 app 相同的 secrets/env。
-```
+## 5. scheduler（无需单独操作）
+scheduler 现为 `deploy/fly.toml` 的 process group（常驻，自己睡到整点跑一遍），与 monitor
+**同一镜像、同一 `fly deploy` 一起部署/更新**——无需建定时机。
+- testnet 调试想让它启动即跑一遍：把 fly.toml `[env]` 的 `SCHEDULER_RUN_ON_START = "true"`
+  取消注释（或 `fly secrets set SCHEDULER_RUN_ON_START=true`）；稳定后置回 false（仅整点跑，
+  避免部署 mid-hour 把当前 offset 的网格关掉重开）。
 
 ## 6. CD（可选，自动部署）
 GitHub → Settings → Secrets → Actions 加 `FLY_API_TOKEN`（`fly tokens create deploy` 生成）。
