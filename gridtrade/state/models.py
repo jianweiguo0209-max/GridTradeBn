@@ -5,8 +5,8 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
-from sqlalchemy import (Column, Float, Index, Integer, MetaData, String, Table,
-                        UniqueConstraint)
+from sqlalchemy import (BigInteger, Column, Float, Index, Integer, MetaData,
+                        String, Table, UniqueConstraint)
 
 metadata = MetaData()
 
@@ -71,8 +71,8 @@ grids = Table(
     Column('order_num', Float, nullable=True),
     Column('leverage', Float, nullable=True),
     Column('cap', Float, nullable=True),
-    Column('created_at', Integer, nullable=False),
-    Column('updated_at', Integer, nullable=False),
+    Column('created_at', BigInteger, nullable=False),
+    Column('updated_at', BigInteger, nullable=False),
     Column('version', Integer, nullable=False, default=1),
     UniqueConstraint('exchange', 'active_symbol', name='uq_grids_active'),
 )
@@ -87,8 +87,8 @@ grid_orders = Table(
     Column('price', Float, nullable=False),
     Column('size', Float, nullable=False),
     Column('status', String, nullable=False),  # open/closed/canceled
-    Column('created_at', Integer, nullable=False),
-    Column('updated_at', Integer, nullable=False),
+    Column('created_at', BigInteger, nullable=False),
+    Column('updated_at', BigInteger, nullable=False),
     Index('ix_grid_orders_grid', 'grid_id'),
 )
 
@@ -101,8 +101,8 @@ grid_accounting = Table(
     Column('net_position', Float, nullable=False, default=0.0),
     Column('avg_price', Float, nullable=False, default=0.0),
     Column('pnl_ratio_max', Float, nullable=False, default=0.0),
-    Column('funding_cursor', Integer, nullable=False, default=0),
-    Column('updated_at', Integer, nullable=False),
+    Column('funding_cursor', BigInteger, nullable=False, default=0),
+    Column('updated_at', BigInteger, nullable=False),
     Column('version', Integer, nullable=False, default=1),
 )
 
@@ -114,13 +114,13 @@ order_records = Table(
     Column('symbol', String, nullable=False),
     Column('tag', String, nullable=False, default=''),
     Column('offset', Integer, nullable=True),
-    Column('opened_at', Integer, nullable=True),
-    Column('closed_at', Integer, nullable=True),
+    Column('opened_at', BigInteger, nullable=True),
+    Column('closed_at', BigInteger, nullable=True),
     Column('sz', Float, nullable=True),
     Column('total_pnl', Float, nullable=True),
     Column('pnl_ratio', Float, nullable=True),
     Column('exit_reason', String, nullable=True),
-    Column('created_at', Integer, nullable=False),
+    Column('created_at', BigInteger, nullable=False),
     Index('ix_order_records_tag', 'tag'),
 )
 
@@ -132,15 +132,15 @@ grid_fills = Table(
     Column('side', String, nullable=False),
     Column('price', Float, nullable=False),
     Column('size', Float, nullable=False),
-    Column('ts', Integer, nullable=False),
-    Column('created_at', Integer, nullable=False),
+    Column('ts', BigInteger, nullable=False),
+    Column('created_at', BigInteger, nullable=False),
     Index('ix_grid_fills_grid', 'grid_id'),
 )
 
 heartbeats = Table(
     'heartbeats', metadata,
     Column('machine', String, primary_key=True),
-    Column('last_beat_ts', Integer, nullable=False),
+    Column('last_beat_ts', BigInteger, nullable=False),
 )
 
 
