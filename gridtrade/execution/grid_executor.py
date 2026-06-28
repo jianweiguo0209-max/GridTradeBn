@@ -66,6 +66,8 @@ class GridExecutor:
         if above:
             self.adapter.create_market_order(symbol, 'buy', order_num * len(above),
                                              client_oid='%s:init:0' % gid)
+            for _ in range(len(above)):
+                self.live[gid].record_fill(entry, 'buy', order_num, 0)
 
         # 逐线挂限价单
         for i, p in enumerate(price_array):
@@ -133,9 +135,8 @@ class GridExecutor:
             acc.realized_pnl = snap['realized_pnl']
             acc.fee_paid = snap['fee_paid']
             acc.funding_paid = snap['funding_paid']
-            pos = self.adapter.fetch_positions(symbol)
-            acc.net_position = pos.net_size
-            acc.avg_price = pos.avg_price
+            acc.net_position = snap['net_position']
+            acc.avg_price = snap['avg_price']
             self.accounting.save(acc)
             self.accounting.bump_peak(grid_id, snap['pnl_ratio'])
         return {'new_fills': len(new), 'snapshot': snap}

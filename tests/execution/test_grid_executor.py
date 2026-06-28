@@ -73,6 +73,8 @@ def test_sync_records_fill_and_replenishes():
     # accounting 落了快照
     acc = gx.accounting.get(gid)
     assert acc is not None and abs(acc.net_position - on * 3) < 1e-6
+    # LiveEquity snapshot net_position must match the real exchange position
+    assert abs(gx.live[gid].snapshot(ex.fetch_price(SYM))['net_position'] - ex.fetch_positions(SYM).net_size) < 1e-6
 
 
 def test_sync_funding_payments_accumulate():
