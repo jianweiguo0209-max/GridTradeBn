@@ -113,3 +113,17 @@ def test_replay_matches_incremental():
     assert abs(a['net_value'] - b['net_value']) < 1e-12
     assert abs(a['net_position'] - b['net_position']) < 1e-12
     assert abs(a['realized_pnl'] - b['realized_pnl']) < 1e-12
+
+
+def test_snapshot_flip_long_to_short_matches_full_path():
+    # net_dir crosses zero (long -> flat -> short); the net_dir-keyed avg-price path
+    # is the highest-risk reconstruction case. Must still match the full-path engine.
+    le = _le(entry=100.0)
+    le.record_fill(100.0, 'buy', 0.5, 60_000)    # net +0.5
+    le.record_fill(101.0, 'sell', 0.5, 120_000)  # net 0
+    le.record_fill(102.0, 'sell', 0.5, 180_000)  # net -0.5 (flipped short)
+    snap = le.snapshot(103.0)
+    assert abs(snap['net_position'] - (-0.5)) < 1e-9
+    fills = [(1, 100.0, 'buy'), (2, 101.0, 'sell'), (3, 102.0, 'sell')]
+    truth = _truth_net_value(fills, 100.0, 103.0)
+    assert abs(snap['net_value'] - truth) < 1e-9

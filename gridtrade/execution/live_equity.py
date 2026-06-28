@@ -47,6 +47,8 @@ class LiveEquity:
         return self
 
     def snapshot(self, mark_price) -> dict:
+        """Mark-to-market snapshot: net_value/fee_paid via cal_equity_curve WITHOUT _apply_exit,
+        so excludes close-out taker fee (applied by executor on actual exit)."""
         if not self._fills:
             return {'net_value': 1.0, 'pnl_ratio': 0.0, 'net_position': 0.0,
                     'avg_price': 0.0, 'realized_pnl': 0.0, 'fee_paid': 0.0,
