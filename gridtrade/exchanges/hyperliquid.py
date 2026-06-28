@@ -29,6 +29,11 @@ class HyperliquidAdapter(CcxtAdapter):
         # 改按 exchange order id 匹配 fill/对账（HL fill/open order 只带 oid）。
         return None
 
+    def cancel_all(self, symbol) -> None:
+        # ccxt 的 HL 无 cancelAllOrders；逐个撤当前挂单。
+        for o in self.fetch_open_orders(symbol):
+            self.cancel_order(symbol, o.id)
+
     def create_market_order(self, symbol, side, size, *,
                             reduce_only=False, client_oid=None):
         # HL 无真正市价单：ccxt 需一个参考价来算滑点上限（默认 5%）。传当前价。
