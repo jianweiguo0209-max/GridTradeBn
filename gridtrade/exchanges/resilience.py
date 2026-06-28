@@ -4,10 +4,23 @@
 调用，耗尽/致命时由上层降级告警 + 续跑（不硬退出）。本模块在 exchanges 层，可 import
 ccxt；execution/runtime 层只拿被包装的结果，保持 ccxt-free。
 """
+import random as _random
 import time
 from dataclasses import dataclass
 
 import ccxt
+
+
+@dataclass
+class RetryPolicy:
+    max_attempts: int = 4
+    base_delay: float = 0.5
+    rate_limit_base_delay: float = 2.0
+    max_delay: float = 8.0
+
+
+class CircuitOpenError(Exception):
+    pass
 
 
 def classify_error(exc: Exception) -> str:
@@ -53,3 +66,38 @@ class CircuitBreaker:
         self._failures += 1
         if self._failures >= self.failure_threshold:
             self._opened_at = self.clock()
+
+
+def call_with_retry(fn, policy, *, classify=classify_error, sleep=time.sleep,
+                    rng=None, breaker=None):
+    """调用 fn()，按 policy 退避重试。绝不 sys.exit、绝不吞 BaseException。
+
+    熔断 open -> 抛 CircuitOpenError（不调用 fn）；致命 -> 立即抛；可重试/限频 ->
+    退避重试，耗尽抛最后异常。成功/失败都喂给 breaker。
+    """
+    if rng is None:
+        rng = _random.Random()
+    attempt = 0
+    while True:
+        if breaker is not None and not breaker.allow():
+            raise CircuitOpenError('circuit open')
+        try:
+            result = fn()
+        except Exception as exc:        # 只捕 Exception；BaseException(如 KeyboardInterrupt)自然上抛
+            kind = classify(exc)
+            if breaker is not None:
+                breaker.record_failure()
+            if kind == 'fatal':
+                raise
+            attempt += 1
+            if attempt >= policy.max_attempts:
+                raise
+            base = (policy.rate_limit_base_delay if kind == 'rate_limit'
+                    else policy.base_delay)
+            raw = min(policy.max_delay, base * (2 ** (attempt - 1)))
+            sleep(raw * (0.5 + rng.random() * 0.5))
+            continue
+        else:
+            if breaker is not None:
+                breaker.record_success()
+            return result
