@@ -55,6 +55,13 @@ def test_default_cap_falls_back_to_cap_when_unset():
     assert cfg.cap == 300.0 and cfg.default_cap == 300.0   # default_cap 未设 -> 用 cap
 
 
+def test_blacklist_parsing():
+    assert load_deploy_config(env={}).blacklist == ()
+    cfg = load_deploy_config(env={'BLACKLIST_SYMBOLS': 'BTC, ETH ,SOL'})
+    assert cfg.blacklist == ('BTC', 'ETH', 'SOL')      # 去空白
+    assert load_deploy_config(env={'BLACKLIST_SYMBOLS': ''}).blacklist == ()
+
+
 def test_strategy_defaults_mirror_legacy():
     assert DEFAULT_STRATEGY_CONFIG['period'] == '12H'
     assert DEFAULT_STRATEGY_CONFIG['grid_version'] == 2
