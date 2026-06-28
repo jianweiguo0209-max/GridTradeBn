@@ -95,5 +95,17 @@ def test_sync_idempotent_no_new_fills():
     assert res2['new_fills'] == 0
 
 
+def test_sync_funding_payments_idempotent_across_calls():
+    ex, store, gx = _setup(price=100.0)
+    gid = gx.open(ex_exchange_name(), SYM, GP)
+    ex.seed_funding_payments(SYM, [(10_000, 1.0)])   # 支付 1 USDT
+    gx.sync(gid, SYM)
+    first = gx.accounting.get(gid).funding_paid
+    gx.sync(gid, SYM)                                 # 第二次：无新资金费流水
+    second = gx.accounting.get(gid).funding_paid
+    assert abs(first - 1.0) < 1e-9
+    assert abs(second - 1.0) < 1e-9, f"funding double-counted: {second}"
+
+
 def ex_exchange_name():
     return 'fake'
