@@ -18,5 +18,6 @@ def build_adapter(config: dict) -> ExchangeAdapter:
     if name == 'hyperliquid':
         return HyperliquidAdapter.from_credentials(
             config.get('wallet_address', ''), config.get('private_key', ''),
-            proxies=config.get('proxies'))
+            proxies=config.get('proxies'),
+            testnet=bool(config.get('testnet', False)))
     raise ValueError(f'未知交易所: {name!r}（支持: okx/hyperliquid/fake）')

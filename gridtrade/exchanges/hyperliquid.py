@@ -19,7 +19,8 @@ class HyperliquidAdapter(CcxtAdapter):
         return f'{base}/USDT:USDT'
 
     @classmethod
-    def from_credentials(cls, wallet_address, private_key, *, proxies=None):
+    def from_credentials(cls, wallet_address, private_key, *, proxies=None,
+                         testnet=False):
         import ccxt
         client = ccxt.hyperliquid({
             'walletAddress': wallet_address,
@@ -27,4 +28,6 @@ class HyperliquidAdapter(CcxtAdapter):
             'enableRateLimit': True,
             'proxies': proxies or {},
         })
+        if testnet:
+            client.set_sandbox_mode(True)
         return cls(client)
