@@ -216,6 +216,8 @@ ccxt 已统一 `fetchOHLCV/createOrder/cancelOrder/fetchOpenOrders/fetchBalance/
 - 优雅处理部分成交/拒单/交易所维护窗口（暂停开新、继续监控）/限频。
 - 时间全程 UTC 存储，去掉硬编码 UTC+8 假设（offset 公式保留，时区改配置驱动）。
 
+> **P5 carry-forward（来自 P0–P1 最终评审）**：`CcxtAdapter.fetch_ohlcv` 当前用 `volCcy=vol`、`quote_volume=vol*close` 的近似映射，会使 `vwap=quote_volume/volCcy` 恒等于 `close`，令 Vwapbias/MarketPl 因子在真实 ccxt 数据上失真。P5 的 datasource 必须用各所真实成交额字段（OKX `volCcyQuote`、HL turnover）映射 `quote_volume`，回退 `vol*close` 仅在字段缺失时使用。
+
 ## 9. 回测解耦 + 离线预热 + HL 验证 —— 需求 7/8/9
 
 - `backtest/datasource.py` 用同一套适配器实现 `fetch_ohlcv_range / fetch_funding_range / list_instruments`，**替代 `okx_history.py`**；分页/限频在适配器内。

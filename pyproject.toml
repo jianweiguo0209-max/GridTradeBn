@@ -1,0 +1,8 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-q"
+filterwarnings = [
+    "ignore:.*'base' in \\.resample.*:FutureWarning",
+    "ignore::pandas.core.common.SettingWithCopyWarning",
+]
