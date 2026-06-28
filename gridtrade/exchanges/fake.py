@@ -8,7 +8,7 @@ from typing import Dict, List, Optional
 import pandas as pd
 
 from gridtrade.exchanges.base import (Balance, ExchangeAdapter, Instrument,
-                                      Order, Position, Trade)
+                                      Order, Position, Trade, FundingPayment)
 
 
 class FakeExchange(ExchangeAdapter):
@@ -22,6 +22,7 @@ class FakeExchange(ExchangeAdapter):
         self._pos: Dict[str, Position] = {}
         self._ohlcv: Dict[str, pd.DataFrame] = {}
         self._funding: Dict[str, pd.DataFrame] = {}
+        self._funding_payments = {}
         self._ids = itertools.count(1)
         self._ts = itertools.count(1)
         self._fee_rate = 0.0005
@@ -37,6 +38,9 @@ class FakeExchange(ExchangeAdapter):
 
     def seed_funding(self, symbol: str, df: pd.DataFrame) -> None:
         self._funding[symbol] = df.copy()
+
+    def seed_funding_payments(self, symbol, payments):
+        self._funding_payments[symbol] = [tuple(p) for p in payments]
 
     def _price_of(self, symbol: str) -> float:
         return self._price.get(symbol, self._default_price)
@@ -129,3 +133,10 @@ class FakeExchange(ExchangeAdapter):
 
     def exchange_status(self) -> str:
         return 'ok'
+
+    def fetch_funding_payments(self, symbol, since_ms=None):
+        rows = self._funding_payments.get(symbol, [])
+        out = [FundingPayment(ts=int(ts), amount=float(amt)) for ts, amt in rows
+               if since_ms is None or int(ts) >= since_ms]
+        out.sort(key=lambda p: p.ts)
+        return out

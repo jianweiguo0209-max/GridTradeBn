@@ -5,7 +5,7 @@ from typing import List, Optional
 import pandas as pd
 
 from gridtrade.exchanges.base import (Balance, CANDLE_COLS, ExchangeAdapter,
-                                      FUNDING_COLS, Instrument, Order, Position, Trade)
+                                      FUNDING_COLS, FundingPayment, Instrument, Order, Position, Trade)
 
 
 class CcxtAdapter(ExchangeAdapter):
@@ -142,3 +142,15 @@ class CcxtAdapter(ExchangeAdapter):
 
     def exchange_status(self) -> str:
         return 'ok'
+
+    def fetch_funding_payments(self, symbol, since_ms=None):
+        rows = self.client.fetch_funding_history(self.to_native(symbol), since=since_ms)
+        out = []
+        for r in rows:
+            ts = int(r['timestamp'])
+            if since_ms is not None and ts < since_ms:
+                continue
+            # ccxt 约定 amount 负=支付；统一成"支付为正"
+            out.append(FundingPayment(ts=ts, amount=-float(r['amount'])))
+        out.sort(key=lambda p: p.ts)
+        return out
