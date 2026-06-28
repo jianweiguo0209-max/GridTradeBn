@@ -113,3 +113,47 @@ def test_max_concurrent_zero_active_allows():
     repo = _grid_repo_with()
     gate = MaxConcurrentGate(repo, max_concurrent=1)
     assert gate.check(_proposal('BTC/USDT:USDT')).passed is True
+
+
+def _grid_repo_with_caps(*caps, exchange='okx'):
+    from gridtrade.state.store import StateStore
+    from gridtrade.state.grids import GridRepository
+    from gridtrade.state.models import Grid, ACTIVE
+    s = StateStore.in_memory(); s.create_all()
+    repo = GridRepository(s)
+    for i, cap in enumerate(caps):
+        repo.create(Grid(id='', exchange=exchange, symbol='S%d/USDT:USDT' % i,
+                         status=ACTIVE, cap=cap))
+    return repo
+
+
+def test_risk_budget_blocks_when_cap_sum_exceeds():
+    from gridtrade.execution.gates import RiskBudgetGate
+    repo = _grid_repo_with_caps(60.0, 30.0)  # used = 90
+    gate = RiskBudgetGate(repo, total_budget=100.0, default_cap=50.0)
+    # 显式 cap=20 -> 90 + 20 = 110 > 100 -> 拒绝
+    r = gate.check(_proposal(cap=20.0))
+    assert r.passed is False and r.gate == 'RiskBudgetGate'
+
+
+def test_risk_budget_allows_within_budget():
+    from gridtrade.execution.gates import RiskBudgetGate
+    repo = _grid_repo_with_caps(60.0)
+    gate = RiskBudgetGate(repo, total_budget=100.0, default_cap=50.0)
+    assert gate.check(_proposal(cap=20.0)).passed is True  # 60 + 20 = 80 <= 100
+
+
+def test_risk_budget_uses_default_cap_when_proposal_cap_none():
+    from gridtrade.execution.gates import RiskBudgetGate
+    repo = _grid_repo_with_caps(60.0)
+    gate = RiskBudgetGate(repo, total_budget=100.0, default_cap=50.0)
+    # proposal.cap None -> 用 default 50 -> 60 + 50 = 110 > 100 -> 拒绝
+    assert gate.check(_proposal()).passed is False
+
+
+def test_risk_budget_at_exact_limit_allows():
+    from gridtrade.execution.gates import RiskBudgetGate
+    repo = _grid_repo_with_caps(80.0)
+    gate = RiskBudgetGate(repo, total_budget=100.0, default_cap=50.0)
+    # 80 + 20 = 100 == budget -> 放行（<=）
+    assert gate.check(_proposal(cap=20.0)).passed is True
