@@ -23,16 +23,19 @@ def fetch_universe_candles(adapter, symbols, run_time, *, timeframe='1h',
     start_ms = end_ms - max_candle_num * 3600 * 1000   # 1h 根
     out = {}
     skipped = 0
+    first_err = None
     for sym in symbols:
         try:
             df = adapter.fetch_ohlcv(sym, timeframe, start_ms, end_ms)
-        except Exception:
+        except Exception as exc:
             skipped += 1            # 坏币（BadSymbol/无数据/拉取失败）跳过，不阻塞整池
+            if first_err is None:
+                first_err = '%s -> %r' % (sym, exc)
             continue
         if df is not None and not df.empty:
             out[sym] = df
     if skipped:
-        print('[scheduler] fetch_universe_candles skipped %d symbols' % skipped,
+        print('[scheduler] skipped %d symbols (e.g. %s)' % (skipped, first_err),
               flush=True)
     return out
 
@@ -44,7 +47,8 @@ def run_scheduler_once(runtime, *, now_fn=time.time,
     period = rt.config.scheduler_period
     offset = compute_offset(run_time, period, rt.config.utc_offset)
     tag = '%s%d' % (DEFAULT_STRATEGY_CONFIG['strategy_tag'], offset)
-    universe = resolve_live_universe(rt.adapter, rt.config.blacklist)
+    universe = resolve_live_universe(rt.adapter, rt.config.blacklist,
+                                     rt.config.whitelist)
     candles = fetch_candles(rt.adapter, universe, run_time,
                             max_candle_num=DEFAULT_STRATEGY_CONFIG['max_candle_num'])
     ctx = TriggerContext(rt.config.exchange, run_time, candles)

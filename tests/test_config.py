@@ -62,6 +62,12 @@ def test_blacklist_parsing():
     assert load_deploy_config(env={'BLACKLIST_SYMBOLS': ''}).blacklist == ()
 
 
+def test_whitelist_parsing():
+    assert load_deploy_config(env={}).whitelist == ()
+    cfg = load_deploy_config(env={'UNIVERSE_WHITELIST': 'BTC/USDT:USDT, ETH/USDT:USDT'})
+    assert cfg.whitelist == ('BTC/USDT:USDT', 'ETH/USDT:USDT')
+
+
 def test_scheduler_run_on_start_flag():
     assert load_deploy_config(env={}).scheduler_run_on_start is False
     assert load_deploy_config(

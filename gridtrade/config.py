@@ -54,6 +54,7 @@ class DeployConfig:
     default_cap: float
     utc_offset: int
     blacklist: tuple = ()
+    whitelist: tuple = ()
     scheduler_run_on_start: bool = False
 
 
@@ -75,6 +76,7 @@ def load_deploy_config(env=None) -> DeployConfig:
         default_cap=_f(env, 'DEFAULT_CAP', cap),   # 未设 -> 用 cap
         utc_offset=_i(env, 'UTC_OFFSET', 8),
         blacklist=_csv(env, 'BLACKLIST_SYMBOLS'),
+        whitelist=_csv(env, 'UNIVERSE_WHITELIST'),
         scheduler_run_on_start=_b(env, 'SCHEDULER_RUN_ON_START', False),
     )
 
