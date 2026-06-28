@@ -216,6 +216,8 @@ ccxt 已统一 `fetchOHLCV/createOrder/cancelOrder/fetchOpenOrders/fetchBalance/
 - 优雅处理部分成交/拒单/交易所维护窗口（暂停开新、继续监控）/限频。
 - 时间全程 UTC 存储，去掉硬编码 UTC+8 假设（offset 公式保留，时区改配置驱动）。
 
+> **P4 carry-forward（来自 P2 最终评审）**：`gridtrade/state/` 的四个仓储在 `get/list_*` 读路径用了 `engine.begin()`（写事务），在真实 Postgres 上会取不必要的写锁。在 P4 上真实 Postgres 前，统一改为 `engine.connect()` 读路径。另：`grids.transition_status` 的 TOCTOU（校验读+版本守卫写，数据一致但并发下可能抛 ConcurrencyError 而非 StateError）的事务内重校验也在此阶段补齐（届时有可测的并发 mutator）。
+
 > **P5 carry-forward（来自 P0–P1 最终评审）**：`CcxtAdapter.fetch_ohlcv` 当前用 `volCcy=vol`、`quote_volume=vol*close` 的近似映射，会使 `vwap=quote_volume/volCcy` 恒等于 `close`，令 Vwapbias/MarketPl 因子在真实 ccxt 数据上失真。P5 的 datasource 必须用各所真实成交额字段（OKX `volCcyQuote`、HL turnover）映射 `quote_volume`，回退 `vol*close` 仅在字段缺失时使用。
 
 ## 9. 回测解耦 + 离线预热 + HL 验证 —— 需求 7/8/9
