@@ -41,14 +41,14 @@ class OrderRepository:
         return self.get(order.client_oid)
 
     def get(self, client_oid: str) -> Optional[GridOrder]:
-        with self.engine.begin() as c:
+        with self.engine.connect() as c:
             row = c.execute(
                 select(grid_orders).where(grid_orders.c.client_oid == client_oid)
             ).first()
         return _to_order(row) if row is not None else None
 
     def list_by_grid(self, grid_id: str) -> List[GridOrder]:
-        with self.engine.begin() as c:
+        with self.engine.connect() as c:
             rows = c.execute(
                 select(grid_orders).where(grid_orders.c.grid_id == grid_id)
                 .order_by(grid_orders.c.created_at)

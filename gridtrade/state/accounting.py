@@ -33,7 +33,7 @@ class AccountingRepository:
         return self.get(grid_id)
 
     def get(self, grid_id: str) -> Optional[Accounting]:
-        with self.engine.begin() as c:
+        with self.engine.connect() as c:
             row = c.execute(
                 select(grid_accounting).where(grid_accounting.c.grid_id == grid_id)
             ).first()
