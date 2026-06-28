@@ -19,15 +19,16 @@ class OrderRepository:
         self.engine = store.engine
 
     def upsert(self, order: GridOrder) -> GridOrder:
+        import sqlalchemy as sa
         ts = now_ms()
-        existing = self.get(order.client_oid)
-        if existing is None:
-            values = {f: getattr(order, f) for f in _FIELDS}
-            values['created_at'] = order.created_at or ts
-            values['updated_at'] = ts
+        values = {f: getattr(order, f) for f in _FIELDS}
+        values['created_at'] = order.created_at or ts
+        values['updated_at'] = ts
+        try:
             with self.engine.begin() as c:
                 c.execute(insert(grid_orders), values)
-        else:
+        except sa.exc.IntegrityError:
+            # client_oid already exists -> update mutable fields, preserve created_at
             with self.engine.begin() as c:
                 c.execute(
                     update(grid_orders)
