@@ -6,6 +6,8 @@ class FakeCcxtClient:
     def __init__(self):
         self.created = []
         self.canceled = []
+    def parse_timeframe(self, tf):
+        return 3600
     def fetch_ohlcv(self, symbol, timeframe, since=None, limit=None, params=None):
         # ccxt: [ms, open, high, low, close, volume]
         return [[1704067200000, 1.0, 2.0, 0.5, 1.5, 10.0],
