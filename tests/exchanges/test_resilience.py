@@ -163,6 +163,20 @@ def test_retry_open_breaker_raises_circuit_open_without_calling():
     assert calls['n'] == 0                              # 熔断时根本不调用
 
 
+def test_fatal_errors_do_not_trip_breaker():
+    # 致命错误（BadSymbol/InvalidOrder…）= 交易所有响应、只是该请求永久失败，
+    # 不该计入熔断（否则批量遍历坏币会拉垮全局电路、阻塞下单/监控）。
+    from gridtrade.exchanges.resilience import call_with_retry, CircuitBreaker
+    cb = CircuitBreaker(failure_threshold=2, cooldown=999.0, clock=lambda: 0.0)
+    def fn():
+        raise ccxt.BadSymbol('no market')
+    for _ in range(6):
+        with pytest.raises(ccxt.BadSymbol):
+            call_with_retry(fn, _policy(max_attempts=1), sleep=lambda d: None,
+                            breaker=cb)
+    assert cb.allow() is True       # 6 次致命也不开熔断
+
+
 def test_retry_success_records_breaker_success():
     from gridtrade.exchanges.resilience import call_with_retry, CircuitBreaker
     cb = CircuitBreaker(failure_threshold=2, cooldown=30.0, clock=lambda: 0.0)

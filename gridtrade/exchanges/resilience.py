@@ -85,10 +85,14 @@ def call_with_retry(fn, policy, *, classify=classify_error, sleep=time.sleep,
             result = fn()
         except Exception as exc:        # 只捕 Exception；BaseException(如 KeyboardInterrupt)自然上抛
             kind = classify(exc)
-            if breaker is not None:
-                breaker.record_failure()
             if kind == 'fatal':
+                # 致命=交易所有响应、只是该请求永久失败（BadSymbol/InvalidOrder/Auth…）：
+                # 证明交易所可达，不计入熔断（否则批量遍历坏币会拉垮全局电路）。
+                if breaker is not None:
+                    breaker.record_success()
                 raise
+            if breaker is not None:
+                breaker.record_failure()    # 仅 retryable/rate_limit 计入熔断
             attempt += 1
             if attempt >= policy.max_attempts:
                 raise
