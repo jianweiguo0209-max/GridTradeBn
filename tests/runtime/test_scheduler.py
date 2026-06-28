@@ -43,6 +43,20 @@ def test_fetch_universe_candles_skips_empty_and_collects_nonempty():
     assert 'BTC/USDC:USDC' in out and 'NONE/USDC:USDC' not in out
 
 
+def test_fetch_universe_candles_uses_lowercase_1h_timeframe():
+    # ccxt 用小写时间单位（'1h'）；'1H' 会 NotSupported('timeframe unit H ...')
+    import pandas as pd
+    from gridtrade.runtime.scheduler import fetch_universe_candles
+    seen = {}
+    class _Spy:
+        def fetch_ohlcv(self, sym, timeframe, start_ms, end_ms):
+            seen['tf'] = timeframe
+            return pd.DataFrame()
+    fetch_universe_candles(_Spy(), ['BTC/USDC:USDC'],
+                           pd.Timestamp('2025-06-24 14:00:00'))
+    assert seen['tf'] == '1h'
+
+
 def test_seconds_to_next_hour():
     from gridtrade.runtime.scheduler import _seconds_to_next_hour
     assert _seconds_to_next_hour(1_750_000_000.0) == 3200

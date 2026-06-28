@@ -17,7 +17,7 @@ from gridtrade.runtime.introspect import adapter_endpoint
 from gridtrade.runtime.universe import resolve_live_universe
 
 
-def fetch_universe_candles(adapter, symbols, run_time, *, timeframe='1H',
+def fetch_universe_candles(adapter, symbols, run_time, *, timeframe='1h',
                            max_candle_num=160) -> dict:
     end_ms = int(pd.Timestamp(run_time).timestamp() * 1000)
     start_ms = end_ms - max_candle_num * 3600 * 1000   # 1H 根
