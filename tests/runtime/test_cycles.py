@@ -69,3 +69,51 @@ def test_restore_all_empty_when_no_active():
     from gridtrade.runtime.cycles import restore_all
     ex, store, gx, mgr = _setup()
     assert restore_all(Reconciler(gx)) == []
+
+
+class _FixedTrigger(TriggerCondition):
+    def __init__(self, props):
+        self._props = props
+    def propose(self, ctx):
+        return list(self._props)
+
+
+def test_run_scheduler_cycle_closes_old_tag_then_opens_new():
+    from gridtrade.runtime.cycles import run_scheduler_cycle
+    import pandas as pd
+    ex, store, gx, mgr = _setup(100.0)
+    old = mgr.open_proposals([_proposal(symbol=BTC, tag='t0')])   # 旧 BTC 网格 tag=t0
+    engine = TriggerEngine([_FixedTrigger([_proposal(symbol=ETH, tag='t0')])])
+    ctx = TriggerContext(exchange='fake', run_time=pd.Timestamp('2025-06-24 14:00:00'))
+    out = run_scheduler_cycle(mgr, engine, Reconciler(gx), ctx, close_tag='t0')
+    assert out['closed'] == old
+    assert gx.grids.get(old[0]).status == 'CLOSED'
+    assert len(out['opened']) == 1
+    assert gx.grids.get(out['opened'][0]).symbol == ETH
+    assert gx.grids.get(out['opened'][0]).status == 'ACTIVE'
+
+
+def test_run_scheduler_cycle_restore_before_close_in_fresh_process():
+    from gridtrade.runtime.cycles import run_scheduler_cycle
+    import pandas as pd
+    ex, store, gx, mgr = _setup(100.0)
+    old = mgr.open_proposals([_proposal(symbol=BTC, tag='t0')])
+    # 模拟 scheduler scale-to-zero 全新进程：清空内存态
+    gx._geom.clear(); gx.live.clear(); gx._seq.clear()
+    gx._trade_cursor.clear(); gx._funding_cursor.clear()
+    engine = TriggerEngine([])   # 不开新，只验证关旧前 restore 不 KeyError
+    ctx = TriggerContext(exchange='fake', run_time=pd.Timestamp('2025-06-24 14:00:00'))
+    out = run_scheduler_cycle(mgr, engine, Reconciler(gx), ctx, close_tag='t0')
+    assert out['closed'] == old
+    assert gx.grids.get(old[0]).status == 'CLOSED'
+
+
+def test_run_scheduler_cycle_no_close_tag_only_opens():
+    from gridtrade.runtime.cycles import run_scheduler_cycle
+    import pandas as pd
+    ex, store, gx, mgr = _setup(100.0)
+    engine = TriggerEngine([_FixedTrigger([_proposal(symbol=BTC, tag='t0')])])
+    ctx = TriggerContext(exchange='fake', run_time=pd.Timestamp('2025-06-24 14:00:00'))
+    out = run_scheduler_cycle(mgr, engine, Reconciler(gx), ctx)
+    assert out['closed'] == []
+    assert len(out['opened']) == 1

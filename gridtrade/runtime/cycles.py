@@ -28,3 +28,22 @@ def run_monitor_cycle(reconciler, manager) -> dict:
         reconciled[grid.id] = reconciler.reconcile_open_orders(grid.id, grid.symbol)
     monitored = manager.monitor_all()
     return {'reconciled': reconciled, 'monitored': monitored}
+
+
+def run_scheduler_cycle(manager, trigger_engine, reconciler, ctx, *,
+                        close_tag=None, close_reason='周期再平衡') -> dict:
+    """scheduler 机循环体（复刻 legacy 主流程顺序）：先关旧 tag 网格、再触发→准入→开仓。
+
+    scheduler 机 scale-to-zero（全新进程），关旧前先 Reconciler.restore 重建内存态，
+    否则 executor.close 取不到 _geom/live。
+    """
+    closed: List[str] = []
+    if close_tag is not None:
+        to_close = [g for g in _active_grids(manager.executor.grids)
+                    if g.tag == close_tag]
+        for grid in to_close:
+            reconciler.restore(grid.id)   # 全新进程：先重建内存态
+        closed = manager.close_by_tag(close_tag, close_reason)
+    proposals = trigger_engine.collect(ctx)
+    opened = manager.open_proposals(proposals)
+    return {'closed': closed, 'opened': opened}
