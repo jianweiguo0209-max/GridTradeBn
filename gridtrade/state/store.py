@@ -14,6 +14,10 @@ class StateStore:
 
     @classmethod
     def from_url(cls, url: str) -> 'StateStore':
+        # Fly Postgres 给的是 postgres://，SQLAlchemy 2.0 已移除该 scheme 别名，
+        # 规范成 postgresql://（默认 psycopg2 方言）。
+        if url.startswith('postgres://'):
+            url = 'postgresql://' + url[len('postgres://'):]
         return cls(create_engine(url, future=True))
 
     @classmethod
