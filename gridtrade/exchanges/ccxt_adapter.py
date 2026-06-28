@@ -137,8 +137,9 @@ class CcxtAdapter(ExchangeAdapter):
 
     def _params(self, reduce_only, client_oid, post_only=False):
         p = {}
-        if client_oid:
-            p['clientOrderId'] = client_oid
+        coid = self.encode_cloid(client_oid) if client_oid else None
+        if coid:
+            p['clientOrderId'] = coid
         if reduce_only:
             p['reduceOnly'] = True
         if post_only:
@@ -174,7 +175,8 @@ class CcxtAdapter(ExchangeAdapter):
                 client_oid=str((r.get('info', {}) or {}).get('clOrdId') or r.get('order') or r['id']),
                 symbol=self.to_canonical(r['symbol']), side=r['side'],
                 price=float(r['price']), size=float(r['amount']),
-                fee=float((r.get('fee') or {}).get('cost') or 0.0), ts=int(r['timestamp'])))
+                fee=float((r.get('fee') or {}).get('cost') or 0.0), ts=int(r['timestamp']),
+                order_id=(str(r['order']) if r.get('order') is not None else None)))
         return out
 
     def set_leverage(self, symbol, leverage) -> None:

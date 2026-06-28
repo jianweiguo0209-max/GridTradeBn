@@ -71,7 +71,7 @@ class FakeExchange(ExchangeAdapter):
         self._trades.append(Trade(
             id=str(tid), client_oid=o.client_oid, symbol=o.symbol,
             side=o.side, price=fill_price, size=o.size,
-            fee=o.size * fill_price * self._fee_rate, ts=tid))
+            fee=o.size * fill_price * self._fee_rate, ts=tid, order_id=o.id))
 
     # ---- 行情 ----
     def list_instruments(self) -> List[Instrument]:

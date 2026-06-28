@@ -58,6 +58,7 @@ class Trade:
     size: float
     fee: float
     ts: int           # 毫秒
+    order_id: Optional[str] = None   # 成交所属交易所订单号（fill→line 按它匹配）
 
 
 @dataclass
@@ -70,6 +71,10 @@ class ExchangeAdapter(ABC):
     """所有交易所适配器的统一端口。规范符号入参，统一 schema 出参。"""
 
     name: str = 'base'
+
+    def encode_cloid(self, client_oid):
+        """下单时发给交易所的 client order id。默认原样；返回 None=省略（如 HL）。"""
+        return client_oid
 
     # ---- 行情（公共）----
     @abstractmethod

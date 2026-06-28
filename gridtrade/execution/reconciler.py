@@ -1,4 +1,4 @@
-"""Reconciler：重启对账自愈。restore 重建执行器内存态；reconcile_open_orders 按 client_oid 对账。"""
+"""Reconciler：重启对账自愈。restore 重建执行器内存态；reconcile_open_orders 按 exchange order id 对账。"""
 import itertools
 
 from gridtrade.core.grid_engine import grid_order_info
@@ -38,21 +38,23 @@ class Reconciler:
 
     def reconcile_open_orders(self, grid_id, symbol):
         ex = self.ex
-        expected = {o.client_oid: o for o in ex.orders.list_open_by_grid(grid_id)}
-        on_exchange = {o.client_oid: o for o in ex.adapter.fetch_open_orders(symbol)}
+        # 按 exchange order id 对账（跨所通用；HL open order 只带 oid、不带我方 cloid）。
+        expected = {o.exchange_order_id: o for o in ex.orders.list_open_by_grid(grid_id)
+                    if o.exchange_order_id}
+        on_exchange = {o.id: o for o in ex.adapter.fetch_open_orders(symbol)}
 
         canceled = 0
-        for coid, o in on_exchange.items():
-            if coid not in expected:
+        for oid, o in on_exchange.items():
+            if oid not in expected:
                 ex.adapter.cancel_order(symbol, o.id)
                 canceled += 1
 
         replaced = 0
-        for coid, go in expected.items():
-            if coid not in on_exchange:
+        for oid, go in expected.items():
+            if oid not in on_exchange:
                 order = ex.adapter.create_limit_order(symbol, go.side, go.price, go.size,
-                                                      post_only=False, client_oid=coid)
-                ex.orders.upsert(GridOrder(client_oid=coid, grid_id=grid_id,
+                                                      post_only=False, client_oid=go.client_oid)
+                ex.orders.upsert(GridOrder(client_oid=go.client_oid, grid_id=grid_id,
                                            line_index=go.line_index, side=go.side, price=go.price,
                                            size=go.size, status='open',
                                            exchange_order_id=getattr(order, 'id', None)))
