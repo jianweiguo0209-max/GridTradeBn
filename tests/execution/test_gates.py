@@ -57,3 +57,37 @@ def test_chain_filter_keeps_only_passing_proposals():
 
 def test_empty_chain_passes():
     assert GateChain([]).evaluate(_proposal()).passed is True
+
+
+def _grid_repo_with(*active_symbols, exchange='okx'):
+    from gridtrade.state.store import StateStore
+    from gridtrade.state.grids import GridRepository
+    from gridtrade.state.models import Grid, ACTIVE
+    s = StateStore.in_memory(); s.create_all()
+    repo = GridRepository(s)
+    for sym in active_symbols:
+        repo.create(Grid(id='', exchange=exchange, symbol=sym, status=ACTIVE))
+    return repo
+
+
+def test_symbol_lock_blocks_when_active_grid_exists():
+    from gridtrade.execution.gates import SymbolLockGate
+    repo = _grid_repo_with('BTC/USDT:USDT')
+    gate = SymbolLockGate(repo)
+    r = gate.check(_proposal('BTC/USDT:USDT'))
+    assert r.passed is False and r.gate == 'SymbolLockGate'
+
+
+def test_symbol_lock_allows_free_symbol():
+    from gridtrade.execution.gates import SymbolLockGate
+    repo = _grid_repo_with('BTC/USDT:USDT')
+    gate = SymbolLockGate(repo)
+    assert gate.check(_proposal('ETH/USDT:USDT')).passed is True
+
+
+def test_symbol_lock_is_per_exchange():
+    from gridtrade.execution.gates import SymbolLockGate
+    repo = _grid_repo_with('BTC/USDT:USDT', exchange='okx')
+    gate = SymbolLockGate(repo)
+    # 同币种但不同交易所 -> 放行
+    assert gate.check(_proposal('BTC/USDT:USDT', exchange='hyperliquid')).passed is True
