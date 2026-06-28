@@ -37,3 +37,7 @@ def main() -> None:   # composition root（不单测）
     signal.signal(signal.SIGTERM, _graceful)
     signal.signal(signal.SIGINT, _graceful)
     run_monitor(rt, should_stop=lambda: stop['flag'])
+
+
+if __name__ == '__main__':
+    main()

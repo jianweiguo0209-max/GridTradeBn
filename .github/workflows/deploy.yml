@@ -1,0 +1,29 @@
+name: Deploy
+
+# CD：部署到 fly.io。需 GitHub secret FLY_API_TOKEN + fly app 已存在。
+#
+# 默认手动触发（workflow_dispatch），避免在 fly 尚未配置好时自动失败刷红。
+# fly 配好后，把下面 workflow_run 段取消注释即可改为「main CI 通过后自动部署」。
+on:
+  workflow_dispatch:
+  # workflow_run:
+  #   workflows: ["CI"]
+  #   types: [completed]
+  #   branches: [main]
+
+jobs:
+  deploy:
+    name: flyctl deploy
+    runs-on: ubuntu-latest
+    # 启用 workflow_run 自动触发后，把下面一行改为：
+    #   if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy to Fly
+        run: flyctl deploy --config deploy/fly.toml --dockerfile deploy/Dockerfile --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

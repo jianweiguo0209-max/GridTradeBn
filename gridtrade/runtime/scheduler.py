@@ -45,3 +45,7 @@ def main() -> None:   # composition root（不单测）
     out = run_scheduler_once(rt)
     print('[scheduler] closed=%d opened=%d' % (len(out['closed']),
                                                len(out['opened'])))
+
+
+if __name__ == '__main__':
+    main()
