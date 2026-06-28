@@ -107,5 +107,32 @@ def test_sync_funding_payments_idempotent_across_calls():
     assert abs(second - 1.0) < 1e-9, f"funding double-counted: {second}"
 
 
+def test_close_cancels_orders_flattens_and_records():
+    from gridtrade.state.models import CLOSED
+    ex, store, gx = _setup(price=100.0)
+    gid = gx.open(ex_exchange_name(), SYM, GP)
+    out = gx.close(gid, SYM, '固定止损')
+    assert out['reason'] == '固定止损'
+    # 所有挂单已撤
+    assert ex.fetch_open_orders(SYM) == []
+    # 净仓已平
+    assert abs(ex.fetch_positions(SYM).net_size) < 1e-9
+    # 网格 CLOSED，槽位释放
+    from gridtrade.state.grids import GridRepository
+    assert GridRepository(store).get(gid).status == CLOSED
+    assert GridRepository(store).get_active_by_symbol('fake', SYM) is None
+    # 留下一条 record
+    recs = gx.records.list_by_grid(gid)
+    assert len(recs) == 1 and recs[0].exit_reason == '固定止损'
+
+
+def test_close_then_reopen_same_symbol_ok():
+    ex, store, gx = _setup(price=100.0)
+    gid = gx.open(ex_exchange_name(), SYM, GP)
+    gx.close(gid, SYM, '手动停止')
+    gid2 = gx.open(ex_exchange_name(), SYM, GP)   # 槽位已释放，可再开
+    assert gid2 != gid
+
+
 def ex_exchange_name():
     return 'fake'

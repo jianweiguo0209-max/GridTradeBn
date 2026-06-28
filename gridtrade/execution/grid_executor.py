@@ -8,8 +8,9 @@ from gridtrade.core.grid_engine import grid_order_info
 from gridtrade.execution.live_equity import LiveEquity
 from gridtrade.state.accounting import AccountingRepository
 from gridtrade.state.grids import GridRepository
-from gridtrade.state.models import (ACTIVE, Grid, GridOrder, OPENING, now_ms)
+from gridtrade.state.models import (ACTIVE, CLOSED, CLOSING, Grid, GridOrder, OPENING, Record, now_ms)
 from gridtrade.state.orders import OrderRepository
+from gridtrade.state.records import RecordRepository
 
 
 class GridExecutor:
@@ -19,6 +20,7 @@ class GridExecutor:
         self.grids = GridRepository(store)
         self.orders = OrderRepository(store)
         self.accounting = AccountingRepository(store)
+        self.records = RecordRepository(store)
         self.cap = float(cap)
         self.leverage = float(leverage)
         self.fee = float(fee)
@@ -140,3 +142,25 @@ class GridExecutor:
             self.accounting.save(acc)
             self.accounting.bump_peak(grid_id, snap['pnl_ratio'])
         return {'new_fills': len(new), 'snapshot': snap}
+
+    def close(self, grid_id, symbol, reason):
+        grid = self.grids.get(grid_id)
+        self.grids.transition_status(grid_id, CLOSING, expected_version=grid.version)
+        self.adapter.cancel_all(symbol)
+        for o in self.orders.list_open_by_grid(grid_id):
+            self.orders.upsert(GridOrder(client_oid=o.client_oid, grid_id=grid_id,
+                                         line_index=o.line_index, side=o.side, price=o.price,
+                                         size=o.size, status='canceled'))
+        pos = self.adapter.fetch_positions(symbol)
+        if abs(pos.net_size) > 0:
+            side = 'sell' if pos.net_size > 0 else 'buy'
+            self.adapter.create_market_order(symbol, side, abs(pos.net_size),
+                                             reduce_only=True, client_oid='%s:close:0' % grid_id)
+        snap = self.live[grid_id].snapshot(float(self.adapter.fetch_price(symbol)))
+        self.records.add(Record(id='', grid_id=grid_id, exchange=grid.exchange, symbol=symbol,
+                                tag=grid.tag, offset=grid.offset, opened_at=grid.created_at,
+                                closed_at=now_ms(), sz=self.cap, total_pnl=snap['pnl_ratio'] * self.cap,
+                                pnl_ratio=snap['pnl_ratio'], exit_reason=reason))
+        g2 = self.grids.get(grid_id)
+        self.grids.transition_status(grid_id, CLOSED, expected_version=g2.version)
+        return {'reason': reason, 'pnl_ratio': snap['pnl_ratio']}
