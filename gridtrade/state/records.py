@@ -29,14 +29,14 @@ class RecordRepository:
         return self.get(rid)
 
     def get(self, record_id: str) -> Optional[Record]:
-        with self.engine.begin() as c:
+        with self.engine.connect() as c:
             row = c.execute(
                 select(order_records).where(order_records.c.id == record_id)
             ).first()
         return _to_record(row) if row is not None else None
 
     def list_by_tag(self, tag: str) -> List[Record]:
-        with self.engine.begin() as c:
+        with self.engine.connect() as c:
             rows = c.execute(
                 select(order_records).where(order_records.c.tag == tag)
                 .order_by(order_records.c.created_at)
@@ -44,7 +44,7 @@ class RecordRepository:
         return [_to_record(r) for r in rows]
 
     def list_by_grid(self, grid_id: str) -> List[Record]:
-        with self.engine.begin() as c:
+        with self.engine.connect() as c:
             rows = c.execute(
                 select(order_records).where(order_records.c.grid_id == grid_id)
                 .order_by(order_records.c.created_at)

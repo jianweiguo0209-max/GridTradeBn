@@ -37,12 +37,12 @@ class GridRepository:
         return self.get(gid)
 
     def get(self, grid_id: str) -> Optional[Grid]:
-        with self.engine.begin() as c:
+        with self.engine.connect() as c:
             row = c.execute(select(grids).where(grids.c.id == grid_id)).first()
         return _to_grid(row) if row is not None else None
 
     def get_active_by_symbol(self, exchange: str, symbol: str) -> Optional[Grid]:
-        with self.engine.begin() as c:
+        with self.engine.connect() as c:
             row = c.execute(
                 select(grids).where(grids.c.exchange == exchange,
                                     grids.c.active_symbol == symbol)
@@ -50,7 +50,7 @@ class GridRepository:
         return _to_grid(row) if row is not None else None
 
     def list_active(self) -> List[Grid]:
-        with self.engine.begin() as c:
+        with self.engine.connect() as c:
             rows = c.execute(
                 select(grids).where(grids.c.status.in_(ACTIVE_STATES))
             ).all()

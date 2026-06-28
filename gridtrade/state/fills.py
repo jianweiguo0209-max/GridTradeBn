@@ -29,14 +29,14 @@ class FillRepository:
             return False
 
     def list_by_grid(self, grid_id: str) -> List[Fill]:
-        with self.engine.begin() as c:
+        with self.engine.connect() as c:
             rows = c.execute(select(grid_fills)
                              .where(grid_fills.c.grid_id == grid_id)
                              .order_by(grid_fills.c.ts)).all()
         return [_to_fill(r) for r in rows]
 
     def max_ts(self, grid_id: str) -> int:
-        with self.engine.begin() as c:
+        with self.engine.connect() as c:
             v = c.execute(select(sa.func.max(grid_fills.c.ts))
                           .where(grid_fills.c.grid_id == grid_id)).scalar()
         return int(v) if v is not None else 0
