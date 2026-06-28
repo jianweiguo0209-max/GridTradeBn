@@ -1,5 +1,6 @@
 """内存交易所模拟器：实现 ExchangeAdapter，供执行/对账/止损离线 TDD，并与回测填单同源。
 撮合规则：buy 当现价<=买单价成交；sell 当现价>=卖单价成交（限价单被价格穿越即成交）。
+Trade ts is a monotonic logical counter (not epoch ms); callers should pass a previously-returned trade ts as since_ms to fetch_my_trades.
 """
 import itertools
 from typing import Dict, List, Optional
@@ -62,10 +63,11 @@ class FakeExchange(ExchangeAdapter):
         else:
             avg = pos.avg_price if (pos.net_size > 0) == (new_net >= 0) else fill_price
         self._pos[o.symbol] = Position(o.symbol, new_net, avg)
+        tid = next(self._ts)
         self._trades.append(Trade(
-            id=str(next(self._ts)), client_oid=o.client_oid, symbol=o.symbol,
+            id=str(tid), client_oid=o.client_oid, symbol=o.symbol,
             side=o.side, price=fill_price, size=o.size,
-            fee=o.size * fill_price * self._fee_rate, ts=next(self._ts)))
+            fee=o.size * fill_price * self._fee_rate, ts=tid))
 
     # ---- 行情 ----
     def list_instruments(self) -> List[Instrument]:

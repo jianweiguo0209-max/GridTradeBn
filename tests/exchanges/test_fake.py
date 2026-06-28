@@ -56,3 +56,13 @@ def test_seeded_ohlcv_and_funding_roundtrip():
     got = ex.fetch_ohlcv('BTC/USDT:USDT', '1H', 0, 10**13)
     assert list(got['close']) == [1.5]
     assert ex.exchange_status() == 'ok'
+
+
+def test_sell_fill_reduces_net_position():
+    ex = _fake()
+    ex.create_limit_order('BTC/USDT:USDT', 'buy', price=95.0, size=2.0, client_oid='g1:0')
+    ex.set_price('BTC/USDT:USDT', 94.0)            # buy fills -> net +2
+    ex.create_limit_order('BTC/USDT:USDT', 'sell', price=96.0, size=1.0, client_oid='g1:1')
+    ex.set_price('BTC/USDT:USDT', 97.0)            # sell fills -> net +1
+    assert ex.fetch_positions('BTC/USDT:USDT').net_size == 1.0
+    assert ex.fetch_open_orders('BTC/USDT:USDT') == []
