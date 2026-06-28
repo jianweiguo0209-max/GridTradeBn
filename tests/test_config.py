@@ -62,6 +62,12 @@ def test_blacklist_parsing():
     assert load_deploy_config(env={'BLACKLIST_SYMBOLS': ''}).blacklist == ()
 
 
+def test_scheduler_run_on_start_flag():
+    assert load_deploy_config(env={}).scheduler_run_on_start is False
+    assert load_deploy_config(
+        env={'SCHEDULER_RUN_ON_START': 'true'}).scheduler_run_on_start is True
+
+
 def test_strategy_defaults_mirror_legacy():
     assert DEFAULT_STRATEGY_CONFIG['period'] == '12H'
     assert DEFAULT_STRATEGY_CONFIG['grid_version'] == 2
