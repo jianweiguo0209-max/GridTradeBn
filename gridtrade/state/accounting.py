@@ -20,15 +20,16 @@ class AccountingRepository:
         self.engine = store.engine
 
     def init(self, grid_id: str) -> Accounting:
-        existing = self.get(grid_id)
-        if existing is not None:
-            return existing
-        with self.engine.begin() as c:
-            c.execute(insert(grid_accounting), {
-                'grid_id': grid_id, 'realized_pnl': 0.0, 'fee_paid': 0.0,
-                'funding_paid': 0.0, 'net_position': 0.0, 'avg_price': 0.0,
-                'pnl_ratio_max': 0.0, 'updated_at': now_ms(), 'version': 1,
-            })
+        import sqlalchemy as sa
+        try:
+            with self.engine.begin() as c:
+                c.execute(insert(grid_accounting), {
+                    'grid_id': grid_id, 'realized_pnl': 0.0, 'fee_paid': 0.0,
+                    'funding_paid': 0.0, 'net_position': 0.0, 'avg_price': 0.0,
+                    'pnl_ratio_max': 0.0, 'updated_at': now_ms(), 'version': 1,
+                })
+        except sa.exc.IntegrityError:
+            pass  # already initialized by a prior/concurrent caller
         return self.get(grid_id)
 
     def get(self, grid_id: str) -> Optional[Accounting]:
