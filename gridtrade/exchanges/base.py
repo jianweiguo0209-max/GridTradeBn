@@ -58,6 +58,7 @@ class Trade:
     size: float
     fee: float
     ts: int           # 毫秒
+    order_id: Optional[str] = None   # 成交所属交易所订单号（fill→line 按它匹配）
 
 
 @dataclass
