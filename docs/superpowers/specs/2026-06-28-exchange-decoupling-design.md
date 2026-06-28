@@ -216,6 +216,8 @@ ccxt 已统一 `fetchOHLCV/createOrder/cancelOrder/fetchOpenOrders/fetchBalance/
 - 优雅处理部分成交/拒单/交易所维护窗口（暂停开新、继续监控）/限频。
 - 时间全程 UTC 存储，去掉硬编码 UTC+8 假设（offset 公式保留，时区改配置驱动）。
 
+> **P5b 待办（来自 P5a 最终评审）**：① HL 验证须把 `quote_volume` 映射为真实成交额（OKX `volCcyQuote` / HL turnover），现 ccxt 统一 OHLCV 用 `vol*close` 近似会令 vwap 塌成 close、扭曲 Vwapbias/MarketPl 与交易额分位过滤；② 补 `DataSource.fetch_funding_range` 的离线缓存测试（P5a 未测的对称路径）；③ 注意 `ParquetCache.read_all_days` 会把空哨兵当 0 行帧并入。
+
 > **P3d 硬性要求（来自 P3c 最终评审，上线前必须）**：P3c 执行器是离线 TDD 范围内正确，但以下三条在接真实 ccxt/真实进程生命周期时必现，P3d reconciler/monitor 必须补齐：① 成交摄入按 `Trade.id` 幂等去重（不能只靠 `ts+1` 游标——真实交易所同毫秒多笔会漏单、永久偏离持仓）；② reconciler 按 `client_oid` 对账交易所真实挂单 vs `grid_orders`（弥补"下单成功但持久化失败"的泄漏窗口）；③ 进程重启后，为 DB 中 ACTIVE 网格用 `LiveEquity.replay` + 重算几何/游标重建执行器内存态（`live/_geom/_seq/_trade_cursor/_funding_cursor`）后才能 `sync`（否则 KeyError 或从 cursor=0 重复摄入+重复补单）；④ `close` 后 monitor 复核已平。另：`LiveEquity.avg_price` 是 net_dir 几何均价（与回测同源），非真实成本基；P3d 止损逻辑读它须知此约定，勿"修正"成与回测漂移。
 
 > **P4 carry-forward（来自 P2 最终评审）**：`gridtrade/state/` 的四个仓储在 `get/list_*` 读路径用了 `engine.begin()`（写事务），在真实 Postgres 上会取不必要的写锁。在 P4 上真实 Postgres 前，统一改为 `engine.connect()` 读路径。另：`grids.transition_status` 的 TOCTOU（校验读+版本守卫写，数据一致但并发下可能抛 ConcurrencyError 而非 StateError）的事务内重校验也在此阶段补齐（届时有可测的并发 mutator）。
