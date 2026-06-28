@@ -26,7 +26,7 @@ def _make_df(net_values, funding=None, pv=None):
     return df, pv_df
 
 
-def _scalar_first(df, pv_df):
+def _scalar_first(df, pv_df, stop_cfg):
     """逐行扫描 evaluate_exit，返回首个触发的 (reason, idx) 或 (None, None)。"""
     from gridtrade.core.stop_rules import evaluate_exit
     pr = (df['net_value'] - 1.0).values
@@ -39,17 +39,17 @@ def _scalar_first(df, pv_df):
         pv = int(pv_map.get(df['candle_begin_time'].iloc[i], 0))
         r = evaluate_exit(float(pr[i]), float(pr_max[i]),
                           net_value=float(df['net_value'].iloc[i]),
-                          stop_cfg=STOP_CFG, margin_rate=MARGIN, funding_rate=fr, pv_spike=pv)
+                          stop_cfg=stop_cfg, margin_rate=MARGIN, funding_rate=fr, pv_spike=pv)
         if r is not None:
             return r, i
     return None, None
 
 
-def _assert_equiv(net_values, funding=None, pv=None):
+def _assert_equiv(net_values, funding=None, pv=None, stop_cfg=STOP_CFG):
     from gridtrade.core.grid_engine import _apply_exit
     df, pv_df = _make_df(net_values, funding, pv)
-    truncated, reason, blown = _apply_exit(df.copy(), CAP, C_RATE, STOP_CFG, MARGIN, pv_df)
-    s_reason, s_idx = _scalar_first(df, pv_df)
+    truncated, reason, blown = _apply_exit(df.copy(), CAP, C_RATE, stop_cfg, MARGIN, pv_df)
+    s_reason, s_idx = _scalar_first(df, pv_df, stop_cfg)
     assert s_reason == reason, f'reason mismatch: scalar={s_reason} apply_exit={reason}'
     if reason is None:
         assert s_idx is None
@@ -87,3 +87,9 @@ def test_liquidation():
 def test_priority_fixed_over_chandelier_same_bar():
     # bar2 同时满足固定止损(-4%<-3.4%)与回撤止盈；固定止损优先；前两 bar 不触发
     _assert_equiv([1.0, 1.007, 0.96])
+
+
+def test_liquidation_no_stopcfg_equivalence():
+    # stop_cfg=None disables fixed/trailing/funding/pv; only 爆仓 (net_value<0.05) can fire,
+    # so this is the scenario that actually exercises the 爆仓 equivalence branch.
+    _assert_equiv([1.0, 0.8, 0.04], stop_cfg=None)
