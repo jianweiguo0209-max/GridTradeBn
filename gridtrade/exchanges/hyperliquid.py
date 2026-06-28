@@ -4,6 +4,7 @@ from gridtrade.exchanges.ccxt_adapter import CcxtAdapter
 
 class HyperliquidAdapter(CcxtAdapter):
     name = 'hyperliquid'
+    quote_currency = 'USDC'   # HL 以 USDC 计价/保证金
     FUNDING_INTERVAL_HOURS = 1
 
     def __init__(self, client):

@@ -11,6 +11,7 @@ from gridtrade.exchanges.base import (Balance, CANDLE_COLS, ExchangeAdapter,
 
 class CcxtAdapter(ExchangeAdapter):
     name = 'ccxt'
+    quote_currency = 'USDT'   # 计价/保证金币种；HL 覆写为 USDC
 
     def __init__(self, client, name: Optional[str] = None):
         self.client = client
@@ -114,7 +115,7 @@ class CcxtAdapter(ExchangeAdapter):
     # ---- 账户/交易 ----
     def fetch_balance(self) -> Balance:
         b = self.client.fetch_balance()
-        u = b.get('USDT', {})
+        u = b.get(self.quote_currency) or {}   # 键缺失或值为 None 都安全
         return Balance(equity=float(u.get('total') or 0.0), cash=float(u.get('free') or 0.0))
 
     def fetch_positions(self, symbol) -> Position:
