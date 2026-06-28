@@ -63,8 +63,21 @@ class GridRepository:
             raise ConcurrencyError(f'grid {grid_id} not found')
         if not can_transition(current.status, new_status):
             raise StateError(f'illegal transition {current.status} -> {new_status}')
-        active_symbol = None if new_status in TERMINAL_STATES else (
-            current.symbol if new_status in ACTIVE_STATES else None)
+        # Terminal -> release slot (NULL). Active state -> (re)claim symbol slot.
+        # Any other (currently unreachable: all 6 states are terminal or active) ->
+        # preserve the existing occupancy rather than silently dropping the slot.
+        if new_status in TERMINAL_STATES:
+            active_symbol = None
+        elif new_status in ACTIVE_STATES:
+            active_symbol = current.symbol
+        else:
+            active_symbol = current.symbol if current.status in ACTIVE_STATES else None
+        # NOTE: status is validated (can_transition) from a prior read, then the write
+        # is guarded by the version optimistic lock below. Data stays consistent: a
+        # concurrent writer changes the version, so a stale write hits rowcount==0 and
+        # raises ConcurrencyError (caller retries). Under true concurrency the surfaced
+        # error may be ConcurrencyError where StateError was "intended"; full in-transaction
+        # re-validation is deferred to P3/P4 where concurrent mutators exist and are testable.
         with self.engine.begin() as c:
             res = c.execute(
                 update(grids)
