@@ -3,6 +3,7 @@ import itertools
 
 from gridtrade.core.grid_engine import grid_order_info
 from gridtrade.execution.live_equity import LiveEquity
+from gridtrade.state.models import GridOrder
 
 
 class Reconciler:
@@ -31,3 +32,26 @@ class Reconciler:
         ex.live[grid_id] = live
         ex._trade_cursor[grid_id] = ex.fills.max_ts(grid_id)
         ex._funding_cursor[grid_id] = 0
+
+    def reconcile_open_orders(self, grid_id, symbol):
+        ex = self.ex
+        expected = {o.client_oid: o for o in ex.orders.list_open_by_grid(grid_id)}
+        on_exchange = {o.client_oid: o for o in ex.adapter.fetch_open_orders(symbol)}
+
+        canceled = 0
+        for coid, o in on_exchange.items():
+            if coid not in expected:
+                ex.adapter.cancel_order(symbol, o.id)
+                canceled += 1
+
+        replaced = 0
+        for coid, go in expected.items():
+            if coid not in on_exchange:
+                order = ex.adapter.create_limit_order(symbol, go.side, go.price, go.size,
+                                                      post_only=False, client_oid=coid)
+                ex.orders.upsert(GridOrder(client_oid=coid, grid_id=grid_id,
+                                           line_index=go.line_index, side=go.side, price=go.price,
+                                           size=go.size, status='open',
+                                           exchange_order_id=getattr(order, 'id', None)))
+                replaced += 1
+        return {'canceled': canceled, 'replaced': replaced}
