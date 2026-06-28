@@ -91,3 +91,25 @@ def test_symbol_lock_is_per_exchange():
     gate = SymbolLockGate(repo)
     # 同币种但不同交易所 -> 放行
     assert gate.check(_proposal('BTC/USDT:USDT', exchange='hyperliquid')).passed is True
+
+
+def test_max_concurrent_blocks_at_limit():
+    from gridtrade.execution.gates import MaxConcurrentGate
+    repo = _grid_repo_with('BTC/USDT:USDT', 'ETH/USDT:USDT')
+    gate = MaxConcurrentGate(repo, max_concurrent=2)
+    r = gate.check(_proposal('SOL/USDT:USDT'))
+    assert r.passed is False and r.gate == 'MaxConcurrentGate'
+
+
+def test_max_concurrent_allows_below_limit():
+    from gridtrade.execution.gates import MaxConcurrentGate
+    repo = _grid_repo_with('BTC/USDT:USDT')
+    gate = MaxConcurrentGate(repo, max_concurrent=2)
+    assert gate.check(_proposal('SOL/USDT:USDT')).passed is True
+
+
+def test_max_concurrent_zero_active_allows():
+    from gridtrade.execution.gates import MaxConcurrentGate
+    repo = _grid_repo_with()
+    gate = MaxConcurrentGate(repo, max_concurrent=1)
+    assert gate.check(_proposal('BTC/USDT:USDT')).passed is True

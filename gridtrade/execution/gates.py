@@ -61,3 +61,19 @@ class SymbolLockGate(AdmissionGate):
                               'active grid already exists for %s on %s'
                               % (proposal.symbol, proposal.exchange))
         return GateResult(True, 'SymbolLockGate')
+
+
+class MaxConcurrentGate(AdmissionGate):
+    """活跃网格数达到 max_concurrent 时拒绝新提议。"""
+
+    def __init__(self, grids, max_concurrent: int):
+        self.grids = grids
+        self.max_concurrent = int(max_concurrent)
+
+    def check(self, proposal: GridProposal) -> GateResult:
+        active = len(self.grids.list_active())
+        if active >= self.max_concurrent:
+            return GateResult(False, 'MaxConcurrentGate',
+                              'active grids %d >= limit %d'
+                              % (active, self.max_concurrent))
+        return GateResult(True, 'MaxConcurrentGate')
