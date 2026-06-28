@@ -18,6 +18,14 @@ class HyperliquidAdapter(CcxtAdapter):
         base = native.split('/')[0]
         return f'{base}/USDT:USDT'
 
+    def create_market_order(self, symbol, side, size, *,
+                            reduce_only=False, client_oid=None):
+        # HL 无真正市价单：ccxt 需一个参考价来算滑点上限（默认 5%）。传当前价。
+        price = self.fetch_price(symbol)
+        r = self.client.create_order(self.to_native(symbol), 'market', side, size,
+                                     price, self._params(reduce_only, client_oid))
+        return self._to_order(r)
+
     @classmethod
     def from_credentials(cls, wallet_address, private_key, *, proxies=None,
                          testnet=False):
