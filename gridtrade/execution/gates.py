@@ -77,3 +77,26 @@ class MaxConcurrentGate(AdmissionGate):
                               'active grids %d >= limit %d'
                               % (active, self.max_concurrent))
         return GateResult(True, 'MaxConcurrentGate')
+
+
+class RiskBudgetGate(AdmissionGate):
+    """总风险敞口以 cap 衡量：∑(活跃网格 cap) + 本提议 cap ≤ total_budget。
+
+    提议未显式给 cap 时按 default_cap（执行器默认建仓资金）计入，使敞口估算
+    反映真实资金占用。口径决策：用户 2026-06-28 选「∑cap ≤ 总预算」。
+    """
+
+    def __init__(self, grids, total_budget, default_cap):
+        self.grids = grids
+        self.total_budget = float(total_budget)
+        self.default_cap = float(default_cap)
+
+    def check(self, proposal: GridProposal) -> GateResult:
+        used = sum((g.cap or 0.0) for g in self.grids.list_active())
+        incoming = (proposal.cap if proposal.cap is not None
+                    else self.default_cap)
+        if used + incoming > self.total_budget:
+            return GateResult(False, 'RiskBudgetGate',
+                              'cap sum %.4f + %.4f > budget %.4f'
+                              % (used, incoming, self.total_budget))
+        return GateResult(True, 'RiskBudgetGate')
