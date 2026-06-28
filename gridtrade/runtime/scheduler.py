@@ -20,12 +20,20 @@ from gridtrade.runtime.universe import resolve_live_universe
 def fetch_universe_candles(adapter, symbols, run_time, *, timeframe='1h',
                            max_candle_num=160) -> dict:
     end_ms = int(pd.Timestamp(run_time).timestamp() * 1000)
-    start_ms = end_ms - max_candle_num * 3600 * 1000   # 1H 根
+    start_ms = end_ms - max_candle_num * 3600 * 1000   # 1h 根
     out = {}
+    skipped = 0
     for sym in symbols:
-        df = adapter.fetch_ohlcv(sym, timeframe, start_ms, end_ms)
+        try:
+            df = adapter.fetch_ohlcv(sym, timeframe, start_ms, end_ms)
+        except Exception:
+            skipped += 1            # 坏币（BadSymbol/无数据/拉取失败）跳过，不阻塞整池
+            continue
         if df is not None and not df.empty:
             out[sym] = df
+    if skipped:
+        print('[scheduler] fetch_universe_candles skipped %d symbols' % skipped,
+              flush=True)
     return out
 
 
