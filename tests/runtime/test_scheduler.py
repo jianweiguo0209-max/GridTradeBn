@@ -43,6 +43,23 @@ def test_fetch_universe_candles_skips_empty_and_collects_nonempty():
     assert 'BTC/USDC:USDC' in out and 'NONE/USDC:USDC' not in out
 
 
+def test_fetch_universe_candles_skips_symbol_that_raises():
+    # 一个坏币（BadSymbol/无数据）不该阻塞整个币池——跳过它，继续拉其余
+    import ccxt
+    import pandas as pd
+    from gridtrade.runtime.scheduler import fetch_universe_candles
+    from gridtrade.exchanges.base import CANDLE_COLS
+    good_df = pd.DataFrame([[0] * len(CANDLE_COLS)], columns=CANDLE_COLS)
+    class _Spy:
+        def fetch_ohlcv(self, sym, timeframe, start_ms, end_ms):
+            if sym == 'BAD/USDC:USDC':
+                raise ccxt.BadSymbol('no market')
+            return good_df
+    out = fetch_universe_candles(_Spy(), ['BAD/USDC:USDC', 'GOOD/USDC:USDC'],
+                                 pd.Timestamp('2025-06-24 14:00:00'))
+    assert 'GOOD/USDC:USDC' in out and 'BAD/USDC:USDC' not in out
+
+
 def test_fetch_universe_candles_uses_lowercase_1h_timeframe():
     # ccxt 用小写时间单位（'1h'）；'1H' 会 NotSupported('timeframe unit H ...')
     import pandas as pd
