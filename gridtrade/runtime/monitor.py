@@ -20,7 +20,10 @@ def run_monitor(runtime, *, once=False, sleep=time.sleep, log=print,
             cycle_fn(rt.reconciler, rt.manager)
         except Exception as exc:          # 降级：记录 + 续跑，绝不退出
             log('[monitor] degraded: %r' % exc)
-        rt.heartbeats.beat('monitor')
+        try:
+            rt.heartbeats.beat('monitor')
+        except Exception as exc:          # 心跳写失败同样降级，不崩进程
+            log('[monitor] heartbeat failed: %r' % exc)
         if once:
             return
         if should_stop is not None and should_stop():

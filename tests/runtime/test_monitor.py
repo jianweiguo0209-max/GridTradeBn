@@ -28,6 +28,18 @@ def test_run_monitor_degrades_on_cycle_error_and_still_beats():
     assert rt.heartbeats.get('monitor') is not None
 
 
+def test_run_monitor_degrades_on_heartbeat_error_and_does_not_crash():
+    from gridtrade.runtime.monitor import run_monitor
+    rt = _rt()
+    logs = []
+    def _boom(machine):
+        raise RuntimeError('hb db down')
+    rt.heartbeats.beat = _boom            # 心跳写失败也不该崩进程
+    run_monitor(rt, once=True, sleep=lambda d: None, log=logs.append,
+                cycle_fn=lambda r, m: None)
+    assert any('heartbeat' in s or 'hb db down' in s for s in logs)
+
+
 def test_run_monitor_loops_until_should_stop():
     from gridtrade.runtime.monitor import run_monitor
     rt = _rt()
