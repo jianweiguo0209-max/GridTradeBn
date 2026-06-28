@@ -93,3 +93,34 @@ def test_fetch_ohlcv_single_row_page_cap_fetches_full_range():
     a = _adapter(OneRowClient(start, n=10))
     df = a.fetch_ohlcv('BTC/USDT:USDT', '1h', start, start + 9 * 3600_000)
     assert len(df) == 10        # must not stop after the first 1-row page
+
+
+class FutureRaisesClient:
+    """数据到 now 为止；对 since>now 抛 ExchangeError（模拟 HL 对未来 since 直接 5xx）。
+    提供 milliseconds() 作为 now。"""
+    def __init__(self, start, n, tf_ms=3600_000):
+        self.bars = [[start + i * tf_ms, 1.0, 2.0, 0.5, 1.5, 10.0] for i in range(n)]
+        self.tf_ms = tf_ms
+        self._now = start + (n - 1) * tf_ms        # 最后一根的时间 = now
+
+    def milliseconds(self):
+        return self._now
+
+    def parse_timeframe(self, tf):
+        return self.tf_ms // 1000
+
+    def fetch_ohlcv(self, symbol, timeframe, since=None, limit=None):
+        since = since or 0
+        if since > self._now:                      # 未来 since → 报错（如 HL 的 500）
+            raise RuntimeError('future since not allowed')
+        return [b for b in self.bars if b[0] >= since][:3]
+
+
+def test_fetch_ohlcv_does_not_query_future_when_end_is_future():
+    # end_ms 远超 now（datasource 给"今天日终"的情形）；适配器须只拉到 now、不发未来请求
+    start = 1_700_000_000_000
+    client = FutureRaisesClient(start, n=10)       # 数据 10 根，now=start+9h
+    a = _adapter(client)
+    future_end = start + 100 * 3600_000            # 远未来
+    df = a.fetch_ohlcv('BTC/USDT:USDT', '1h', start, future_end)
+    assert len(df) == 10                           # 全部现有数据，且未因未来 since 抛错

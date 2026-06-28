@@ -1,5 +1,6 @@
 """基于 ccxt 统一接口的通用适配器。client 注入以便 mock。
 各所差异（凭证/资金费周期/沙盒/符号映射）由子类覆写。"""
+import time
 from typing import List, Optional
 
 import pandas as pd
@@ -39,13 +40,21 @@ class CcxtAdapter(ExchangeAdapter):
             ))
         return out
 
+    def _now_ms(self):
+        # 真实交易所提供 milliseconds()；测试桩可缺省，回退本机时钟。
+        ms = getattr(self.client, 'milliseconds', None)
+        return int(ms()) if callable(ms) else int(time.time() * 1000)
+
     def fetch_ohlcv(self, symbol, timeframe, start_ms, end_ms) -> pd.DataFrame:
         native = self.to_native(symbol)
         tf_ms = int(self.client.parse_timeframe(timeframe) * 1000)
         all_rows = []
         cursor = int(start_ms)
+        # 不向未来翻页：end_ms 可能是 datasource 给的"今天日终"(未来)，而部分交易所(HL)对
+        # since>now 直接 5xx；用真实 now 封顶，分页到现有数据末尾即止。
+        bound = min(int(end_ms), self._now_ms())
         guard = 0
-        while cursor <= end_ms and guard < 10000:
+        while cursor <= bound and guard < 10000:
             guard += 1
             batch = self.client.fetch_ohlcv(native, timeframe, since=cursor, limit=1000)
             if not batch:
@@ -76,8 +85,9 @@ class CcxtAdapter(ExchangeAdapter):
         native = self.to_native(symbol)
         all_rows = []
         cursor = int(start_ms)
+        bound = min(int(end_ms), self._now_ms())   # 不向未来翻页（见 fetch_ohlcv）
         guard = 0
-        while cursor <= end_ms and guard < 10000:
+        while cursor <= bound and guard < 10000:
             guard += 1
             batch = self.client.fetch_funding_rate_history(native, since=cursor, limit=1000)
             if not batch:
