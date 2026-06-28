@@ -48,8 +48,8 @@ def test_run_backtest_end_to_end(tmp_path):
     df = run_backtest(cache, syms, pd.Timestamp('2024-01-10 00:00:00'),
                       pd.Timestamp('2024-01-11 00:00:00'), _strategy(), FACTORS, 8,
                       timeframe='1h')
-    # 至少跑出结果行，列齐全
     assert set(['run_time', 'offset', 'symbol', 'pnl_ratio', 'exit_reason',
                 'grid_num', 'hold_bars']).issubset(df.columns)
-    if not df.empty:
-        assert df['pnl_ratio'].notna().all()
+    assert len(df) > 0                                   # 端到端真的跑出网格（非空过）
+    assert df['pnl_ratio'].notna().all()
+    assert df['exit_reason'].map(lambda r: isinstance(r, str) and len(r) > 0).all()
