@@ -57,5 +57,41 @@ def test_open_undercapitalized_raises():
         gx.open(ex_exchange_name(), SYM, GP)
 
 
+def test_sync_records_fill_and_replenishes():
+    ex, store, gx = _setup(price=100.0)
+    gid = gx.open(ex_exchange_name(), SYM, GP)
+    before_open = len(ex.fetch_open_orders(SYM))
+    ex.set_price(SYM, 100.6)   # 触发 line 5 卖单成交（100.4812）
+    res = gx.sync(gid, SYM)
+    assert res['new_fills'] == 1
+    # 补单：卖成交后总挂单数不变（撤一卖、补一买）
+    assert len(ex.fetch_open_orders(SYM)) == before_open
+    # LiveEquity 记录了该成交，净仓下降一格量
+    from gridtrade.state.grids import GridRepository
+    on = GridRepository(store).get(gid).order_num
+    assert abs(ex.fetch_positions(SYM).net_size - on * 3) < 1e-6
+    # accounting 落了快照
+    acc = gx.accounting.get(gid)
+    assert acc is not None and abs(acc.net_position - on * 3) < 1e-6
+
+
+def test_sync_funding_payments_accumulate():
+    ex, store, gx = _setup(price=100.0)
+    gid = gx.open(ex_exchange_name(), SYM, GP)
+    ex.seed_funding_payments(SYM, [(10_000, 1.0)])   # 支付 1 USDT
+    gx.sync(gid, SYM)
+    acc = gx.accounting.get(gid)
+    assert abs(acc.funding_paid - 1.0) < 1e-9
+
+
+def test_sync_idempotent_no_new_fills():
+    ex, store, gx = _setup(price=100.0)
+    gid = gx.open(ex_exchange_name(), SYM, GP)
+    ex.set_price(SYM, 100.6)
+    gx.sync(gid, SYM)
+    res2 = gx.sync(gid, SYM)   # 第二次无新成交
+    assert res2['new_fills'] == 0
+
+
 def ex_exchange_name():
     return 'fake'

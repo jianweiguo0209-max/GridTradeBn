@@ -28,6 +28,8 @@ class GridExecutor:
         self.live = {}        # grid_id -> LiveEquity
         self._geom = {}       # grid_id -> dict(price_array, order_num)
         self._seq = {}        # grid_id -> itertools.count
+        self._trade_cursor = {}
+        self._funding_cursor = {}
 
     def _next_oid(self, grid_id, line_index):
         return '%s:%d:%d' % (grid_id, line_index, next(self._seq[grid_id]))
@@ -54,6 +56,8 @@ class GridExecutor:
         self._geom[gid] = {'price_array': price_array, 'order_num': order_num}
         self._seq[gid] = itertools.count()
         self.live[gid] = LiveEquity(self.cap, self.fee, self.c_rate_taker, entry_price=entry)
+        self._trade_cursor[gid] = 0
+        self._funding_cursor[gid] = 0
 
         self.grids.transition_status(gid, OPENING, expected_version=grid.version)
 
@@ -81,3 +85,57 @@ class GridExecutor:
         g2 = self.grids.get(gid)
         self.grids.transition_status(gid, ACTIVE, expected_version=g2.version)
         return gid
+
+    def sync(self, grid_id, symbol):
+        geom = self._geom[grid_id]
+        price_array = geom['price_array']
+        order_num = geom['order_num']
+        cursor = self._trade_cursor.get(grid_id, 0)
+        trades = self.adapter.fetch_my_trades(symbol, since_ms=cursor)
+        prefix = '%s:' % grid_id
+        new = [t for t in trades
+               if t.client_oid.startswith(prefix) and ':init:' not in t.client_oid]
+        new.sort(key=lambda t: t.ts)
+
+        for t in new:
+            line_index = int(t.client_oid.split(':')[1])
+            self.live[grid_id].record_fill(t.price, t.side, t.size, t.ts)
+            # 标记成交订单 closed
+            self.orders.upsert(GridOrder(client_oid=t.client_oid, grid_id=grid_id,
+                                         line_index=line_index, side=t.side, price=t.price,
+                                         size=t.size, status='closed'))
+            # 补对侧单
+            opp_line = line_index - 1 if t.side == 'sell' else line_index + 1
+            if 0 <= opp_line < len(price_array):
+                opp_side = 'buy' if t.side == 'sell' else 'sell'
+                p = price_array[opp_line]
+                oid = self._next_oid(grid_id, opp_line)
+                order = self.adapter.create_limit_order(symbol, opp_side, p, order_num,
+                                                        post_only=False, client_oid=oid)
+                self.orders.upsert(GridOrder(client_oid=oid, grid_id=grid_id, line_index=opp_line,
+                                             side=opp_side, price=p, size=order_num, status='open',
+                                             exchange_order_id=getattr(order, 'id', None)))
+
+        if new:
+            self._trade_cursor[grid_id] = new[-1].ts + 1
+
+        # 资金费流水
+        fcur = self._funding_cursor.get(grid_id, 0)
+        pays = self.adapter.fetch_funding_payments(symbol, since_ms=fcur)
+        for p in pays:
+            self.live[grid_id].add_funding(p.amount)
+        if pays:
+            self._funding_cursor[grid_id] = pays[-1].ts + 1
+
+        snap = self.live[grid_id].snapshot(float(self.adapter.fetch_price(symbol)))
+        acc = self.accounting.get(grid_id)
+        if acc is not None:
+            acc.realized_pnl = snap['realized_pnl']
+            acc.fee_paid = snap['fee_paid']
+            acc.funding_paid = snap['funding_paid']
+            pos = self.adapter.fetch_positions(symbol)
+            acc.net_position = pos.net_size
+            acc.avg_price = pos.avg_price
+            self.accounting.save(acc)
+            self.accounting.bump_peak(grid_id, snap['pnl_ratio'])
+        return {'new_fills': len(new), 'snapshot': snap}
