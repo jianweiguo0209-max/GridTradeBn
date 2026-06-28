@@ -98,14 +98,17 @@ class GridExecutor:
         order_num = geom['order_num']
         cursor = self.fills.max_ts(grid_id)
         trades = self.adapter.fetch_my_trades(symbol, since_ms=cursor)
-        prefix = '%s:' % grid_id
-        candidates = [t for t in trades
-                      if t.client_oid.startswith(prefix) and ':init:' not in t.client_oid]
+        # 按 exchange order id 把成交映射回网格线（跨所通用；HL fill 只带 oid，不带 cloid）。
+        # 中性底仓/平仓的市价单不在 grid_orders → 其成交 order_id 不在 by_oid，自动排除。
+        by_oid = {o.exchange_order_id: o
+                  for o in self.orders.list_by_grid(grid_id) if o.exchange_order_id}
+        candidates = [t for t in trades if t.order_id in by_oid]
         candidates.sort(key=lambda t: t.ts)
 
         new_count = 0
         for t in candidates:
-            line_index = int(t.client_oid.split(':')[1])
+            go = by_oid[t.order_id]
+            line_index = go.line_index
             fill = Fill(trade_id=str(t.id), grid_id=grid_id, line_index=line_index,
                         side=t.side, price=float(t.price), size=float(t.size), ts=int(t.ts))
             if not self.fills.add_if_new(fill):
@@ -113,7 +116,7 @@ class GridExecutor:
             new_count += 1
             self.live[grid_id].record_fill(t.price, t.side, t.size, t.ts)
             # 标记成交订单 closed
-            self.orders.upsert(GridOrder(client_oid=t.client_oid, grid_id=grid_id,
+            self.orders.upsert(GridOrder(client_oid=go.client_oid, grid_id=grid_id,
                                          line_index=line_index, side=t.side, price=t.price,
                                          size=t.size, status='closed'))
             # 补对侧单
