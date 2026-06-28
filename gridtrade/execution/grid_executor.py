@@ -7,8 +7,9 @@ import itertools
 from gridtrade.core.grid_engine import grid_order_info
 from gridtrade.execution.live_equity import LiveEquity
 from gridtrade.state.accounting import AccountingRepository
+from gridtrade.state.fills import FillRepository
 from gridtrade.state.grids import GridRepository
-from gridtrade.state.models import (ACTIVE, CLOSED, CLOSING, Grid, GridOrder, OPENING, Record, now_ms)
+from gridtrade.state.models import (ACTIVE, CLOSED, CLOSING, Fill, Grid, GridOrder, OPENING, Record, now_ms)
 from gridtrade.state.orders import OrderRepository
 from gridtrade.state.records import RecordRepository
 
@@ -21,6 +22,7 @@ class GridExecutor:
         self.orders = OrderRepository(store)
         self.accounting = AccountingRepository(store)
         self.records = RecordRepository(store)
+        self.fills = FillRepository(store)
         self.cap = float(cap)
         self.leverage = float(leverage)
         self.fee = float(fee)
@@ -94,15 +96,21 @@ class GridExecutor:
         geom = self._geom[grid_id]
         price_array = geom['price_array']
         order_num = geom['order_num']
-        cursor = self._trade_cursor.get(grid_id, 0)
+        cursor = self.fills.max_ts(grid_id)
         trades = self.adapter.fetch_my_trades(symbol, since_ms=cursor)
         prefix = '%s:' % grid_id
-        new = [t for t in trades
-               if t.client_oid.startswith(prefix) and ':init:' not in t.client_oid]
-        new.sort(key=lambda t: t.ts)
+        candidates = [t for t in trades
+                      if t.client_oid.startswith(prefix) and ':init:' not in t.client_oid]
+        candidates.sort(key=lambda t: t.ts)
 
-        for t in new:
+        new_count = 0
+        for t in candidates:
             line_index = int(t.client_oid.split(':')[1])
+            fill = Fill(trade_id=str(t.id), grid_id=grid_id, line_index=line_index,
+                        side=t.side, price=float(t.price), size=float(t.size), ts=int(t.ts))
+            if not self.fills.add_if_new(fill):
+                continue   # 已摄入：去重，跳过（不重复记账/补单）
+            new_count += 1
             self.live[grid_id].record_fill(t.price, t.side, t.size, t.ts)
             # 标记成交订单 closed
             self.orders.upsert(GridOrder(client_oid=t.client_oid, grid_id=grid_id,
@@ -119,9 +127,6 @@ class GridExecutor:
                 self.orders.upsert(GridOrder(client_oid=oid, grid_id=grid_id, line_index=opp_line,
                                              side=opp_side, price=p, size=order_num, status='open',
                                              exchange_order_id=getattr(order, 'id', None)))
-
-        if new:
-            self._trade_cursor[grid_id] = new[-1].ts + 1
 
         # 资金费流水
         fcur = self._funding_cursor.get(grid_id, 0)
@@ -141,7 +146,7 @@ class GridExecutor:
             acc.avg_price = snap['avg_price']
             self.accounting.save(acc)
             self.accounting.bump_peak(grid_id, snap['pnl_ratio'])
-        return {'new_fills': len(new), 'snapshot': snap}
+        return {'new_fills': new_count, 'snapshot': snap}
 
     def close(self, grid_id, symbol, reason):
         grid = self.grids.get(grid_id)
