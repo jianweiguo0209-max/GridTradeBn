@@ -57,3 +57,33 @@ def test_open_proposals_empty_list_noop():
     ex, store, gx = _setup()
     mgr = _manager(gx, store)
     assert mgr.open_proposals([]) == []
+
+
+def test_monitor_all_no_exit_returns_open_results():
+    ex, store, gx = _setup(100.0)
+    mgr = _manager(gx, store)
+    mgr.open_proposals([_proposal()])
+    res = mgr.monitor_all()
+    assert len(res) == 1
+    assert res[0]['closed'] is False and res[0]['reason'] is None
+
+
+def test_monitor_all_triggers_stop_and_publishes_grid_closed():
+    ex, store, gx = _setup(100.0)
+    bus = EventBus(); closed_events = []
+    bus.subscribe(lambda e: closed_events.append(e) if isinstance(e, GridClosed) else None)
+    mgr = _manager(gx, store, bus)
+    ids = mgr.open_proposals([_proposal()])
+    ex.set_price(SYM, 96.5)   # 大跌触发固定止损
+    res = mgr.monitor_all()
+    assert res[0]['closed'] is True and res[0]['reason'] == '固定止损'
+    assert gx.grids.get(ids[0]).status == 'CLOSED'
+    # 发了 GridClosed 事件
+    assert len(closed_events) == 1
+    assert closed_events[0].grid_id == ids[0] and closed_events[0].reason == '固定止损'
+
+
+def test_monitor_all_no_active_grids_returns_empty():
+    ex, store, gx = _setup()
+    mgr = _manager(gx, store)
+    assert mgr.monitor_all() == []

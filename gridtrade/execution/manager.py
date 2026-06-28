@@ -34,3 +34,18 @@ class GridManager:
             self._publish(GridOpened(grid_id=gid, exchange=proposal.exchange,
                                      symbol=proposal.symbol, tag=proposal.tag))
         return opened
+
+    def monitor_all(self) -> List[dict]:
+        results: List[dict] = []
+        # 取快照列表，只推进 ACTIVE 网格（PENDING/OPENING/CLOSING 为过渡态）
+        active = [g for g in self.executor.grids.list_active()
+                  if g.status == ACTIVE]
+        for grid in active:
+            res = monitor_grid(self.executor, grid.id, grid.symbol,
+                               self.stop_cfg, margin_rate=self.margin_rate)
+            if res['closed']:
+                self._publish(GridClosed(
+                    grid_id=grid.id, exchange=grid.exchange, symbol=grid.symbol,
+                    reason=res['reason'], pnl_ratio=res['pnl_ratio']))
+            results.append({'grid_id': grid.id, **res})
+        return results
