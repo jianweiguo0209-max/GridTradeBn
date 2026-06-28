@@ -58,27 +58,30 @@ class GridRepository:
 
     def transition_status(self, grid_id: str, new_status: str, *,
                           expected_version: int) -> Grid:
-        current = self.get(grid_id)
-        if current is None:
-            raise ConcurrencyError(f'grid {grid_id} not found')
-        if not can_transition(current.status, new_status):
-            raise StateError(f'illegal transition {current.status} -> {new_status}')
-        # Terminal -> release slot (NULL). Active state -> (re)claim symbol slot.
-        # Any other (currently unreachable: all 6 states are terminal or active) ->
-        # preserve the existing occupancy rather than silently dropping the slot.
-        if new_status in TERMINAL_STATES:
-            active_symbol = None
-        elif new_status in ACTIVE_STATES:
-            active_symbol = current.symbol
-        else:
-            active_symbol = current.symbol if current.status in ACTIVE_STATES else None
-        # NOTE: status is validated (can_transition) from a prior read, then the write
-        # is guarded by the version optimistic lock below. Data stays consistent: a
-        # concurrent writer changes the version, so a stale write hits rowcount==0 and
-        # raises ConcurrencyError (caller retries). Under true concurrency the surfaced
-        # error may be ConcurrencyError where StateError was "intended"; full in-transaction
-        # re-validation is deferred to P3/P4 where concurrent mutators exist and are testable.
+        # 单事务内：重读源态 -> can_transition 重校验 -> 版本守卫写。校验与写共享同一
+        # 事务快照，消除「事务外读校验 + 事务内写」的 TOCTOU：并发下源态若已变为非法
+        # （如已进终态），重校验直接抛 StateError（语义正确），不再被泛化成
+        # ConcurrencyError。版本守卫仍以传入 expected_version 为准（乐观锁不破）。
+        # 真并发交错下的红->绿测试延后到存在真实并发 mutator（多监控机 leader 选举/
+        # 分片）阶段；本阶段以串行契约守卫（tests/state/test_transition_revalidate.py）。
         with self.engine.begin() as c:
+            row = c.execute(select(grids).where(grids.c.id == grid_id)).first()
+            if row is None:
+                raise ConcurrencyError(f'grid {grid_id} not found')
+            current = _to_grid(row)
+            if not can_transition(current.status, new_status):
+                raise StateError(
+                    f'illegal transition {current.status} -> {new_status}')
+            # Terminal -> release slot (NULL). Active state -> (re)claim symbol slot.
+            # Any other (currently unreachable: all 6 states are terminal or active)
+            # -> preserve existing occupancy rather than silently dropping the slot.
+            if new_status in TERMINAL_STATES:
+                active_symbol = None
+            elif new_status in ACTIVE_STATES:
+                active_symbol = current.symbol
+            else:
+                active_symbol = (current.symbol
+                                 if current.status in ACTIVE_STATES else None)
             res = c.execute(
                 update(grids)
                 .where(grids.c.id == grid_id, grids.c.version == expected_version)
