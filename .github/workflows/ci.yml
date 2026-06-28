@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: pytest (py3.9)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          # TA-Lib（因子计算需要）：0.6.8 提供 manylinux bundled wheel，含 C 库，无需系统 ta-lib
+          pip install TA-Lib==0.6.8
+          pip install pytest
+
+      - name: Run tests
+        env:
+          TZ: Asia/Shanghai
+        run: python -m pytest -q
