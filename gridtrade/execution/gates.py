@@ -27,6 +27,10 @@ class GateResult:
 
 
 class AdmissionGate(ABC):
+    def begin_batch(self) -> None:
+        """每轮 filter 开始前调用一次；有状态门（如 MarginGate）借此重置批次状态。默认空。"""
+        return None
+
     @abstractmethod
     def check(self, proposal: GridProposal) -> GateResult:
         ...
@@ -44,6 +48,9 @@ class GateChain:
         return GateResult(True, 'GateChain')
 
     def filter(self, proposals: Iterable[GridProposal]) -> List[GridProposal]:
+        proposals = list(proposals)
+        for gate in self.gates:
+            gate.begin_batch()
         return [p for p in proposals if self.evaluate(p).passed]
 
 
@@ -100,3 +107,40 @@ class RiskBudgetGate(AdmissionGate):
                               'cap sum %.4f + %.4f > budget %.4f'
                               % (used, incoming, self.total_budget))
         return GateResult(True, 'RiskBudgetGate')
+
+
+class MarginGate(AdmissionGate):
+    """可用保证金门：实时查交易所可用余额(cash) >= 本提议所需(cap)，同轮累计扣减。
+
+    口径（用户敲定）：所需=proposal.cap（未给用 default_cap）；放行条件 cash - 已预留 >= 所需；
+    fail-closed（余额读不到则全拒）。须置于门链末尾（短路链中过它即准入，预留不虚高）。
+    """
+
+    def __init__(self, adapter, default_cap):
+        self.adapter = adapter
+        self.default_cap = float(default_cap)
+        self._available = None      # 本批可用余额快照；None=未快照
+        self._reserved = 0.0        # 本批已放行提议的累计所需
+        self._balance_ok = True
+
+    def begin_batch(self) -> None:
+        self._reserved = 0.0
+        try:
+            self._available = float(self.adapter.fetch_balance().cash)
+            self._balance_ok = True
+        except Exception:           # fail-closed：余额读不到 -> 本批全拒（绝不吞 BaseException）
+            self._available = 0.0
+            self._balance_ok = False
+
+    def check(self, proposal: GridProposal) -> GateResult:
+        if self._available is None:     # 未经 begin_batch 的独立 evaluate -> 惰性快照一次
+            self.begin_batch()
+        if not self._balance_ok:
+            return GateResult(False, 'MarginGate', 'balance unavailable')
+        required = (proposal.cap if proposal.cap is not None else self.default_cap)
+        if self._available - self._reserved < required:
+            return GateResult(False, 'MarginGate',
+                              'free cash %.4f - reserved %.4f < required %.4f'
+                              % (self._available, self._reserved, required))
+        self._reserved += required
+        return GateResult(True, 'MarginGate')
