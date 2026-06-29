@@ -10,7 +10,7 @@ from gridtrade.exchanges.registry import build_adapter
 from gridtrade.exchanges.resilience import CircuitBreaker
 from gridtrade.exchanges.resilient_adapter import ResilientAdapter
 from gridtrade.execution.events import EventBus
-from gridtrade.execution.gates import (GateChain, MaxConcurrentGate,
+from gridtrade.execution.gates import (GateChain, MarginGate, MaxConcurrentGate,
                                        RiskBudgetGate, SymbolLockGate)
 from gridtrade.execution.grid_executor import GridExecutor
 from gridtrade.execution.manager import GridManager
@@ -53,6 +53,7 @@ def build_runtime(config) -> Runtime:
         SymbolLockGate(executor.grids),
         MaxConcurrentGate(executor.grids, config.max_concurrent),
         RiskBudgetGate(executor.grids, config.total_budget, config.default_cap),
+        MarginGate(adapter, config.default_cap),
     ])
     bus = EventBus()
     manager = GridManager(executor, gates, stop_cfg=DEFAULT_STOP_CFG,

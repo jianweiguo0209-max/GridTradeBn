@@ -28,16 +28,17 @@ def test_build_runtime_wires_all_components():
     assert rt.executor.cap == 500.0 and rt.executor.leverage == 4.0
 
 
-def test_build_runtime_gate_chain_has_three_gates():
+def test_build_runtime_gate_chain_has_four_gates_margin_last():
     from gridtrade.runtime.factory import build_runtime
     from gridtrade.execution.gates import (SymbolLockGate, MaxConcurrentGate,
-                                          RiskBudgetGate)
+                                          RiskBudgetGate, MarginGate)
     rt = build_runtime(_cfg())
     gates = rt.manager.gates.gates
-    assert len(gates) == 3
+    assert len(gates) == 4
     assert isinstance(gates[0], SymbolLockGate)
     assert isinstance(gates[1], MaxConcurrentGate)
     assert isinstance(gates[2], RiskBudgetGate)
+    assert isinstance(gates[3], MarginGate)
 
 
 def test_build_runtime_creates_tables_and_trigger_uses_engine():
