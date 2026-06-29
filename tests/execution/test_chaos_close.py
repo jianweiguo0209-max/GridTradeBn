@@ -43,3 +43,30 @@ def test_close_partial_fill_is_flattened_by_bounded_retry():
     gx.close(gid, SYM, '测试平仓')
     assert abs(fake.fetch_positions(SYM).net_size) < 1e-9       # 残仓被补平
     assert gx.grids.get(gid).status == 'CLOSED'
+
+
+def test_close_reduce_failure_leaves_closing_and_is_resumable():
+    # 复刻 testnet 现场：reduce 市价单瞬时抛错 -> close 抛出、网格卡 CLOSING、残仓未平；
+    # finalize_close 续平（撤单幂等 + reduce 这次成功 + 落库一次 + 转 CLOSED）。
+    import pytest
+    from gridtrade.exchanges.base import Instrument
+    from gridtrade.exchanges.fake import FakeExchange
+    from gridtrade.exchanges.faulty import FaultyAdapter
+    from gridtrade.execution.grid_executor import GridExecutor
+    from gridtrade.state.store import StateStore
+    fake = FakeExchange(instruments=[Instrument(SYM, 0.1, 0.001, 0.001, 'live', 0)], price=100.0)
+    fake.set_price(SYM, 100.0)
+    faulty = FaultyAdapter(fake, {})
+    store = StateStore.in_memory(); store.create_all()
+    gx = GridExecutor(faulty, store, cap=1000.0, leverage=5.0)
+    gid = gx.open('fake', SYM, GP)
+    assert fake.fetch_positions(SYM).net_size > 0
+    faulty._schedule['create_market_order'] = [ValueError('reduce boom')]   # 首笔 reduce 抛错
+    with pytest.raises(ValueError):
+        gx.close(gid, SYM, '测试平仓')
+    assert gx.grids.get(gid).status == 'CLOSING'           # 卡死在 CLOSING
+    assert fake.fetch_positions(SYM).net_size > 0          # 残仓还在
+    gx.finalize_close(gid, SYM, '平仓恢复')                # 续平（无故障）
+    assert gx.grids.get(gid).status == 'CLOSED'
+    assert abs(fake.fetch_positions(SYM).net_size) < 1e-9  # 平干净
+    assert len(gx.records.list_by_grid(gid)) == 1          # 恰一条关仓记录

@@ -162,14 +162,21 @@ class GridExecutor:
 
     def close(self, grid_id, symbol, reason):
         grid = self.grids.get(grid_id)
-        self.grids.transition_status(grid_id, CLOSING, expected_version=grid.version)
+        if grid.status != CLOSING:
+            self.grids.transition_status(grid_id, CLOSING, expected_version=grid.version)
+        return self.finalize_close(grid_id, symbol, reason)
+
+    def finalize_close(self, grid_id, symbol, reason):
+        # 幂等续平（grid 须已 CLOSING）：撤单 + 有界 reduce 残仓 + 落库(只一次) + 转 CLOSED。
+        # close() 中途失败留下的 CLOSING 网格由 monitor 循环调本方法续平自愈——
+        # 否则残仓无人认领、状态机卡死（瞬时网络/交易所抖动即触发，mainnet 上很危险）。
+        grid = self.grids.get(grid_id)
         self.adapter.cancel_all(symbol)
         for o in self.orders.list_open_by_grid(grid_id):
             self.orders.upsert(GridOrder(client_oid=o.client_oid, grid_id=grid_id,
                                          line_index=o.line_index, side=o.side, price=o.price,
                                          size=o.size, status='canceled'))
-        # 平仓后校残仓并有界补平：reduce 市价单可能部分成交（HL 滑点/薄盘），
-        # 留残仓且本网格转 CLOSED 后无人认领，故在此重拉持仓、补 reduce 直至 <= min_amount。
+        # reduce 市价单可能部分成交（HL 滑点/薄盘）；重拉持仓、补 reduce 直至 <= min_amount。
         pos = self.adapter.fetch_positions(symbol)
         attempt = 0
         while abs(pos.net_size) > self.min_amount and attempt < 3:
@@ -180,10 +187,11 @@ class GridExecutor:
             attempt += 1
             pos = self.adapter.fetch_positions(symbol)
         snap = self.live[grid_id].snapshot(float(self.adapter.fetch_price(symbol)))
-        self.records.add(Record(id='', grid_id=grid_id, exchange=grid.exchange, symbol=symbol,
-                                tag=grid.tag, offset=grid.offset, opened_at=grid.created_at,
-                                closed_at=now_ms(), sz=self.cap, total_pnl=snap['pnl_ratio'] * self.cap,
-                                pnl_ratio=snap['pnl_ratio'], exit_reason=reason))
+        if not self.records.list_by_grid(grid_id):   # 幂等：续平不重复落库
+            self.records.add(Record(id='', grid_id=grid_id, exchange=grid.exchange, symbol=symbol,
+                                    tag=grid.tag, offset=grid.offset, opened_at=grid.created_at,
+                                    closed_at=now_ms(), sz=self.cap, total_pnl=snap['pnl_ratio'] * self.cap,
+                                    pnl_ratio=snap['pnl_ratio'], exit_reason=reason))
         g2 = self.grids.get(grid_id)
         self.grids.transition_status(grid_id, CLOSED, expected_version=g2.version)
         return {'reason': reason, 'pnl_ratio': snap['pnl_ratio']}

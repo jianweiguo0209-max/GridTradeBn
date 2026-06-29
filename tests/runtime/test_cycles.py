@@ -131,3 +131,46 @@ def test_run_scheduler_cycle_no_close_tag_only_opens():
     out = run_scheduler_cycle(mgr, engine, Reconciler(gx), ctx)
     assert out['closed'] == []
     assert len(out['opened']) == 1
+
+
+def test_monitor_cycle_resumes_stuck_closing_grid():
+    # 模拟 close() 中途失败：网格停在 CLOSING、订单还挂、仓位还在。
+    # monitor 循环应「续平」：撤单 + reduce + 落库 + 转 CLOSED（否则永远卡死、残仓无人认领）。
+    from gridtrade.runtime.cycles import run_monitor_cycle
+    ex, store, gx, mgr = _setup(100.0)
+    gid = mgr.open_proposals([_proposal()])[0]
+    g = gx.grids.get(gid)
+    gx.grids.transition_status(gid, 'CLOSING', expected_version=g.version)  # 卡住
+    assert ex.fetch_positions(BTC).net_size > 0
+    run_monitor_cycle(Reconciler(gx), mgr)
+    assert gx.grids.get(gid).status == 'CLOSED'                 # 续平到 CLOSED
+    assert abs(ex.fetch_positions(BTC).net_size) <= gx.min_amount   # 仓位平了
+    assert len(gx.records.list_by_grid(gid)) == 1              # 落了一条关仓记录
+
+
+def test_finalize_close_does_not_duplicate_existing_record():
+    # close 若曾落库但转 CLOSED 前失败，续平不得重复落库（幂等）。
+    from gridtrade.state.models import Record
+    ex, store, gx, mgr = _setup(100.0)
+    gid = mgr.open_proposals([_proposal()])[0]
+    g = gx.grids.get(gid)
+    gx.grids.transition_status(gid, 'CLOSING', expected_version=g.version)
+    gx.records.add(Record(id='', grid_id=gid, exchange='fake', symbol=BTC,
+                          exit_reason='prior'))   # 模拟已落一条
+    gx.finalize_close(gid, BTC, '平仓恢复')
+    assert len(gx.records.list_by_grid(gid)) == 1              # 不重复
+    assert gx.grids.get(gid).status == 'CLOSED'
+
+
+def test_monitor_cycle_logs_per_grid_degraded():
+    # per-grid 故障必须打日志（否则故障在日志里隐形）。
+    from gridtrade.runtime.cycles import run_monitor_cycle
+    ex, store, gx, mgr = _setup(100.0)
+    mgr.open_proposals([_proposal()])
+    class _BadRec:
+        ex = gx
+        def restore(self, gid): pass
+        def reconcile_open_orders(self, gid, sym): raise RuntimeError('recon boom')
+    logs = []
+    run_monitor_cycle(_BadRec(), mgr, log=logs.append)
+    assert any('recon boom' in s for s in logs)
