@@ -1,7 +1,7 @@
 # GridTradeGP — 项目状态与进度（固化文档）
 
 > 单一事实源：任何新 session / 协作者读这一份即可掌握「系统设计完成度 + testnet 运行状态」。
-> 最后更新：2026-06-29。代码状态：`main` = `f74692b`（与 origin 同步），**258 tests passed**（离线 TDD）。
+> 最后更新：2026-06-29。代码状态：**273 tests passed**（离线 TDD；含 P6① 混沌/故障注入加固）。
 
 ---
 
@@ -71,6 +71,7 @@ gridtrade/
 | P4f–n | 健壮性核心；CI；ResilientAdapter；config；币池/心跳；组装工厂；守护进程；scheduler 常驻整点 |
 | P4-deploy | Dockerfile/fly.toml/CD/ops 清单 + 部署 |
 | P4x–P5a | **testnet 实战修复**（见 §6） |
+| P6① | **故障注入/混沌测试**：FaultyAdapter 包装器（超时/拒单/限频/维护/部分成交/丢响应）；开仓·补单·对账·平仓·cycle 五场景端到端不变量；并修两处真实缺口（见 §6b） |
 
 每阶段计划存档于 [docs/superpowers/plans/](superpowers/plans/)；总设计 [docs/superpowers/specs/2026-06-28-exchange-decoupling-design.md](superpowers/specs/2026-06-28-exchange-decoupling-design.md)。
 
@@ -78,7 +79,7 @@ gridtrade/
 
 ## 4. 测试
 
-- **258 passed**，全程离线（FakeExchange + 内存 SQLite，无网络）。
+- **273 passed**，全程离线（FakeExchange + 内存 SQLite，无网络）。
 - 跑测试：`TZ=Asia/Shanghai .venv/bin/python -m pytest`（仓库 `.venv`：py3.9 / pandas 1.3.5 / numpy 1.22.4 / TA-Lib 0.6.8 / ccxt 4.5.61 / SQLAlchemy 2.0）。
 - CI：`.github/workflows/ci.yml`（ubuntu py3.9 + TA-Lib bundled wheel + pytest），每 push 跑、已验证绿。
 
@@ -113,6 +114,19 @@ gridtrade/
 | 行情 | timeframe `1H`→`1h`（ccxt 小写）；fetch_universe_candles 逐币容错；熔断不计 fatal（坏币不拉垮全局电路）；fetch_balance 读 USDC（`quote_currency`） |
 | 下单 | 市价单传参考价（HL 滑点）；**省略非法 cloid**（HL cloid 须 128-bit hex）；`to_canonical/to_native` 处理 None（createOrder 响应不带 symbol）；`cancel_all` 逐个撤（ccxt 无 HL cancelAllOrders） |
 | 执行核心 | **fill/对账改 exchange order id 匹配**（HL fill/open order 只带 oid 不带 cloid）；monitor 周期**惰性 restore** 他进程开的网格（跨进程内存态） |
+
+---
+
+## 6b. P6① 混沌测试主动暴露并修复的缺口（mainnet 前加固）
+
+故障注入（FaultyAdapter）穿过完整执行栈主动验证异常路径，抓到两处离线常规测试抓不到、真实异常才暴露的缺口，均 TDD 修复：
+
+| 缺口 | 现象 | 修复 |
+|---|---|---|
+| **平仓部分成交残留** | `close()` 的 reduce 市价单只成交一半 → 网格转 CLOSED 后留**无人认领的残仓** | `close()` 平仓后重拉持仓、有界补 reduce（≤3 次）直至 ≤min_amount |
+| **单网格故障掀翻整轮 cycle** | 一个币种持续故障耗尽重试 → 异常冒泡，**健康网格的对账/补单/止损全被阻断** | `run_monitor_cycle` 与 `monitor_all` 均加 **per-grid 隔离**（坏网格记 degraded/error、不阻塞他人；catch Exception 不吞 BaseException） |
+
+另：补强 FakeExchange 按 client_oid 去重 create_limit_order（模拟真实交易所幂等，验证丢响应重试不产生重复单）。
 
 ---
 

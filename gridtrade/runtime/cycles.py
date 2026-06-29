@@ -22,15 +22,19 @@ def restore_all(reconciler) -> List[str]:
 
 
 def run_monitor_cycle(reconciler, manager) -> dict:
-    """monitor 机循环体：惰性重建内存态（他进程开的/重启后的网格）→ 逐网格对账补单 → monitor_all。"""
+    """monitor 机循环体：逐网格隔离——单网格故障降级记录，不阻塞其他网格的对账/止损。"""
     ex = manager.executor
     reconciled = {}
+    degraded = {}
     for grid in _active_grids(ex.grids):
-        if not ex.is_loaded(grid.id):
-            reconciler.restore(grid.id)   # 他进程开的或本进程重启 -> 先重建几何/游标/记账
-        reconciled[grid.id] = reconciler.reconcile_open_orders(grid.id, grid.symbol)
+        try:
+            if not ex.is_loaded(grid.id):
+                reconciler.restore(grid.id)   # 他进程开的或本进程重启 -> 先重建几何/游标/记账
+            reconciled[grid.id] = reconciler.reconcile_open_orders(grid.id, grid.symbol)
+        except Exception as exc:              # 降级：坏网格不掀翻整轮（绝不吞 BaseException）
+            degraded[grid.id] = repr(exc)
     monitored = manager.monitor_all()
-    return {'reconciled': reconciled, 'monitored': monitored}
+    return {'reconciled': reconciled, 'degraded': degraded, 'monitored': monitored}
 
 
 def run_scheduler_cycle(manager, trigger_engine, reconciler, ctx, *,

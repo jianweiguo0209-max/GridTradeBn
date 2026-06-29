@@ -41,8 +41,12 @@ class GridManager:
         active = [g for g in self.executor.grids.list_active()
                   if g.status == ACTIVE]
         for grid in active:
-            res = monitor_grid(self.executor, grid.id, grid.symbol,
-                               self.stop_cfg, margin_rate=self.margin_rate)
+            try:
+                res = monitor_grid(self.executor, grid.id, grid.symbol,
+                                   self.stop_cfg, margin_rate=self.margin_rate)
+            except Exception as exc:   # 单网格 monitor 故障降级，不阻塞其他网格的止损/记账
+                results.append({'grid_id': grid.id, 'error': repr(exc)})
+                continue
             if res['closed']:
                 self._publish(GridClosed(
                     grid_id=grid.id, exchange=grid.exchange, symbol=grid.symbol,
