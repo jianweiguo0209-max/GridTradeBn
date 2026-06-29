@@ -58,3 +58,59 @@ def test_list_instruments_passthrough(tmp_path):
     ds = _ds(tmp_path, ex)
     insts = ds.list_instruments()
     assert insts[0].symbol == SYM
+
+
+def _funding(start_ms, n, step_ms=8 * 3600_000):
+    ts = [start_ms + i * step_ms for i in range(n)]
+    return pd.DataFrame({
+        'ts': ts, 'symbol': SYM,
+        'fundingRate': [0.0001 * (i + 1) for i in range(n)],
+        'realizedRate': [0.0001 * (i + 1) for i in range(n)],
+    })
+
+
+class _OfflineFunding(FakeExchange):
+    def fetch_funding_history(self, *a, **k):
+        raise AssertionError('should not hit network after warm')
+
+
+def test_funding_range_warms_then_serves_offline(tmp_path):
+    from gridtrade.exchanges.base import FUNDING_COLS
+    start = 1_704_067_200_000                      # 2024-01-01 00:00 UTC
+    ex = FakeExchange(instruments=[Instrument(SYM, 0.1, 0.001, 0.001, 'live', 0)])
+    ex.seed_funding(SYM, _funding(start, 6))       # 2 天、8h 间隔 -> 6 行
+    ds = _ds(tmp_path, ex)
+    end = start + 2 * DAY - 1
+    df1 = ds.fetch_funding_range(SYM, start, end)
+    assert list(df1.columns) == FUNDING_COLS and len(df1) == 6
+
+    off = _OfflineFunding(instruments=[Instrument(SYM, 0.1, 0.001, 0.001, 'live', 0)])
+    ds2 = _ds(tmp_path, off)                        # 同一 cache、触网即报错
+    df2 = ds2.fetch_funding_range(SYM, start, end)
+    assert len(df2) == 6 and list(df2['fundingRate']) == list(df1['fundingRate'])
+
+
+def test_funding_range_any_covered_window_fully_offline(tmp_path):
+    # 预热后，区间内任意子窗口都应完全由缓存服务、不触网
+    start = 1_704_067_200_000
+    ex = FakeExchange(instruments=[Instrument(SYM, 0.1, 0.001, 0.001, 'live', 0)])
+    ex.seed_funding(SYM, _funding(start, 6))
+    ds = _ds(tmp_path, ex)
+    ds.fetch_funding_range(SYM, start, start + 2 * DAY - 1)   # warm 2 days
+    off = _OfflineFunding(instruments=[Instrument(SYM, 0.1, 0.001, 0.001, 'live', 0)])
+    ds2 = _ds(tmp_path, off)
+    sub = ds2.fetch_funding_range(SYM, start, start + DAY - 1)  # 第 1 天子窗口
+    assert len(sub) == 3 and all(sub['ts'] < start + DAY)       # 仅第 1 天 3 行，纯离线
+
+
+def test_funding_range_empty_day_sentinel_offline(tmp_path):
+    # 某天无资金费 -> 落空哨兵 -> 离线仍正常（不报错、不并入空数据）
+    start = 1_704_067_200_000
+    ex = FakeExchange(instruments=[Instrument(SYM, 0.1, 0.001, 0.001, 'live', 0)])
+    ex.seed_funding(SYM, _funding(start, 3))        # 仅第 1 天有 3 行；第 2 天空
+    ds = _ds(tmp_path, ex)
+    ds.fetch_funding_range(SYM, start, start + 2 * DAY - 1)   # warm 2 days（第 2 天空哨兵）
+    off = _OfflineFunding(instruments=[Instrument(SYM, 0.1, 0.001, 0.001, 'live', 0)])
+    ds2 = _ds(tmp_path, off)
+    df = ds2.fetch_funding_range(SYM, start, start + 2 * DAY - 1)
+    assert len(df) == 3                              # 第 2 天空哨兵不并入垃圾行
