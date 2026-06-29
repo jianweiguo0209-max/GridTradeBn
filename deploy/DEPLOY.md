@@ -103,5 +103,10 @@ unset TEST_DATABASE_URL                               # 回到默认 SQLite
     HASH=$(.venv/bin/python -c "from gridtrade.dashboard.auth import hash_password; print(hash_password('你的密码'))")
     fly secrets set -a gridtrade-hl DASHBOARD_USER=admin DASHBOARD_PASSWORD_HASH="$HASH" DASHBOARD_SESSION_SECRET="$(openssl rand -hex 32)"
 
-访问：`fly open -a gridtrade-hl`（web 进程 scale-to-zero，首次访问有数秒冷启动）。
+访问：`fly open -a gridtrade-hl`（web 进程常驻 ≥1 台，long-live，无冷启动）。
 登录失败 5 次锁定 ≥ 1 小时（内存态，机器重启后清零）。
+
+> 部署机制注意：web 是 scale-to-zero 之外的常驻进程组（`min_machines_running = 1`）。
+> 早期用 `min=0` 时 CI 滚动部署不会为空的新进程组创建首台机器（且空组无法 `fly scale count`），
+> 故改 `min=1` 让 `fly deploy` 直接建/留 web 机器。若哪天想回 scale-to-zero，需先有 1 台 web 机器存在，
+> 再 `fly scale count web=1` 后改 min=0。

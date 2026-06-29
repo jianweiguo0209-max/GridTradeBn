@@ -32,13 +32,15 @@ primary_region = "nrt"
   scheduler = "python -m gridtrade.runtime.scheduler"
   web = "python -m gridtrade.runtime.web"
 
-# web dashboard：scale-to-zero（有请求才起、空闲自动停）。monitor/scheduler 无 http_service、保持常驻。
+# web dashboard：常驻至少 1 台（long-live）。放弃 scale-to-zero —— CI 滚动部署不会为
+# min=0 的新进程组创建首台机器（空组又无法 fly scale count），min=1 让部署直接建/留 web 机器。
+# 仍允许负载下扩容、闲时回落到 1。monitor/scheduler 无 http_service、各自常驻。
 [http_service]
   internal_port = 8080
   force_https = true
   auto_stop_machines = "stop"
   auto_start_machines = true
-  min_machines_running = 0
+  min_machines_running = 1
   processes = ["web"]
 
 [[vm]]
