@@ -6,7 +6,8 @@ from sqlalchemy import select
 
 from gridtrade.runtime.introspect import adapter_endpoint
 from gridtrade.state.heartbeats import HeartbeatRepository
-from gridtrade.state.models import now_ms, order_records, grid_fills
+from gridtrade.state.models import (Accounting, Fill, Grid, GridOrder,
+                                    grid_fills, now_ms, order_records)
 from gridtrade.state.accounting import AccountingRepository
 from gridtrade.state.grids import GridRepository
 from gridtrade.state.orders import OrderRepository
@@ -129,13 +130,14 @@ def build_overview(store, adapter) -> List[GridOverviewRow]:
 
 @dataclass
 class GridDetailDTO:
-    grid: object
-    orders: list
-    fills: list
-    accounting: object
+    grid: Grid
+    orders: List[GridOrder]
+    fills: List[Fill]
+    accounting: Optional[Accounting]
 
 
-def build_grid_detail(store, grid_id: str, *, fills_limit: int = 50):
+def build_grid_detail(store, grid_id: str, *,
+                      fills_limit: int = 50) -> Optional[GridDetailDTO]:
     grid = GridRepository(store).get(grid_id)
     if grid is None:
         return None
