@@ -107,6 +107,8 @@ gridtrade/
 
 **决策依据**：见记忆 `p4-deploy-decisions`；ops 命令清单 [deploy/DEPLOY.md](../deploy/DEPLOY.md)。
 
+> **真实手续费落库（新）**：`grid_fills.fee` 记录每笔成交的交易所真实手续费；`accounting.fee_paid` 与 `net_value/pnl_ratio` 改用真实费（共用回测引擎 `cal_equity_curve` 不动）。**上线对已有库需跑一次幂等迁移**：`fly machine run <image> python -m gridtrade.runtime.dbadmin migrate`（加 `fee` 列）。历史 fill 不回填（fee=0），存量在跑网格重启重放会漏历史段真实费、随新成交自愈。设计/计划见 `docs/superpowers/{specs,plans}/2026-06-30-real-fee-persistence*`。
+
 ---
 
 ## 6. testnet 实战修复（离线测试抓不到、真 HL 才暴露）
