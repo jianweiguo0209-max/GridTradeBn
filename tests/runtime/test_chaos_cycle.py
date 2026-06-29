@@ -1,8 +1,6 @@
-# tests/runtime/test_chaos_cycle.py
 import random
 
 import ccxt
-import pytest
 
 from gridtrade.exchanges.base import Instrument
 from gridtrade.exchanges.fake import FakeExchange
@@ -20,7 +18,7 @@ SYM_A = 'BTC/USDT:USDT'
 SYM_B = 'ETH/USDT:USDT'
 GP = {'low_price': 98.0, 'high_price': 102.0, 'grid_count': 8,
       'stop_low_price': 97.0, 'stop_high_price': 103.0}
-STOP_CFG = {'stop_loss': -0.5, 'take_profit': 1.0, 'trailing': 0.3}
+STOP_CFG = {'stop_loss': 0.034, 'trailing_k': 0.3, 'trailing_floor': 0.00618}
 
 
 def build():
@@ -37,12 +35,30 @@ def build():
     return fake, faulty, gx, mgr
 
 
-def test_one_bad_grid_currently_aborts_whole_cycle():
+def test_bad_grid_reconcile_does_not_block_healthy_grid():
+    # 一个网格 reconcile 持续故障 -> 降级记录，不阻塞另一网格的对账
+    fake, faulty, gx, mgr = build()
+    gid_a = gx.open('fake', SYM_A, GP)
+    gid_b = gx.open('fake', SYM_B, GP)
+    rec = Reconciler(gx)
+    # 恰好耗尽 max_attempts=2：先被处理的网格 reconcile 抛错降级，另一网格 schedule 已空 -> 成功
+    faulty._schedule['fetch_open_orders'] = [ccxt.OnMaintenance('m'), ccxt.OnMaintenance('m')]
+    out = run_monitor_cycle(rec, mgr)
+    assert len(out['degraded']) == 1                       # 仅坏网格降级
+    assert len(out['reconciled']) == 1                     # 健康网格仍完成对账
+    assert set(out['degraded']) | set(out['reconciled']) == {gid_a, gid_b}
+
+
+def test_bad_grid_monitor_does_not_block_healthy_grid():
+    # monitor_all 段同样隔离：一个网格 sync 故障 -> 记错降级，另一网格仍被 monitor
     fake, faulty, gx, mgr = build()
     gx.open('fake', SYM_A, GP)
     gx.open('fake', SYM_B, GP)
     rec = Reconciler(gx)
-    # 对 A 币种的对账注入持续故障：fetch_open_orders 始终维护中 -> 重试耗尽抛
-    faulty._schedule['fetch_open_orders'] = [ccxt.OnMaintenance('m')] * 50
-    with pytest.raises(ccxt.OnMaintenance):           # 特征化：整轮被掀翻
-        run_monitor_cycle(rec, mgr)
+    # fetch_my_trades 仅 sync(monitor_all) 用、reconcile 不用 -> 隔离 monitor_all 段
+    faulty._schedule['fetch_my_trades'] = [ccxt.OnMaintenance('m'), ccxt.OnMaintenance('m')]
+    out = run_monitor_cycle(rec, mgr)
+    assert out['degraded'] == {}                           # reconcile 段不受影响
+    errored = [r for r in out['monitored'] if 'error' in r]
+    ok = [r for r in out['monitored'] if 'error' not in r]
+    assert len(errored) == 1 and len(ok) == 1              # 一坏一好
