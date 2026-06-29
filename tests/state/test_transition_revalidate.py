@@ -12,12 +12,9 @@ from gridtrade.state.models import (Grid, ACTIVE, OPENING, FAILED, CLOSING,
                                     PENDING, ConcurrencyError, StateError)
 
 
-def _repo():
-    from gridtrade.state.store import StateStore
+def _repo(store):
     from gridtrade.state.grids import GridRepository
-    s = StateStore.in_memory()
-    s.create_all()
-    return GridRepository(s)
+    return GridRepository(store)
 
 
 def _grid(**kw):
@@ -26,33 +23,33 @@ def _grid(**kw):
     return Grid(**base)
 
 
-def test_illegal_transition_from_terminal_raises_state_error():
+def test_illegal_transition_from_terminal_raises_state_error(store):
     """从终态（FAILED）转出非法 -> StateError（事务内重校验后仍守此契约）。"""
-    repo = _repo()
+    repo = _repo(store)
     g = repo.create(_grid(status=OPENING))
     failed = repo.transition_status(g.id, FAILED, expected_version=g.version)
     with pytest.raises(StateError):
         repo.transition_status(failed.id, ACTIVE, expected_version=failed.version)
 
 
-def test_legal_transition_stale_version_raises_concurrency_error():
+def test_legal_transition_stale_version_raises_concurrency_error(store):
     """转换合法但版本陈旧 -> ConcurrencyError（乐观锁守卫不破）。"""
-    repo = _repo()
+    repo = _repo(store)
     g = repo.create(_grid(status=OPENING))
     # OPENING->ACTIVE 合法，但 expected_version 错误 -> 版本守卫 rowcount==0
     with pytest.raises(ConcurrencyError):
         repo.transition_status(g.id, ACTIVE, expected_version=999)
 
 
-def test_missing_grid_raises_concurrency_error():
-    repo = _repo()
+def test_missing_grid_raises_concurrency_error(store):
+    repo = _repo(store)
     with pytest.raises(ConcurrencyError):
         repo.transition_status('nope', ACTIVE, expected_version=1)
 
 
-def test_normal_transition_succeeds_and_bumps_version():
+def test_normal_transition_succeeds_and_bumps_version(store):
     """正常路径：事务内重校验不改变成功语义。"""
-    repo = _repo()
+    repo = _repo(store)
     g = repo.create(_grid(status=OPENING))
     active = repo.transition_status(g.id, ACTIVE, expected_version=g.version)
     assert active.status == ACTIVE

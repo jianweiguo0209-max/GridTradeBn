@@ -4,12 +4,9 @@ from gridtrade.state.models import (Grid, ACTIVE, OPENING, CLOSED, CLOSING,
                                     PENDING, ConcurrencyError, StateError)
 
 
-def _repo():
-    from gridtrade.state.store import StateStore
+def _repo(store):
     from gridtrade.state.grids import GridRepository
-    s = StateStore.in_memory()
-    s.create_all()
-    return GridRepository(s)
+    return GridRepository(store)
 
 
 def _grid(**kw):
@@ -18,31 +15,31 @@ def _grid(**kw):
     return Grid(**base)
 
 
-def test_create_assigns_id_and_timestamps():
-    repo = _repo()
+def test_create_assigns_id_and_timestamps(store):
+    repo = _repo(store)
     g = repo.create(_grid())
     assert g.id and g.created_at > 0 and g.updated_at > 0 and g.version == 1
     assert repo.get(g.id).symbol == 'BTC/USDT:USDT'
 
 
-def test_get_active_by_symbol():
-    repo = _repo()
+def test_get_active_by_symbol(store):
+    repo = _repo(store)
     g = repo.create(_grid(status=ACTIVE))
     found = repo.get_active_by_symbol('okx', 'BTC/USDT:USDT')
     assert found is not None and found.id == g.id
     assert repo.get_active_by_symbol('okx', 'ETH/USDT:USDT') is None
 
 
-def test_second_active_same_symbol_rejected():
+def test_second_active_same_symbol_rejected(store):
     import sqlalchemy as sa
-    repo = _repo()
+    repo = _repo(store)
     repo.create(_grid(status=ACTIVE))
     with pytest.raises(sa.exc.IntegrityError):
         repo.create(_grid(status=ACTIVE))
 
 
-def test_transition_optimistic_lock_and_slot_release():
-    repo = _repo()
+def test_transition_optimistic_lock_and_slot_release(store):
+    repo = _repo(store)
     g = repo.create(_grid(status=OPENING))
     # 陈旧 version 抛 ConcurrencyError
     with pytest.raises(ConcurrencyError):
@@ -58,15 +55,15 @@ def test_transition_optimistic_lock_and_slot_release():
     assert again.id != g.id
 
 
-def test_illegal_transition_raises_state_error():
-    repo = _repo()
+def test_illegal_transition_raises_state_error(store):
+    repo = _repo(store)
     g = repo.create(_grid(status=ACTIVE))
     with pytest.raises(StateError):
         repo.transition_status(g.id, PENDING, expected_version=g.version)
 
 
-def test_list_active_excludes_terminal():
-    repo = _repo()
+def test_list_active_excludes_terminal(store):
+    repo = _repo(store)
     a = repo.create(_grid(symbol='AAA/USDT:USDT', status=ACTIVE))
     b = repo.create(_grid(symbol='BBB/USDT:USDT', status=OPENING))
     c = repo.create(_grid(symbol='CCC/USDT:USDT', status=ACTIVE))

@@ -1,11 +1,9 @@
 from gridtrade.state.models import Fill
 
 
-def _repo():
-    from gridtrade.state.store import StateStore
+def _repo(store):
     from gridtrade.state.fills import FillRepository
-    s = StateStore.in_memory(); s.create_all()
-    return FillRepository(s)
+    return FillRepository(store)
 
 
 def _fill(trade_id='t1', **kw):
@@ -15,23 +13,23 @@ def _fill(trade_id='t1', **kw):
     return Fill(**base)
 
 
-def test_add_if_new_dedup():
-    repo = _repo()
+def test_add_if_new_dedup(store):
+    repo = _repo(store)
     assert repo.add_if_new(_fill('t1')) is True
     assert repo.add_if_new(_fill('t1')) is False    # 同 trade_id 第二次 → False
     assert len(repo.list_by_grid('g1')) == 1
 
 
-def test_list_by_grid_sorted_by_ts():
-    repo = _repo()
+def test_list_by_grid_sorted_by_ts(store):
+    repo = _repo(store)
     repo.add_if_new(_fill('t3', ts=3000))
     repo.add_if_new(_fill('t1', ts=1000))
     repo.add_if_new(_fill('t2', ts=2000))
     assert [f.ts for f in repo.list_by_grid('g1')] == [1000, 2000, 3000]
 
 
-def test_max_ts():
-    repo = _repo()
+def test_max_ts(store):
+    repo = _repo(store)
     assert repo.max_ts('g1') == 0
     repo.add_if_new(_fill('t1', ts=1000))
     repo.add_if_new(_fill('t2', ts=5000))
