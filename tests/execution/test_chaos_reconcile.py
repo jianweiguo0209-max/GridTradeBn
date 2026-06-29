@@ -42,9 +42,11 @@ def test_reconcile_converges_despite_transient_fault():
     # 在补缺失单时注入一次瞬时超时
     faulty._schedule['create_limit_order'] = [ccxt.RequestTimeout('t')]
     out = rec.reconcile_open_orders(gid, SYM)
+    assert faulty._schedule.get('create_limit_order', []) == []   # the injected timeout was consumed (retry path exercised)
     assert out == {'canceled': 1, 'replaced': 1}                  # 重试后仍补回 + 撤孤儿
-    assert all(o.client_oid != 'zzz:orphan:0' for o in fake.fetch_open_orders(SYM))
-    assert len(fake.fetch_open_orders(SYM)) == 9   # 收敛到期望单集（9 grid orders）
+    final_orders = fake.fetch_open_orders(SYM)
+    assert all(o.client_oid != 'zzz:orphan:0' for o in final_orders)
+    assert len(final_orders) == 9   # 收敛到期望单集（9 grid orders）
 
     out2 = rec.reconcile_open_orders(gid, SYM)                    # 再对账：幂等
     assert out2 == {'canceled': 0, 'replaced': 0}
