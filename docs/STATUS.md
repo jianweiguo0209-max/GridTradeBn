@@ -1,7 +1,7 @@
 # GridTradeGP — 项目状态与进度（固化文档）
 
 > 单一事实源：任何新 session / 协作者读这一份即可掌握「系统设计完成度 + testnet 运行状态」。
-> 最后更新：2026-06-29。代码状态：**274 tests passed**（离线 TDD；含 P6① 混沌/故障注入加固 + quote_volume 成交额回退修复）。
+> 最后更新：2026-06-29。代码状态：**279 tests passed**（离线 TDD；含 P6① 混沌/故障注入加固 + quote_volume 成交额回退修复 + OrderFilled 事件 + funding 缓存测试）。
 
 ---
 
@@ -79,7 +79,7 @@ gridtrade/
 
 ## 4. 测试
 
-- **274 passed**，全程离线（FakeExchange + 内存 SQLite，无网络）。
+- **279 passed**，全程离线（FakeExchange + 内存 SQLite，无网络）。
 - 跑测试：`TZ=Asia/Shanghai .venv/bin/python -m pytest`（仓库 `.venv`：py3.9 / pandas 1.3.5 / numpy 1.22.4 / TA-Lib 0.6.8 / ccxt 4.5.61 / SQLAlchemy 2.0）。
 - CI：`.github/workflows/ci.yml`（ubuntu py3.9 + TA-Lib bundled wheel + pytest），每 push 跑、已验证绿。
 
@@ -150,8 +150,8 @@ gridtrade/
 ## 9. 仍延后（需产品/口径决策，动手前先问）
 
 - **MarginGate**（保证金门）、**ThresholdTrigger / ExternalSignalTrigger**（价格/指标阈值、外部信号触发器）——需口径。
-- **OrderFilled 事件**（需改 executor 摄入路径埋点）。
 - **真并发 TOCTOU 测试**（transition_status 重校验已修；线程级红→绿测试待多监控机阶段）。
+- ✅ ~~OrderFilled 事件~~ —— 已实现（GridManager.monitor_all 逐笔成交发布，带 fee）。
 - **同币种多网格**（二期 LogicalAttributionPolicy / 子账户）。
 - 详见记忆 `p4-deferred-items`、`deferred-toctou-concurrency-test`。
 
