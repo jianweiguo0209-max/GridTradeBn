@@ -97,7 +97,8 @@ unset TEST_DATABASE_URL                               # 回到默认 SQLite
 
 ## Dashboard（web 进程，只读监控）
 
-设置登录凭据（密码用本地生成的 pbkdf2 哈希，不在仓库存明文）：
+设置登录凭据（密码用本地生成的 pbkdf2 哈希，不在仓库存明文）。
+**把下面的 `你的密码` 换成你自己的真实密码再执行**：
 
     HASH=$(.venv/bin/python -c "from gridtrade.dashboard.auth import hash_password; print(hash_password('你的密码'))")
     fly secrets set -a gridtrade-hl DASHBOARD_USER=admin DASHBOARD_PASSWORD_HASH="$HASH" DASHBOARD_SESSION_SECRET="$(openssl rand -hex 32)"

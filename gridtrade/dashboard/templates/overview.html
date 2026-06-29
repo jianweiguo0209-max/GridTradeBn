@@ -8,7 +8,7 @@
 <tbody>
 {% for r in rows %}
 <tr>
-  <td><a href="/grid/{{ r.grid_id }}">{{ r.symbol }}</a></td>
+  <td><a href="/grid/{{ r.grid_id | urlencode }}">{{ r.symbol }}</a></td>
   <td>{{ r.status }}</td><td>{{ r.direction }}</td>
   <td>{{ r.low_price | fmt_num }}–{{ r.high_price | fmt_num }}</td>
   <td>{{ r.open_order_count }}</td>

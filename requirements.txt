@@ -13,5 +13,5 @@ psycopg2-binary>=2.9,<3
 fastapi>=0.110,<0.116
 uvicorn[standard]>=0.27,<0.35
 jinja2>=3.1,<4
-python-multipart>=0.0.12  # FastAPI Form() support
-httpx>=0.23  # starlette.testclient dependency
+python-multipart>=0.0.12,<0.1  # FastAPI Form() support
+httpx>=0.23,<1  # starlette.testclient dependency

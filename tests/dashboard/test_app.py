@@ -49,6 +49,16 @@ def test_login_then_overview_shows_grid(store):
     assert 'BTC/USDT:USDT' in home.text
 
 
+def test_login_page_redirects_when_already_authenticated(store):
+    c = _client(store)
+    c.post('/login', data={'username': 'admin', 'password': 'pw'},
+           follow_redirects=False)
+    # 已持会话 cookie 再访问 /login -> 302 回首页，而非再渲染登录表单
+    again = c.get('/login', follow_redirects=False)
+    assert again.status_code == 302
+    assert again.headers['location'].endswith('/')
+
+
 def test_wrong_password_then_lockout(store):
     thr = LoginThrottle(max_attempts=3, lockout_sec=3600, now_fn=lambda: 1000.0)
     c = _client(store, throttle=thr)
