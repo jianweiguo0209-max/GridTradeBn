@@ -95,6 +95,10 @@ class FakeExchange(ExchangeAdapter):
 
     def create_limit_order(self, symbol, side, price, size, *,
                            post_only=False, reduce_only=False, client_oid=None) -> Order:
+        if client_oid is not None:                       # 幂等：同 client_oid 已有未成交挂单 -> 返回原单
+            for o in self._open.values():
+                if o.client_oid == client_oid:
+                    return o
         oid = str(next(self._ids))
         o = Order(id=oid, client_oid=client_oid or oid, symbol=symbol, side=side,
                   price=price, size=size, filled=0.0, status='open', reduce_only=reduce_only)
