@@ -15,6 +15,6 @@
 <h1>Recent Fills (global)</h1>
 <table><thead><tr><th>ts</th><th>grid</th><th>line</th><th>side</th><th>price</th><th>size</th></tr></thead><tbody>
 {% for f in r.recent_fills %}<tr><td>{{ f.ts | ms_to_human }}</td><td>{{ f.grid_id }}</td>
-<td>{{ f.line_index }}</td><td>{{ f.side }}</td><td>{{ f.price | fmt_num }}</td><td>{{ f.size | fmt_num }}</td></tr>{% endfor %}
+<td>{{ f.line_index }}</td><td>{{ f.side }}</td><td>{{ f.price | fmt_num }}</td><td>{{ f.size | fmt_size }}</td></tr>{% endfor %}
 </tbody></table>
 {% endblock %}

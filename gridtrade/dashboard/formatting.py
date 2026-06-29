@@ -35,6 +35,17 @@ def fmt_pct(x: Optional[float], digits: int = 2) -> str:
     return f'{x * 100:.{digits}f}%'
 
 
+def fmt_size(x: Optional[float], digits: int = 8) -> str:
+    """持仓/挂单数量：保留较多小数（默认 8 位），并去掉尾部多余的 0 与小数点，
+    使 0.001 正常显示、26 仍显示为 26 而非 26.00000000。"""
+    if x is None:
+        return '-'
+    s = f'{x:.{digits}f}'
+    if '.' in s:
+        s = s.rstrip('0').rstrip('.')
+    return s or '0'
+
+
 def pnl_class(x: Optional[float]) -> str:
     if x is None or x == 0:
         return 'zero'

@@ -25,7 +25,7 @@ def create_app(store, adapter, *, username: str, password_hash: str,
     templates = Jinja2Templates(directory=str(_DIR / 'templates'))
     for name, func in (('ms_to_human', fmt.ms_to_human), ('age_human', fmt.age_human),
                        ('fmt_num', fmt.fmt_num), ('fmt_pct', fmt.fmt_pct),
-                       ('pnl_class', fmt.pnl_class)):
+                       ('fmt_size', fmt.fmt_size), ('pnl_class', fmt.pnl_class)):
         templates.env.filters[name] = func
     app.mount('/static', StaticFiles(directory=str(_DIR / 'static')), name='static')
 

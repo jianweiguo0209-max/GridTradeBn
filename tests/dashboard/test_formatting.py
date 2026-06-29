@@ -1,6 +1,15 @@
 # tests/dashboard/test_formatting.py
 from gridtrade.dashboard.formatting import (ms_to_human, age_human, fmt_num,
-                                            fmt_pct, pnl_class)
+                                            fmt_pct, fmt_size, pnl_class)
+
+
+def test_fmt_size():
+    assert fmt_size(None) == '-'
+    assert fmt_size(0.001) == '0.001'          # 小数量不再被 2 位截成 0.00
+    assert fmt_size(0.00012345) == '0.00012345'
+    assert fmt_size(26.0) == '26'              # 整数量去掉尾部 0 与小数点
+    assert fmt_size(1.5) == '1.5'
+    assert fmt_size(0.0) == '0'
 
 
 def test_ms_to_human():
