@@ -30,8 +30,18 @@ primary_region = "nrt"
 [processes]
   monitor = "python -m gridtrade.runtime.monitor"
   scheduler = "python -m gridtrade.runtime.scheduler"
+  web = "python -m gridtrade.runtime.web"
+
+# web dashboard：scale-to-zero（有请求才起、空闲自动停）。monitor/scheduler 无 http_service、保持常驻。
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["web"]
 
 [[vm]]
   size = "shared-cpu-1x"
   memory = "512mb"
-  processes = ["monitor", "scheduler"]
+  processes = ["monitor", "scheduler", "web"]

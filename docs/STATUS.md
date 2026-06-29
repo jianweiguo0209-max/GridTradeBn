@@ -91,9 +91,10 @@ gridtrade/
 
 ## 5. 部署（fly.io）— 当前 testnet 运行中
 
-**fly app `gridtrade-hl`（region nrt 东京）**，两个常驻 process group（同一镜像）：
+**fly app `gridtrade-hl`（region nrt 东京）**，三个 process group（同一镜像）：
 - **monitor**：~5s 循环，对账补单 + 实时记账 + 止盈止损 + 跨进程惰性 restore。
 - **scheduler**：常驻、睡到整点跑（关旧 tag→选币→准入→开新）。
+- **web**：fly 第三进程（scale-to-zero），FastAPI 只读 dashboard（系统健康/活跃网格/单网格明细/历史战绩）；登录鉴权；`auto_stop/auto_start`，空闲停到零。
 
 | 项 | 值 |
 |---|---|

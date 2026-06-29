@@ -17,5 +17,7 @@ COPY gridtrade ./gridtrade
 ENV PYTHONUNBUFFERED=1 \
     TZ=UTC
 
+EXPOSE 8080
+
 # 默认跑常驻 monitor；scheduler 由 fly process group / scheduled machine 覆盖命令。
 CMD ["python", "-m", "gridtrade.runtime.monitor"]
