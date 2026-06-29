@@ -110,3 +110,10 @@ unset TEST_DATABASE_URL                               # 回到默认 SQLite
 > 早期用 `min=0` 时 CI 滚动部署不会为空的新进程组创建首台机器（且空组无法 `fly scale count`），
 > 故改 `min=1` 让 `fly deploy` 直接建/留 web 机器。若哪天想回 scale-to-zero，需先有 1 台 web 机器存在，
 > 再 `fly scale count web=1` 后改 min=0。
+
+---
+
+### 控制台（P2）
+- 控制动作 = web 写 DB（control_flags/control_commands/control_audit），monitor 每 ~5s 消费执行，web 永不下单。
+- halt：冻结补单/开仓/选币，止损与记账照常。panic：置 halt + 入队全平（需输入 PANIC 确认）。
+- 关/开网格、暂停 scheduler 同走指令/标志；审计与队列状态在 /controls 页可查。

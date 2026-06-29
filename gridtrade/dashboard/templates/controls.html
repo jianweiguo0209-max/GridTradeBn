@@ -1,0 +1,31 @@
+<!-- gridtrade/dashboard/templates/controls.html -->
+{% extends "base.html" %}{% block content %}
+<h1>Controls</h1>
+<section class="ctl">
+  <h2>Trading halt: <b class="{{ 'neg' if halted else 'pos' }}">{{ 'HALTED' if halted else 'live' }}</b></h2>
+  <form method="post" action="/control/halt" onsubmit="return confirm('切换 trading halt?')">
+    <input type="hidden" name="action" value="{{ 'off' if halted else 'on' }}">
+    <button>{{ '恢复交易' if halted else '暂停交易 (halt)' }}</button>
+  </form>
+  <form method="post" action="/control/panic"
+        onsubmit="return prompt('输入 PANIC 确认急平所有网格','')==='PANIC' ? (this.confirm.value='PANIC', true) : false">
+    <input type="hidden" name="confirm" value="">
+    <button class="danger">急平所有 (PANIC)</button>
+  </form>
+</section>
+<section class="ctl">
+  <h2>Scheduler: <b>{{ 'PAUSED' if scheduler_paused else 'active' }}</b></h2>
+  <form method="post" action="/control/scheduler" onsubmit="return confirm('切换 scheduler?')">
+    <input type="hidden" name="action" value="{{ 'resume' if scheduler_paused else 'pause' }}">
+    <button>{{ '恢复 scheduler' if scheduler_paused else '暂停 scheduler' }}</button>
+  </form>
+</section>
+<h2>Command queue</h2>
+<table><thead><tr><th>type</th><th>status</th><th>by</th><th>result</th></tr></thead><tbody>
+{% for c in commands %}<tr><td>{{ c.type }}</td><td>{{ c.status }}</td><td>{{ c.created_by }}</td><td>{{ c.result or '' }}</td></tr>{% endfor %}
+</tbody></table>
+<h2>Audit</h2>
+<table><thead><tr><th>ts</th><th>actor</th><th>action</th><th>target</th><th>outcome</th></tr></thead><tbody>
+{% for a in audit %}<tr><td>{{ a.ts | ms_to_human }}</td><td>{{ a.actor }}</td><td>{{ a.action }}</td><td>{{ a.target }}</td><td>{{ a.outcome }}</td></tr>{% endfor %}
+</tbody></table>
+{% endblock %}

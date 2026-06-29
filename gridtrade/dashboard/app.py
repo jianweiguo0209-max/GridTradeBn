@@ -1,4 +1,5 @@
 """FastAPI 应用工厂：登录鉴权 + 四个只读视图。web 进程绝不写库/写交易所。"""
+import json
 from pathlib import Path
 from typing import Optional
 
@@ -19,7 +20,14 @@ _COOKIE = 'gt_session'
 
 def create_app(store, adapter, *, username: str, password_hash: str,
                session_secret: str, throttle: Optional[LoginThrottle] = None,
-               stale_threshold_sec: float = 30.0) -> FastAPI:
+               stale_threshold_sec: float = 30.0,
+               flags=None, commands=None, audit=None,
+               compute_fn=None, universe_fn=None) -> FastAPI:
+    from gridtrade.state.control import (ControlFlagRepository, CommandRepository,
+                                         AuditRepository)
+    flags = flags or ControlFlagRepository(store)
+    commands = commands or CommandRepository(store)
+    audit = audit or AuditRepository(store)
     app = FastAPI()
     throttle = throttle or LoginThrottle()
     templates = Jinja2Templates(directory=str(_DIR / 'templates'))
@@ -83,5 +91,93 @@ def create_app(store, adapter, *, username: str, password_hash: str,
             return RedirectResponse('/login', status_code=302)
         return templates.TemplateResponse(request, 'history.html', {
             'health': _health(), 'r': build_records(store)})
+
+    @app.post('/control/scheduler')
+    def control_scheduler(request: Request, action: str = Form(...)):
+        u = _user(request)
+        if not u:
+            return RedirectResponse('/login', status_code=302)
+        paused = action == 'pause'
+        flags.set('scheduler_paused', paused, actor=u)
+        audit.add(u, 'FLAG_SET', 'scheduler_paused',
+                  detail=json.dumps({'value': paused}))
+        return RedirectResponse('/controls', status_code=302)
+
+    @app.post('/control/halt')
+    def control_halt(request: Request, action: str = Form(...)):
+        u = _user(request)
+        if not u:
+            return RedirectResponse('/login', status_code=302)
+        on = action == 'on'
+        flags.set('trading_halted', on, actor=u)
+        audit.add(u, 'FLAG_SET', 'trading_halted',
+                  detail=json.dumps({'value': on}))
+        return RedirectResponse('/controls', status_code=302)
+
+    @app.post('/control/panic')
+    def control_panic(request: Request, confirm: str = Form('')):
+        u = _user(request)
+        if not u:
+            return RedirectResponse('/login', status_code=302)
+        if confirm != 'PANIC':
+            return RedirectResponse('/controls?err=confirm', status_code=302)
+        flags.set('trading_halted', True, actor=u)
+        cmd = commands.enqueue('PANIC_CLOSE_ALL', '{"reason": "panic"}', created_by=u)
+        audit.add(u, 'CMD_SUBMIT', cmd.id, detail='{"type": "PANIC_CLOSE_ALL"}')
+        return RedirectResponse('/controls', status_code=302)
+
+    @app.post('/control/close')
+    def control_close(request: Request, grid_id: str = Form(...),
+                      symbol: str = Form(...), reason: str = Form('manual')):
+        u = _user(request)
+        if not u:
+            return RedirectResponse('/login', status_code=302)
+        payload = json.dumps({'grid_id': grid_id, 'symbol': symbol, 'reason': reason})
+        cmd = commands.enqueue('CLOSE_GRID', payload, created_by=u)
+        audit.add(u, 'CMD_SUBMIT', cmd.id, detail='{"type": "CLOSE_GRID"}')
+        return RedirectResponse('/controls', status_code=302)
+
+    @app.get('/open', response_class=HTMLResponse)
+    def open_form(request: Request, symbol: str = ''):
+        if not _user(request):
+            return RedirectResponse('/login', status_code=302)
+        prefill = compute_fn(symbol) if (symbol and compute_fn) else None
+        return templates.TemplateResponse(request, 'open.html',
+                                          {'symbol': symbol, 'prefill': prefill})
+
+    @app.get('/controls', response_class=HTMLResponse)
+    def controls_page(request: Request):
+        if not _user(request):
+            return RedirectResponse('/login', status_code=302)
+        return templates.TemplateResponse(request, 'controls.html', {
+            'halted': flags.get('trading_halted'),
+            'scheduler_paused': flags.get('scheduler_paused'),
+            'commands': commands.list_recent(), 'audit': audit.list_recent()})
+
+    @app.get('/universe', response_class=HTMLResponse)
+    def universe_page(request: Request):
+        if not _user(request):
+            return RedirectResponse('/login', status_code=302)
+        rows = universe_fn() if universe_fn else []
+        return templates.TemplateResponse(request, 'universe.html', {'rows': rows})
+
+    @app.post('/open')
+    def open_submit(request: Request, symbol: str = Form(...),
+                    low_price: float = Form(...), high_price: float = Form(...),
+                    grid_count: int = Form(...), stop_low_price: float = Form(...),
+                    stop_high_price: float = Form(...), cap: str = Form(''),
+                    tag: str = Form('gt0'), offset: int = Form(0)):
+        u = _user(request)
+        if not u:
+            return RedirectResponse('/login', status_code=302)
+        params = {'low_price': low_price, 'high_price': high_price,
+                  'grid_count': grid_count, 'stop_low_price': stop_low_price,
+                  'stop_high_price': stop_high_price}
+        body = {'symbol': symbol, 'params': params, 'tag': tag, 'offset': offset}
+        if cap.strip():
+            body['cap'] = float(cap)
+        cmd = commands.enqueue('OPEN_GRID', json.dumps(body), created_by=u)
+        audit.add(u, 'CMD_SUBMIT', cmd.id, detail='{"type": "OPEN_GRID"}')
+        return RedirectResponse('/controls', status_code=302)
 
     return app

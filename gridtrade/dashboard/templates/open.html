@@ -1,0 +1,16 @@
+{% extends "base.html" %}{% block content %}
+<h1>Open Grid</h1>
+<form method="post" action="/open" onsubmit="return confirm('确认开网格 ' + this.symbol.value + '?')">
+  <label>symbol <input name="symbol" value="{{ symbol }}"></label>
+  {% set gp = (prefill.grid_params if prefill else {}) %}
+  <label>low_price <input name="low_price" value="{{ gp.low_price if gp else '' }}"></label>
+  <label>high_price <input name="high_price" value="{{ gp.high_price if gp else '' }}"></label>
+  <label>grid_count <input name="grid_count" value="{{ gp.grid_count if gp else '' }}"></label>
+  <label>stop_low_price <input name="stop_low_price" value="{{ gp.stop_low_price if gp else '' }}"></label>
+  <label>stop_high_price <input name="stop_high_price" value="{{ gp.stop_high_price if gp else '' }}"></label>
+  <label>cap（留空=默认）<input name="cap" value=""></label>
+  <input type="hidden" name="tag" value="{{ prefill.tag if prefill else 'gt0' }}">
+  <input type="hidden" name="offset" value="{{ prefill.offset if prefill else 0 }}">
+  <button type="submit">提交开仓</button>
+</form>
+{% endblock %}

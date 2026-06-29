@@ -35,7 +35,7 @@ class GridManager:
                                      symbol=proposal.symbol, tag=proposal.tag))
         return opened
 
-    def monitor_all(self) -> List[dict]:
+    def monitor_all(self, skip_replenish=False) -> List[dict]:
         results: List[dict] = []
         # 取快照列表，只推进 ACTIVE 网格（PENDING/OPENING/CLOSING 为过渡态）
         active = [g for g in self.executor.grids.list_active()
@@ -43,7 +43,8 @@ class GridManager:
         for grid in active:
             try:
                 res = monitor_grid(self.executor, grid.id, grid.symbol,
-                                   self.stop_cfg, margin_rate=self.margin_rate)
+                                   self.stop_cfg, margin_rate=self.margin_rate,
+                                   skip_replenish=skip_replenish)
             except Exception as exc:   # 单网格 monitor 故障降级，不阻塞其他网格的止损/记账
                 results.append({'grid_id': grid.id, 'error': repr(exc)})
                 continue

@@ -143,6 +143,47 @@ heartbeats = Table(
     Column('last_beat_ts', BigInteger, nullable=False),
 )
 
+# ---- 控制面（dashboard 第二期）----
+CMD_PENDING = 'PENDING'
+CMD_RUNNING = 'RUNNING'
+CMD_DONE = 'DONE'
+CMD_FAILED = 'FAILED'
+
+control_flags = Table(
+    'control_flags', metadata,
+    Column('name', String, primary_key=True),
+    Column('value', String, nullable=False),
+    Column('updated_at', BigInteger, nullable=False, default=0),
+    Column('updated_by', String, nullable=False, default=''),
+)
+
+control_commands = Table(
+    'control_commands', metadata,
+    Column('id', String, primary_key=True),
+    Column('type', String, nullable=False),
+    Column('payload', String, nullable=False, default='{}'),
+    Column('status', String, nullable=False, default=CMD_PENDING),
+    Column('result', String, nullable=True),
+    Column('created_at', BigInteger, nullable=False),
+    Column('created_by', String, nullable=False, default=''),
+    Column('claimed_at', BigInteger, nullable=True),
+    Column('finished_at', BigInteger, nullable=True),
+    Column('version', Integer, nullable=False, default=1),
+    Index('ix_control_commands_status', 'status'),
+)
+
+control_audit = Table(
+    'control_audit', metadata,
+    Column('id', String, primary_key=True),
+    Column('ts', BigInteger, nullable=False),
+    Column('actor', String, nullable=False, default=''),
+    Column('action', String, nullable=False),
+    Column('target', String, nullable=False, default=''),
+    Column('detail', String, nullable=False, default=''),
+    Column('outcome', String, nullable=False, default='ok'),
+    Index('ix_control_audit_ts', 'ts'),
+)
+
 
 # ---- 数据类（仓储层入参/出参）----
 @dataclass
@@ -229,3 +270,36 @@ class Fill:
 class Heartbeat:
     machine: str
     last_beat_ts: int
+
+
+@dataclass
+class ControlFlag:
+    name: str
+    value: str
+    updated_at: int = 0
+    updated_by: str = ''
+
+
+@dataclass
+class ControlCommand:
+    id: str
+    type: str
+    payload: str
+    status: str = CMD_PENDING
+    result: Optional[str] = None
+    created_at: int = 0
+    created_by: str = ''
+    claimed_at: Optional[int] = None
+    finished_at: Optional[int] = None
+    version: int = 1
+
+
+@dataclass
+class AuditEntry:
+    id: str
+    ts: int
+    actor: str
+    action: str
+    target: str
+    detail: str = ''
+    outcome: str = 'ok'

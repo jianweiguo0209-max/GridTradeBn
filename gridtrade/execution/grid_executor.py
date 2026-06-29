@@ -46,8 +46,9 @@ class GridExecutor:
         """内存态是否已就绪（同进程 open 或 reconciler.restore 重建后）。"""
         return grid_id in self._geom
 
-    def open(self, exchange, symbol, grid_params, *, offset=0, tag=''):
-        gi = grid_order_info(self.cap, self.leverage, grid_params['low_price'],
+    def open(self, exchange, symbol, grid_params, *, offset=0, tag='', cap=None):
+        cap = self.cap if cap is None else cap
+        gi = grid_order_info(cap, self.leverage, grid_params['low_price'],
                              grid_params['high_price'], int(grid_params['grid_count']),
                              grid_params['stop_low_price'], grid_params['stop_high_price'],
                              min_amount=self.min_amount, max_rate=self.max_rate)
@@ -62,12 +63,12 @@ class GridExecutor:
             entry_price=entry, low_price=grid_params['low_price'], high_price=grid_params['high_price'],
             stop_low_price=grid_params['stop_low_price'], stop_high_price=grid_params['stop_high_price'],
             grid_count=int(grid_params['grid_count']), order_num=order_num,
-            leverage=self.leverage, cap=self.cap))
+            leverage=self.leverage, cap=cap))
         gid = grid.id
         self.accounting.init(gid)
         self._geom[gid] = {'price_array': price_array, 'order_num': order_num}
         self._seq[gid] = itertools.count()
-        self.live[gid] = LiveEquity(self.cap, self.fee, self.c_rate_taker, entry_price=entry)
+        self.live[gid] = LiveEquity(cap, self.fee, self.c_rate_taker, entry_price=entry)
         self._trade_cursor[gid] = 0
         # 资金费游标从开仓时刻起算（而非 0），否则会把开仓前的历史 funding 计入本网格。
         self._funding_cursor[gid] = grid.created_at
@@ -101,7 +102,7 @@ class GridExecutor:
         self.grids.transition_status(gid, ACTIVE, expected_version=g2.version)
         return gid
 
-    def sync(self, grid_id, symbol):
+    def sync(self, grid_id, symbol, *, skip_replenish=False):
         geom = self._geom[grid_id]
         price_array = geom['price_array']
         order_num = geom['order_num']
@@ -132,17 +133,18 @@ class GridExecutor:
             self.orders.upsert(GridOrder(client_oid=go.client_oid, grid_id=grid_id,
                                          line_index=line_index, side=t.side, price=t.price,
                                          size=t.size, status='closed'))
-            # 补对侧单
-            opp_line = line_index - 1 if t.side == 'sell' else line_index + 1
-            if 0 <= opp_line < len(price_array):
-                opp_side = 'buy' if t.side == 'sell' else 'sell'
-                p = price_array[opp_line]
-                oid = self._next_oid(grid_id, opp_line)
-                order = self.adapter.create_limit_order(symbol, opp_side, p, order_num,
-                                                        post_only=False, client_oid=oid)
-                self.orders.upsert(GridOrder(client_oid=oid, grid_id=grid_id, line_index=opp_line,
-                                             side=opp_side, price=p, size=order_num, status='open',
-                                             exchange_order_id=getattr(order, 'id', None)))
+            # 补对侧单（halt 时跳过：fills/记账/止损仍正常，但不挂新单）
+            if not skip_replenish:
+                opp_line = line_index - 1 if t.side == 'sell' else line_index + 1
+                if 0 <= opp_line < len(price_array):
+                    opp_side = 'buy' if t.side == 'sell' else 'sell'
+                    p = price_array[opp_line]
+                    oid = self._next_oid(grid_id, opp_line)
+                    order = self.adapter.create_limit_order(symbol, opp_side, p, order_num,
+                                                            post_only=False, client_oid=oid)
+                    self.orders.upsert(GridOrder(client_oid=oid, grid_id=grid_id, line_index=opp_line,
+                                                 side=opp_side, price=p, size=order_num, status='open',
+                                                 exchange_order_id=getattr(order, 'id', None)))
 
         # 资金费流水
         fcur = self._funding_cursor.get(grid_id, 0)

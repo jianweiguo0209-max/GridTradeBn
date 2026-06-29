@@ -1,0 +1,10 @@
+<!-- gridtrade/dashboard/templates/universe.html -->
+{% extends "base.html" %}{% block content %}
+<h1>候选币池</h1>
+<table><thead><tr><th>symbol</th><th>tag</th><th>grid_count</th><th>开</th></tr></thead><tbody>
+{% for r in rows %}<tr><td>{{ r.symbol }}</td><td>{{ r.tag }}</td>
+<td>{{ r.grid_params.grid_count if r.grid_params else '' }}</td>
+<td><a href="/open?symbol={{ r.symbol | urlencode }}">开网格</a></td></tr>{% endfor %}
+</tbody></table>
+{% if not rows %}<p>无候选（或未触发选币）</p>{% endif %}
+{% endblock %}

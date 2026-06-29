@@ -43,6 +43,14 @@ def fetch_universe_candles(adapter, symbols, run_time, *, timeframe='1h',
 def run_scheduler_once(runtime, *, now_fn=time.time,
                        fetch_candles=fetch_universe_candles) -> dict:
     rt = runtime
+    flags = getattr(rt, 'flags', None)
+    if flags is not None:
+        if flags.get('trading_halted'):
+            rt.heartbeats.beat('scheduler')
+            return {'skipped': 'halted'}
+        if flags.get('scheduler_paused'):
+            rt.heartbeats.beat('scheduler')
+            return {'skipped': 'paused'}
     run_time = pd.Timestamp(now_fn(), unit='s').floor('H')
     period = rt.config.scheduler_period
     offset = compute_offset(run_time, period, rt.config.utc_offset)
