@@ -3,6 +3,8 @@ from starlette.testclient import TestClient
 from gridtrade.dashboard.app import create_app
 from gridtrade.dashboard.auth import hash_password
 from gridtrade.state.control import ControlFlagRepository, CommandRepository, AuditRepository
+from gridtrade.state.grids import GridRepository
+from gridtrade.state.models import Grid, CLOSED
 from gridtrade.exchanges.base import Balance
 
 
@@ -45,3 +47,15 @@ def test_pages_require_login(store):
                      audit=AuditRepository(store))
     anon = TestClient(app, base_url='https://testserver')
     assert anon.get('/controls', follow_redirects=False).status_code == 302
+    r = anon.get('/universe', follow_redirects=False)
+    assert r.status_code == 302 and r.headers['location'].endswith('/login')
+
+
+def test_detail_close_button_hidden_for_closed_grid(store):
+    GridRepository(store).create(Grid(id='g_closed', exchange='hyperliquid',
+                                      symbol='BTC/USDT:USDT', status=CLOSED))
+    c = _client(store)
+    r = c.get('/grid/g_closed')
+    assert r.status_code == 200
+    assert '/control/close' not in r.text
+    assert '关' not in r.text or 'confirm' not in r.text
