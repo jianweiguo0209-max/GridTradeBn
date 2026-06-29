@@ -194,8 +194,9 @@ class CcxtAdapter(ExchangeAdapter):
             ts = int(r['timestamp'])
             if since_ms is not None and ts < since_ms:
                 continue
-            # HL 的 fetch_funding_history 忽略 symbol 过滤、返回账户级全币种流水（各行自带
-            # symbol）。只保留本币种，否则会把别的币种 funding 计入本网格。
+            # 通用兜底：只保留本币种行（适用于按 symbol 正确打标的交易所）。
+            # 注意 HL 例外——它返回账户级全币种且把【查询的 symbol】盖到每行，靠 symbol
+            # 区分不出币种，故 HyperliquidAdapter 覆写本方法改按 info.delta.coin 过滤。
             if r.get('symbol') != native:
                 continue
             # ccxt 约定 amount 负=支付；统一成"支付为正"

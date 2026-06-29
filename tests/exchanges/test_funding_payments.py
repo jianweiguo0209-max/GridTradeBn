@@ -54,19 +54,26 @@ def test_ccxt_funding_payments_filters_to_requested_symbol():
     assert out == [FundingPayment(ts=1000, amount=0.5), FundingPayment(ts=2000, amount=-0.3)]
 
 
-def test_hyperliquid_funding_payments_filter_uses_native_symbol():
-    # HL 规范符号 BTC/USDT:USDT <-> 原生 BTC/USDC:USDC；过滤须按 native 符号匹配。
+def test_hyperliquid_funding_payments_filters_by_info_coin():
+    # 真 HL 实测行为：fetch_funding_history 返回账户级全币种流水，并把【查询的 symbol】
+    # 盖到每一行的 symbol 字段（无法靠 symbol 区分币种）；真实资产在 info.delta.coin。
+    # 必须按 info.coin 过滤，否则会把别币种 funding 计入本网格。
     from gridtrade.exchanges.hyperliquid import HyperliquidAdapter
     from gridtrade.exchanges.base import FundingPayment
 
-    class AccountWideClient:
+    class HLStampingClient:
         def fetch_funding_history(self, symbol, since=None, limit=None, params=None):
-            return [{'timestamp': 1000, 'amount': -0.5, 'symbol': 'BTC/USDC:USDC'},
-                    {'timestamp': 1500, 'amount': -0.9, 'symbol': 'ETH/USDC:USDC'}]
+            # symbol = 查询的 native，HL 盖到每行；真实资产只在 info.delta.coin
+            return [{'timestamp': 1000, 'amount': -0.5, 'symbol': symbol,
+                     'info': {'delta': {'coin': 'BTC'}}},
+                    {'timestamp': 1500, 'amount': 0.9, 'symbol': symbol,
+                     'info': {'delta': {'coin': 'ETH'}}}]
 
-    a = HyperliquidAdapter(AccountWideClient())
-    out = a.fetch_funding_payments('BTC/USDT:USDT')
-    assert out == [FundingPayment(ts=1000, amount=0.5)]
+    a = HyperliquidAdapter(HLStampingClient())
+    btc = a.fetch_funding_payments('BTC/USDT:USDT')
+    eth = a.fetch_funding_payments('ETH/USDT:USDT')
+    assert btc == [FundingPayment(ts=1000, amount=0.5)]    # 只留真实 coin==BTC
+    assert eth == [FundingPayment(ts=1500, amount=-0.9)]   # 只留真实 coin==ETH
 
 
 def test_adapter_declares_fetch_funding_payments_abstract():
