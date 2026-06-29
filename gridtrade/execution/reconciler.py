@@ -55,6 +55,13 @@ class Reconciler:
         replaced = 0
         for oid, go in expected.items():
             if oid not in on_exchange:
+                # 先撤旧 oid 再补：HL 抖动时 fetch_open_orders 可能漏返回一张【仍在挂】的单，
+                # 直接重挂会产生重复单（旧单后来成交、其 oid 已被新单覆盖 → 漏摄入、净仓漂）。
+                # 撤掉（已成交/已撤则 no-op 或报错，吞掉）再补，从根上杜绝重复。
+                try:
+                    ex.adapter.cancel_order(symbol, oid)
+                except Exception:
+                    pass
                 order = ex.adapter.create_limit_order(symbol, go.side, go.price, go.size,
                                                       post_only=False, client_oid=go.client_oid)
                 ex.orders.upsert(GridOrder(client_oid=go.client_oid, grid_id=grid_id,

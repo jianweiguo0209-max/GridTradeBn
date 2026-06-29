@@ -139,3 +139,43 @@ def test_check_position_drift_flags_divergence_but_does_not_change_position(stor
     assert abs(d['drift'] - bump) < 1e-9
     assert abs(d['exchange'] - real_before) < 1e-9      # 只读：交易所持仓未被改动
     assert ex.fetch_positions(SYM).net_size == real_before
+
+
+class _FlakyFetch:
+    """包装 FakeExchange：模拟 HL 抖动——fetch_open_orders 少返回一张【仍在挂】的单；
+    记录 cancel_order 调用。其余调用透传。"""
+    def __init__(self, inner, hide_oid):
+        self._inner = inner
+        self._hide = hide_oid
+        self.cancels = []
+
+    def fetch_open_orders(self, symbol):
+        return [o for o in self._inner.fetch_open_orders(symbol) if o.id != self._hide]
+
+    def cancel_order(self, symbol, order_id):
+        self.cancels.append(order_id)
+        return self._inner.cancel_order(symbol, order_id)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+def test_reconcile_cancels_stale_oid_before_replacing_no_duplicate(store):
+    # HL 抖动：fetch_open_orders 偶尔少返回一张【仍在挂】的单 → reconcile 不能直接重挂
+    # （否则旧单还在 + 新单 = 重复单，旧单后来成交会漏摄入）。须先撤旧 oid 再补。
+    from gridtrade.execution.reconciler import Reconciler
+    ex = FakeExchange(instruments=[Instrument(SYM, 0.1, 0.001, 0.001, 'live', 0)], price=100.0)
+    ex.set_price(SYM, 100.0)
+    gx = _new_executor(ex, store)
+    gid = gx.open('fake', SYM, GP)
+    victim = ex.fetch_open_orders(SYM)[0]          # 一张仍在挂的真实单
+    before = {o.id for o in ex.fetch_open_orders(SYM)}
+
+    gx.adapter = _FlakyFetch(ex, hide_oid=victim.id)   # 让对账时这张单“消失”（实际还挂着）
+    out = Reconciler(gx).reconcile_open_orders(gid, SYM)
+
+    after = {o.id for o in ex.fetch_open_orders(SYM)}
+    assert out['replaced'] == 1
+    assert victim.id in gx.adapter.cancels             # 重挂前先撤了旧 oid
+    assert victim.id not in after                       # 旧单已撤、不再挂
+    assert len(after) == len(before)                    # 撤一补一，无重复单
