@@ -53,7 +53,7 @@ def test_reconcile_cancels_orphan_and_replaces_missing(store):
     gx = _new_executor(ex, store)
     gid = gx.open('fake', SYM, GP)
     from gridtrade.execution.reconciler import Reconciler
-    rec = Reconciler(gx)
+    rec = Reconciler(gx, replace_grace=1)   # 本测试聚焦孤儿撤+缺失补，用即时重挂（grace=1）
 
     # 干净状态：无孤儿无缺失
     out0 = rec.reconcile_open_orders(gid, SYM)
@@ -172,10 +172,48 @@ def test_reconcile_cancels_stale_oid_before_replacing_no_duplicate(store):
     before = {o.id for o in ex.fetch_open_orders(SYM)}
 
     gx.adapter = _FlakyFetch(ex, hide_oid=victim.id)   # 让对账时这张单“消失”（实际还挂着）
-    out = Reconciler(gx).reconcile_open_orders(gid, SYM)
+    out = Reconciler(gx, replace_grace=1).reconcile_open_orders(gid, SYM)   # 即时重挂聚焦 D
 
     after = {o.id for o in ex.fetch_open_orders(SYM)}
     assert out['replaced'] == 1
     assert victim.id in gx.adapter.cancels             # 重挂前先撤了旧 oid
     assert victim.id not in after                       # 旧单已撤、不再挂
     assert len(after) == len(before)                    # 撤一补一，无重复单
+
+
+def test_reconcile_grace_delays_replace_until_consecutive_missing(store):
+    # E2：一张 open 单从挂单簿消失（成交但成交尚不可见时也是这样）→ 宽限期内本轮先不重挂、
+    # 不覆盖 oid（给 sync 时间摄入成交）；连续 missing 达到 grace 才重挂。
+    from gridtrade.execution.reconciler import Reconciler
+    ex = FakeExchange(instruments=[Instrument(SYM, 0.1, 0.001, 0.001, 'live', 0)], price=100.0)
+    ex.set_price(SYM, 100.0)
+    gx = _new_executor(ex, store)
+    gid = gx.open('fake', SYM, GP)
+    rec = Reconciler(gx, replace_grace=2)
+    victim = ex.fetch_open_orders(SYM)[0]
+    old_oid = victim.id
+    ex.cancel_order(SYM, victim.id)                    # 从交易所撤掉（DB 仍 open）= "从 book 消失"
+    out1 = rec.reconcile_open_orders(gid, SYM)         # 第 1 轮：宽限，不重挂
+    assert out1['replaced'] == 0
+    assert gx.orders.get(victim.client_oid).exchange_order_id == old_oid   # oid 未被覆盖
+    out2 = rec.reconcile_open_orders(gid, SYM)         # 第 2 轮：仍 missing → 达 grace → 重挂
+    assert out2['replaced'] == 1
+    assert gx.orders.get(victim.client_oid).exchange_order_id != old_oid   # 此时才换新 oid
+
+
+def test_reconcile_grace_resets_when_order_reingested(store):
+    # 宽限计数应在该单不再 missing 时清零：成交被 sync 标 closed → 移出 expected → 不再重挂。
+    from gridtrade.execution.reconciler import Reconciler
+    ex = FakeExchange(instruments=[Instrument(SYM, 0.1, 0.001, 0.001, 'live', 0)], price=100.0)
+    ex.set_price(SYM, 100.0)
+    gx = _new_executor(ex, store)
+    gid = gx.open('fake', SYM, GP)
+    rec = Reconciler(gx, replace_grace=2)
+    victim = ex.fetch_open_orders(SYM)[0]
+    ex.cancel_order(SYM, victim.id)
+    assert rec.reconcile_open_orders(gid, SYM)['replaced'] == 0   # 第1轮宽限
+    gx.orders.upsert(__import__('gridtrade.state.models', fromlist=['GridOrder']).GridOrder(
+        client_oid=victim.client_oid, grid_id=gid, line_index=0, side=victim.side,
+        price=victim.price, size=victim.size, status='closed'))   # 模拟 sync 标 closed
+    # 该单已不在 expected(open) → 第2轮不应重挂它
+    assert rec.reconcile_open_orders(gid, SYM)['replaced'] == 0
