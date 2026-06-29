@@ -12,7 +12,7 @@
   <td>{{ r.status }}</td><td>{{ r.direction }}</td>
   <td>{{ r.low_price | fmt_num }}–{{ r.high_price | fmt_num }}</td>
   <td>{{ r.open_order_count }}</td>
-  <td>{{ r.net_position | fmt_num }}</td>
+  <td>{{ r.net_position | fmt_size }}</td>
   <td class="{{ r.realized_pnl | pnl_class }}">{{ r.realized_pnl | fmt_num }}</td>
   <td class="{{ r.unrealized_pnl | pnl_class }}">{{ r.unrealized_pnl | fmt_num }}</td>
   <td>{{ r.current_price | fmt_num }}{% if r.price_error %} <span class="neg">(stale)</span>{% endif %}</td>
