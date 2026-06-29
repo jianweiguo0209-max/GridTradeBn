@@ -65,7 +65,8 @@ class GridExecutor:
         self._seq[gid] = itertools.count()
         self.live[gid] = LiveEquity(self.cap, self.fee, self.c_rate_taker, entry_price=entry)
         self._trade_cursor[gid] = 0
-        self._funding_cursor[gid] = 0
+        # 资金费游标从开仓时刻起算（而非 0），否则会把开仓前的历史 funding 计入本网格。
+        self._funding_cursor[gid] = grid.created_at
 
         self.grids.transition_status(gid, OPENING, expected_version=grid.version)
 

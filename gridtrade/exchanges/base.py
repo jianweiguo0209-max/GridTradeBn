@@ -133,7 +133,7 @@ class ExchangeAdapter(ABC):
     @abstractmethod
     def fetch_funding_payments(self, symbol: str,
                                since_ms: Optional[int] = None) -> List[FundingPayment]:
-        """账户级资金费扣款流水；amount>0 表示支付。按 ts 升序。"""
+        """指定 symbol 的资金费扣款流水（只含本币种）；amount>0 表示支付。按 ts 升序。"""
 
     # ---- 可选：标记价 K线（默认未实现）----
     def fetch_mark_ohlcv(self, symbol: str, timeframe: str,

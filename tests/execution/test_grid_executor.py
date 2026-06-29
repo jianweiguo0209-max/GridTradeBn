@@ -76,12 +76,24 @@ def test_sync_records_fill_and_replenishes(store):
 
 
 def test_sync_funding_payments_accumulate(store):
+    from gridtrade.state.grids import GridRepository
     ex, store, gx = _setup(store, price=100.0)
     gid = gx.open(ex_exchange_name(), SYM, GP)
-    ex.seed_funding_payments(SYM, [(10_000, 1.0)])   # 支付 1 USDT
+    opened = GridRepository(store).get(gid).created_at
+    ex.seed_funding_payments(SYM, [(opened + 1, 1.0)])   # 开仓后结算：支付 1 USDT
     gx.sync(gid, SYM)
     acc = gx.accounting.get(gid)
     assert abs(acc.funding_paid - 1.0) < 1e-9
+
+
+def test_open_excludes_pre_open_funding(store):
+    # 开仓前结算的 funding 不得计入本网格（游标从开仓时刻起算，而非 0）。
+    ex, store, gx = _setup(store, price=100.0)
+    gid = gx.open(ex_exchange_name(), SYM, GP)
+    ex.seed_funding_payments(SYM, [(1, 1.0)])   # ts=1：远早于开仓
+    gx.sync(gid, SYM)
+    acc = gx.accounting.get(gid)
+    assert acc.funding_paid == 0.0
 
 
 def test_sync_idempotent_no_new_fills(store):
@@ -94,9 +106,11 @@ def test_sync_idempotent_no_new_fills(store):
 
 
 def test_sync_funding_payments_idempotent_across_calls(store):
+    from gridtrade.state.grids import GridRepository
     ex, store, gx = _setup(store, price=100.0)
     gid = gx.open(ex_exchange_name(), SYM, GP)
-    ex.seed_funding_payments(SYM, [(10_000, 1.0)])   # 支付 1 USDT
+    opened = GridRepository(store).get(gid).created_at
+    ex.seed_funding_payments(SYM, [(opened + 1, 1.0)])   # 开仓后结算：支付 1 USDT
     gx.sync(gid, SYM)
     first = gx.accounting.get(gid).funding_paid
     gx.sync(gid, SYM)                                 # 第二次：无新资金费流水

@@ -75,12 +75,14 @@ def test_reconcile_cancels_orphan_and_replaces_missing(store):
 
 
 def test_restore_preserves_funding_without_refetching_full_history(store):
+    from gridtrade.state.grids import GridRepository
     ex = FakeExchange(instruments=[Instrument(SYM, 0.1, 0.001, 0.001, 'live', 0)], price=100.0)
     ex.set_price(SYM, 100.0)
     gx = _new_executor(ex, store)
     gid = gx.open('fake', SYM, GP)
     ex.set_price(SYM, 100.6)
-    ex.seed_funding_payments(SYM, [(10_000, 2.0)])   # paid 2.0 before restart
+    opened = GridRepository(store).get(gid).created_at
+    ex.seed_funding_payments(SYM, [(opened + 1, 2.0)])   # paid 2.0 after open, before restart
     gx.sync(gid, SYM)
     funding_before = gx.accounting.get(gid).funding_paid
     assert abs(funding_before - 2.0) < 1e-9
@@ -95,3 +97,20 @@ def test_restore_preserves_funding_without_refetching_full_history(store):
     gx2.sync(gid, SYM)
     # funding must NOT reset to 0 just because the exchange no longer returns the old payment
     assert abs(gx2.accounting.get(gid).funding_paid - 2.0) < 1e-9
+
+
+def test_restore_before_first_sync_excludes_pre_open_funding(store):
+    # 开仓后、首次 sync 前重启：restore 不得把资金费游标退回 0（acc.funding_cursor 仍是 0），
+    # 否则随后的 sync 又会把开仓前的历史 funding 计入本网格。
+    ex = FakeExchange(instruments=[Instrument(SYM, 0.1, 0.001, 0.001, 'live', 0)], price=100.0)
+    ex.set_price(SYM, 100.0)
+    gx = _new_executor(ex, store)
+    gid = gx.open('fake', SYM, GP)          # 开仓即 init（funding_cursor=0），尚未 sync
+
+    gx2 = _new_executor(ex, store)          # 重启：全新 executor
+    from gridtrade.execution.reconciler import Reconciler
+    Reconciler(gx2).restore(gid)
+
+    ex.seed_funding_payments(SYM, [(1, 5.0)])   # ts=1：远早于开仓的历史 funding
+    gx2.sync(gid, SYM)
+    assert gx2.accounting.get(gid).funding_paid == 0.0
