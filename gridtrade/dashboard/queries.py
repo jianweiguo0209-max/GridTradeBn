@@ -5,6 +5,9 @@ from typing import List, Optional
 from gridtrade.runtime.introspect import adapter_endpoint
 from gridtrade.state.heartbeats import HeartbeatRepository
 from gridtrade.state.models import now_ms
+from gridtrade.state.accounting import AccountingRepository
+from gridtrade.state.grids import GridRepository
+from gridtrade.state.orders import OrderRepository
 
 
 @dataclass
@@ -55,3 +58,63 @@ def build_health(store, adapter, *, now_ms_fn=now_ms,
 
     return HealthDTO(machines=machines, endpoint=endpoint, equity=equity,
                      cash=cash, balance_error=balance_error, db_ok=db_ok)
+
+
+@dataclass
+class GridOverviewRow:
+    grid_id: str
+    symbol: str
+    status: str
+    direction: str
+    low_price: Optional[float]
+    high_price: Optional[float]
+    open_order_count: int
+    net_position: float
+    avg_price: float
+    realized_pnl: float
+    current_price: Optional[float]
+    unrealized_pnl: Optional[float]
+    price_error: Optional[str]
+    stop_low_price: Optional[float]
+    stop_high_price: Optional[float]
+    stop_low_dist_pct: Optional[float]
+    stop_high_dist_pct: Optional[float]
+
+
+def _unrealized(net_position: float, avg_price: float, price: float) -> float:
+    return net_position * (price - avg_price)
+
+
+def build_overview(store, adapter) -> List[GridOverviewRow]:
+    grids = GridRepository(store)
+    accs = AccountingRepository(store)
+    orders = OrderRepository(store)
+    rows: List[GridOverviewRow] = []
+    for g in sorted(grids.list_active(), key=lambda x: x.symbol):
+        acc = accs.get(g.id)
+        net = acc.net_position if acc else 0.0
+        avg = acc.avg_price if acc else 0.0
+        realized = acc.realized_pnl if acc else 0.0
+        open_n = len(orders.list_open_by_grid(g.id))
+
+        price = unreal = None
+        price_error = None
+        low_dist = high_dist = None
+        try:
+            price = adapter.fetch_price(g.symbol)
+            unreal = _unrealized(net, avg, price)
+            if g.stop_low_price is not None and price:
+                low_dist = (price - g.stop_low_price) / price
+            if g.stop_high_price is not None and price:
+                high_dist = (g.stop_high_price - price) / price
+        except Exception as exc:
+            price_error = repr(exc)
+
+        rows.append(GridOverviewRow(
+            grid_id=g.id, symbol=g.symbol, status=g.status, direction=g.direction,
+            low_price=g.low_price, high_price=g.high_price, open_order_count=open_n,
+            net_position=net, avg_price=avg, realized_pnl=realized,
+            current_price=price, unrealized_pnl=unreal, price_error=price_error,
+            stop_low_price=g.stop_low_price, stop_high_price=g.stop_high_price,
+            stop_low_dist_pct=low_dist, stop_high_dist_pct=high_dist))
+    return rows
