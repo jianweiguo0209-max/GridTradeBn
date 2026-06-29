@@ -8,6 +8,7 @@ from gridtrade.state.models import now_ms
 from gridtrade.state.accounting import AccountingRepository
 from gridtrade.state.grids import GridRepository
 from gridtrade.state.orders import OrderRepository
+from gridtrade.state.fills import FillRepository
 
 
 @dataclass
@@ -122,3 +123,23 @@ def build_overview(store, adapter) -> List[GridOverviewRow]:
             stop_low_price=g.stop_low_price, stop_high_price=g.stop_high_price,
             stop_low_dist_pct=low_dist, stop_high_dist_pct=high_dist))
     return rows
+
+
+@dataclass
+class GridDetailDTO:
+    grid: object
+    orders: list
+    fills: list
+    accounting: object
+
+
+def build_grid_detail(store, grid_id: str, *, fills_limit: int = 50):
+    grid = GridRepository(store).get(grid_id)
+    if grid is None:
+        return None
+    orders = sorted(OrderRepository(store).list_by_grid(grid_id),
+                    key=lambda o: o.line_index)
+    fills = sorted(FillRepository(store).list_by_grid(grid_id),
+                   key=lambda f: f.ts, reverse=True)[:fills_limit]
+    acc = AccountingRepository(store).get(grid_id)
+    return GridDetailDTO(grid=grid, orders=orders, fills=fills, accounting=acc)
