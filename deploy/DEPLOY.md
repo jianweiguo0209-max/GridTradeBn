@@ -92,3 +92,15 @@ unset TEST_DATABASE_URL                               # 回到默认 SQLite
 - DB 测试由 `tests/conftest.py` 的 `store`（双模式）/ `pg_store`（PG-only，无 env 则 skip）fixture 驱动。
 - 并发测试 `tests/state/test_transition_concurrency.py` 仅在设了 `TEST_DATABASE_URL` 时运行。
 - CI 仍跑 SQLite（不依赖 PG）；CI PG job 待多监控机阶段。
+
+---
+
+## Dashboard（web 进程，只读监控）
+
+设置登录凭据（密码用本地生成的 pbkdf2 哈希，不在仓库存明文）：
+
+    HASH=$(.venv/bin/python -c "from gridtrade.dashboard.auth import hash_password; print(hash_password('你的密码'))")
+    fly secrets set -a gridtrade-hl DASHBOARD_USER=admin DASHBOARD_PASSWORD_HASH="$HASH" DASHBOARD_SESSION_SECRET="$(openssl rand -hex 32)"
+
+访问：`fly open -a gridtrade-hl`（web 进程 scale-to-zero，首次访问有数秒冷启动）。
+登录失败 5 次锁定 ≥ 1 小时（内存态，机器重启后清零）。

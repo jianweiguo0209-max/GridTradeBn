@@ -1,0 +1,10 @@
+<!-- gridtrade/dashboard/templates/login.html -->
+<!doctype html><html><head><meta charset="utf-8"><title>login</title>
+<link rel="stylesheet" href="/static/app.css"></head><body>
+<form method="post" action="/login" class="login">
+  <h2>GridTradeGP</h2>
+  {% if error %}<p class="neg">{{ error }}</p>{% endif %}
+  <input name="username" placeholder="username" autofocus>
+  <input name="password" type="password" placeholder="password">
+  <button type="submit">login</button>
+</form></body></html>
