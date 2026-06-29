@@ -168,4 +168,4 @@ gridtrade/
 - 设计：[docs/superpowers/specs/2026-06-28-exchange-decoupling-design.md](superpowers/specs/2026-06-28-exchange-decoupling-design.md)
 - 计划：[docs/superpowers/plans/](superpowers/plans/)
 - 部署 ops：[deploy/DEPLOY.md](../deploy/DEPLOY.md)
-- legacy 实盘（仍在仓库，作金标对照）：`account_0/`
+- legacy 实盘 + 旧回测（已 archive 到 `legacy/`，作金标对照/历史留存）：`legacy/account_0/`、`legacy/backtest/`。生产包 `gridtrade/` 与活跃测试套件对其零运行时依赖；仅 `tests/golden/gen_*.py`（一次性重生成金标脚本，pytest 不收集）会注入它。

@@ -12,9 +12,10 @@ import pandas as pd
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.abspath(os.path.join(_HERE, '..', '..'))
 # 注入原始 account_0 到 sys.path（复刻 selection_replay 的做法）
-for _p in (os.path.join(_ROOT, 'account_0'),
-           os.path.join(_ROOT, 'account_0', 'utils'),
-           os.path.join(_ROOT, 'account_0', 'api')):
+# legacy 实盘已 archive 到 legacy/（见 docs/STATUS.md §10）；此脚本仅在重生成金标时运行。
+for _p in (os.path.join(_ROOT, 'legacy', 'account_0'),
+           os.path.join(_ROOT, 'legacy', 'account_0', 'utils'),
+           os.path.join(_ROOT, 'legacy', 'account_0', 'api')):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
