@@ -24,6 +24,17 @@ class GridClosed:
     pnl_ratio: float
 
 
+@dataclass
+class OrderFilled:
+    grid_id: str
+    symbol: str
+    line_index: int
+    side: str
+    price: float
+    size: float
+    fee: float
+
+
 class EventBus:
     def __init__(self):
         self._handlers: List[Callable] = []

@@ -7,7 +7,7 @@
 from typing import List
 
 from gridtrade.state.models import ACTIVE
-from gridtrade.execution.events import GridOpened, GridClosed
+from gridtrade.execution.events import GridOpened, GridClosed, OrderFilled
 from gridtrade.execution.monitor import monitor_grid
 
 
@@ -47,6 +47,10 @@ class GridManager:
             except Exception as exc:   # 单网格 monitor 故障降级，不阻塞其他网格的止损/记账
                 results.append({'grid_id': grid.id, 'error': repr(exc)})
                 continue
+            for f in res.get('fills', []):
+                self._publish(OrderFilled(
+                    grid_id=grid.id, symbol=grid.symbol, line_index=f['line_index'],
+                    side=f['side'], price=f['price'], size=f['size'], fee=f['fee']))
             if res['closed']:
                 self._publish(GridClosed(
                     grid_id=grid.id, exchange=grid.exchange, symbol=grid.symbol,

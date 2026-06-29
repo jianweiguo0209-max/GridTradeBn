@@ -23,3 +23,11 @@ def test_handlers_can_filter_by_event_type():
 
 def test_publish_with_no_subscribers_is_noop():
     EventBus().publish(GridOpened(grid_id='g', exchange='e', symbol='s', tag='t'))
+
+
+def test_orderfilled_event_fields():
+    from gridtrade.execution.events import OrderFilled
+    e = OrderFilled(grid_id='g1', symbol='BTC/USDT:USDT', line_index=3,
+                    side='sell', price=100.6, size=0.5, fee=0.02)
+    assert (e.grid_id, e.symbol, e.line_index, e.side, e.price, e.size, e.fee) == \
+        ('g1', 'BTC/USDT:USDT', 3, 'sell', 100.6, 0.5, 0.02)

@@ -109,3 +109,23 @@ def test_close_by_tag_ignores_non_matching_tag():
     out = mgr.close_by_tag('t999', '周期再平衡')      # 无匹配
     assert out == []
     assert gx.grids.get(ids[0]).status == 'ACTIVE'   # 未动
+
+
+def test_monitor_all_publishes_orderfilled_per_new_fill():
+    from gridtrade.execution.events import EventBus, OrderFilled
+    ex, store, gx = _setup(100.0)
+    bus = EventBus(); filled = []
+    bus.subscribe(lambda e: filled.append(e) if isinstance(e, OrderFilled) else None)
+    mgr = _manager(gx, store, bus)
+    mgr.open_proposals([_proposal()])
+    ex.set_price(SYM, 100.6)              # 穿越上方一格 -> 成交
+    out = mgr.monitor_all()
+    # 事件数 == monitor_all 实报的本轮新成交数（不硬编码几何），且确有成交
+    fills_reported = out[0]['fills']
+    assert len(filled) == len(fills_reported) >= 1
+    e = filled[0]
+    assert e.symbol == SYM and e.side == 'sell' and e.size > 0 and e.fee > 0
+    # 二次 monitor 无新成交 -> 不再发（幂等）
+    filled.clear()
+    mgr.monitor_all()
+    assert filled == []
