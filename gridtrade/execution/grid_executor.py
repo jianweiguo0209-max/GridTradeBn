@@ -42,8 +42,9 @@ class GridExecutor:
         """内存态是否已就绪（同进程 open 或 reconciler.restore 重建后）。"""
         return grid_id in self._geom
 
-    def open(self, exchange, symbol, grid_params, *, offset=0, tag=''):
-        gi = grid_order_info(self.cap, self.leverage, grid_params['low_price'],
+    def open(self, exchange, symbol, grid_params, *, offset=0, tag='', cap=None):
+        cap = self.cap if cap is None else cap
+        gi = grid_order_info(cap, self.leverage, grid_params['low_price'],
                              grid_params['high_price'], int(grid_params['grid_count']),
                              grid_params['stop_low_price'], grid_params['stop_high_price'],
                              min_amount=self.min_amount, max_rate=self.max_rate)
@@ -58,7 +59,7 @@ class GridExecutor:
             entry_price=entry, low_price=grid_params['low_price'], high_price=grid_params['high_price'],
             stop_low_price=grid_params['stop_low_price'], stop_high_price=grid_params['stop_high_price'],
             grid_count=int(grid_params['grid_count']), order_num=order_num,
-            leverage=self.leverage, cap=self.cap))
+            leverage=self.leverage, cap=cap))
         gid = grid.id
         self.accounting.init(gid)
         self._geom[gid] = {'price_array': price_array, 'order_num': order_num}
