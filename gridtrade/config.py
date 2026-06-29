@@ -56,6 +56,10 @@ class DeployConfig:
     blacklist: tuple = ()
     whitelist: tuple = ()
     scheduler_run_on_start: bool = False
+    dashboard_user: str = 'admin'
+    dashboard_password_hash: str = ''
+    dashboard_session_secret: str = ''
+    dashboard_port: int = 8080
 
 
 def load_deploy_config(env=None) -> DeployConfig:
@@ -78,6 +82,10 @@ def load_deploy_config(env=None) -> DeployConfig:
         blacklist=_csv(env, 'BLACKLIST_SYMBOLS'),
         whitelist=_csv(env, 'UNIVERSE_WHITELIST'),
         scheduler_run_on_start=_b(env, 'SCHEDULER_RUN_ON_START', False),
+        dashboard_user=_s(env, 'DASHBOARD_USER', 'admin'),
+        dashboard_password_hash=_s(env, 'DASHBOARD_PASSWORD_HASH', ''),
+        dashboard_session_secret=_s(env, 'DASHBOARD_SESSION_SECRET', ''),
+        dashboard_port=_i(env, 'PORT', 8080),
     )
 
 
