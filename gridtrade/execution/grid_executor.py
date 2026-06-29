@@ -110,6 +110,7 @@ class GridExecutor:
         candidates.sort(key=lambda t: t.ts)
 
         new_count = 0
+        new_fills_payload = []
         for t in candidates:
             go = by_oid[t.order_id]
             line_index = go.line_index
@@ -118,6 +119,9 @@ class GridExecutor:
             if not self.fills.add_if_new(fill):
                 continue   # 已摄入：去重，跳过（不重复记账/补单）
             new_count += 1
+            new_fills_payload.append({'line_index': line_index, 'side': t.side,
+                                      'price': float(t.price), 'size': float(t.size),
+                                      'fee': float(t.fee), 'ts': int(t.ts)})
             self.live[grid_id].record_fill(t.price, t.side, t.size, t.ts)
             # 标记成交订单 closed
             self.orders.upsert(GridOrder(client_oid=go.client_oid, grid_id=grid_id,
@@ -154,7 +158,7 @@ class GridExecutor:
             acc.funding_cursor = self._funding_cursor.get(grid_id, 0)
             self.accounting.save(acc)
             self.accounting.bump_peak(grid_id, snap['pnl_ratio'])
-        return {'new_fills': new_count, 'snapshot': snap}
+        return {'new_fills': new_count, 'fills': new_fills_payload, 'snapshot': snap}
 
     def close(self, grid_id, symbol, reason):
         grid = self.grids.get(grid_id)

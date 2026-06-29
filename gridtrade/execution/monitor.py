@@ -12,5 +12,7 @@ def monitor_grid(executor, grid_id, symbol, stop_cfg, *, margin_rate=0.05):
                            funding_rate=0.0, pv_spike=0)
     if reason:
         executor.close(grid_id, symbol, reason)
-        return {'closed': True, 'reason': reason, 'pnl_ratio': snap['pnl_ratio']}
-    return {'closed': False, 'reason': None, 'pnl_ratio': snap['pnl_ratio']}
+        return {'closed': True, 'reason': reason, 'pnl_ratio': snap['pnl_ratio'],
+                'fills': res.get('fills', [])}
+    return {'closed': False, 'reason': None, 'pnl_ratio': snap['pnl_ratio'],
+            'fills': res.get('fills', [])}
