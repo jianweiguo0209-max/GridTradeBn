@@ -6,7 +6,8 @@ import sqlalchemy as sa
 from sqlalchemy import insert, select, update
 
 from gridtrade.state.models import (control_flags, control_commands, ControlCommand,
-                                    CMD_PENDING, CMD_RUNNING, now_ms)
+                                    CMD_PENDING, CMD_RUNNING, now_ms, control_audit,
+                                    AuditEntry)
 
 
 class ControlFlagRepository:
@@ -101,3 +102,37 @@ class CommandRepository:
                              .order_by(control_commands.c.created_at.desc())
                              .limit(limit)).all()
         return [_to_cmd(r) for r in rows]
+
+
+_AUDIT_FIELDS = ('id', 'ts', 'actor', 'action', 'target', 'detail', 'outcome')
+
+
+def _to_audit(row) -> AuditEntry:
+    m = row._mapping
+    return AuditEntry(**{f: m[f] for f in _AUDIT_FIELDS})
+
+
+class AuditRepository:
+    def __init__(self, store):
+        self.engine = store.engine
+
+    def add(self, actor: str, action: str, target: str, *,
+            detail: str = '', outcome: str = 'ok') -> AuditEntry:
+        aid = uuid.uuid4().hex
+        ts = now_ms()
+        with self.engine.begin() as c:
+            c.execute(insert(control_audit), {
+                'id': aid, 'ts': ts, 'actor': actor, 'action': action,
+                'target': target, 'detail': detail, 'outcome': outcome,
+            })
+        with self.engine.connect() as c:
+            row = c.execute(select(control_audit)
+                            .where(control_audit.c.id == aid)).first()
+        return _to_audit(row)
+
+    def list_recent(self, limit: int = 100) -> List[AuditEntry]:
+        with self.engine.connect() as c:
+            rows = c.execute(select(control_audit)
+                             .order_by(control_audit.c.ts.desc())
+                             .limit(limit)).all()
+        return [_to_audit(r) for r in rows]
