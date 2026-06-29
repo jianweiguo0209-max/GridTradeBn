@@ -28,6 +28,7 @@ def test_open_uses_cap_override():
     gid = ex.open('fake', SYM1, GP, tag='gt0', cap=250.0)
     grid = ex.grids.get(gid)
     assert grid.cap == 250.0                  # 覆盖值写入网格
+    assert ex.live[gid].cap == 250.0          # LiveEquity 基准也应用覆盖值
 
     gid2 = ex.open('fake', SYM2, GP, tag='gt0')
     assert ex.grids.get(gid2).cap == 100.0    # 不传 cap → 用 self.cap（行为不变）
