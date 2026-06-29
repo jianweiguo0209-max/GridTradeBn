@@ -101,12 +101,16 @@ def build_overview(store, adapter) -> List[GridOverviewRow]:
         price_error = None
         low_dist = high_dist = None
         try:
-            price = adapter.fetch_price(g.symbol)
-            unreal = _unrealized(net, avg, price)
-            if g.stop_low_price is not None and price:
-                low_dist = (price - g.stop_low_price) / price
-            if g.stop_high_price is not None and price:
-                high_dist = (g.stop_high_price - price) / price
+            fetched = adapter.fetch_price(g.symbol)
+            if fetched is None or fetched <= 0:
+                price_error = 'non-positive price: %r' % (fetched,)
+            else:
+                price = fetched
+                unreal = _unrealized(net, avg, price)
+                if g.stop_low_price is not None:
+                    low_dist = (price - g.stop_low_price) / price
+                if g.stop_high_price is not None:
+                    high_dist = (g.stop_high_price - price) / price
         except Exception as exc:
             price_error = repr(exc)
 

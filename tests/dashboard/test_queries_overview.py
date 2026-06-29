@@ -58,3 +58,18 @@ def test_overview_degrades_when_price_unavailable(store):
     assert r.current_price is None
     assert r.unrealized_pnl is None
     assert r.price_error is not None
+
+
+def test_overview_treats_nonpositive_price_as_unavailable(store):
+    grids = GridRepository(store)
+    grids.create(Grid(id='g1', exchange='hyperliquid', symbol='BTC/USDT:USDT',
+                      status=ACTIVE, direction='neutral',
+                      stop_low_price=80.0, stop_high_price=120.0))
+    AccountingRepository(store).init('g1')
+    rows = build_overview(store, _PriceAdapter({'BTC/USDT:USDT': 0.0}))
+    r = rows[0]
+    assert r.current_price is None
+    assert r.unrealized_pnl is None
+    assert r.stop_low_dist_pct is None
+    assert r.stop_high_dist_pct is None
+    assert r.price_error is not None
