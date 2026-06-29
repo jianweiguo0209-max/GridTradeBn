@@ -14,6 +14,8 @@ def age_human(sec: Optional[float]) -> str:
     if sec is None:
         return '-'
     sec = int(sec)
+    if sec < 0:                 # 负龄（now 早于 last_beat，时钟漂移）当作不可用
+        return '-'
     if sec < 60:
         return '%ds' % sec
     if sec < 3600:

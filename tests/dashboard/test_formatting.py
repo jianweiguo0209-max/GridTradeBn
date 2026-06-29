@@ -13,6 +13,13 @@ def test_age_human():
     assert age_human(5) == '5s'
     assert age_human(90) == '1m'
     assert age_human(7200) == '2h'
+    # 边界：<60 / <3600 严格小于，故 60→分、3600→时
+    assert age_human(59) == '59s'
+    assert age_human(60) == '1m'
+    assert age_human(3599) == '59m'
+    assert age_human(3600) == '1h'
+    # 负龄（时钟漂移）当作不可用
+    assert age_human(-5) == '-'
 
 
 def test_fmt_num_and_pct():

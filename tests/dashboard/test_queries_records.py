@@ -37,3 +37,20 @@ def test_records_ignores_unclosed_records(store):
     dto = build_records(store)
     assert dto.records == []
     assert dto.tag_summaries == []
+
+
+def test_records_tag_with_zero_wins_has_zero_win_rate(store):
+    # 该 tag 全亏：win_count=0, win_rate=0.0（覆盖 0 胜聚合分支）
+    recs = RecordRepository(store)
+    recs.add(Record(id='l1', exchange='hyperliquid', symbol='BTC/USDT:USDT',
+                    tag='loss', total_pnl=-3.0, pnl_ratio=-0.03,
+                    exit_reason='stop_loss', closed_at=1000))
+    recs.add(Record(id='l2', exchange='hyperliquid', symbol='ETH/USDT:USDT',
+                    tag='loss', total_pnl=-1.0, pnl_ratio=-0.01,
+                    exit_reason='stop_loss', closed_at=2000))
+    dto = build_records(store)
+    s = {x.tag: x for x in dto.tag_summaries}['loss']
+    assert s.count == 2
+    assert s.win_count == 0
+    assert s.win_rate == 0.0
+    assert s.total_pnl == -4.0
