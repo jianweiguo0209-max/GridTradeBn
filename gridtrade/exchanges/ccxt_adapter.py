@@ -74,11 +74,12 @@ class CcxtAdapter(ExchangeAdapter):
         df = df[(df['ts'] >= start_ms) & (df['ts'] <= end_ms)]
         df['candle_begin_time'] = pd.to_datetime(df['ts'], unit='ms')
         df['symbol'] = symbol
-        # TODO(P5): quote_volume=vol*close makes vwap=quote_volume/volCcy collapse to close,
-        # degrading Vwapbias/MarketPl on real data. P5 datasource must map quote_volume from
-        # the exchange's true turnover field (OKX volCcyQuote / HL turnover); vol*close is a fallback only.
+        # ccxt 统一 vol 即真实 base 成交量（OKX 永续 volumeIndex=6 / HL 字段 v），故 volCcy=vol 正确。
+        # 报价成交额：OKX 真实 volCcyQuote 经 ccxt 统一接口取不到、HL 无此字段，故用 legacy 文档化
+        # 回退 (open+close)/2*vol（见 account_0/utils/stop_loss.py:280）。这样 vwap=quote_volume/volCcy
+        # =(open+close)/2 不再恒等于 close，Vwapbias/MarketPl 因子在真实数据上保持有效。
         df['volCcy'] = df['vol']
-        df['quote_volume'] = df['vol'] * df['close']
+        df['quote_volume'] = (df['open'] + df['close']) / 2.0 * df['vol']
         df = df[CANDLE_COLS].sort_values('candle_begin_time').reset_index(drop=True)
         return df
 

@@ -61,6 +61,18 @@ def test_fetch_ohlcv_maps_to_candle_cols():
     assert df['candle_begin_time'].iloc[0] == pd.Timestamp('2024-01-01 00:00:00')
 
 
+def test_fetch_ohlcv_quote_volume_uses_midprice_not_close():
+    # quote_volume = (open+close)/2 * vol（legacy 文档化回退），volCcy = vol。
+    # 关键：vwap = quote_volume/volCcy = (open+close)/2，不得塌成 close（否则 Vwapbias 失真）。
+    df = _adapter().fetch_ohlcv('BTC/USDT:USDT', '1H', 0, 10**13)
+    # 行0: open=1.0 close=1.5 vol=10 -> (1.0+1.5)/2*10 = 12.5 ；行1: (1.5+2.0)/2*20 = 35.0
+    assert df['quote_volume'].tolist() == [12.5, 35.0]
+    assert df['volCcy'].tolist() == [10.0, 20.0]
+    vwap = (df['quote_volume'] / df['volCcy']).tolist()
+    assert vwap == [1.25, 1.75]
+    assert vwap != df['close'].tolist()        # vwap 未塌成 close
+
+
 def test_fetch_funding_history_maps_cols():
     from gridtrade.exchanges.base import FUNDING_COLS
     df = _adapter().fetch_funding_history('BTC/USDT:USDT', 0, 10**13)
