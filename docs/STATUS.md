@@ -1,7 +1,7 @@
 # GridTradeGP — 项目状态与进度（固化文档）
 
 > 单一事实源：任何新 session / 协作者读这一份即可掌握「系统设计完成度 + testnet 运行状态」。
-> 最后更新：2026-06-29。代码状态：**286 tests passed**（离线 TDD；含 P6① 混沌/故障注入加固 + quote_volume 成交额回退修复 + OrderFilled 事件 + funding 缓存测试 + MarginGate）。
+> 最后更新：2026-06-29。代码状态：**SQLite 292 passed（+2 PG-only 并发测试 skipped）/ Postgres 294 passed**（双后端 TDD；含 P6① 混沌加固 + quote_volume 回退 + OrderFilled + funding 缓存 + MarginGate + 双模式 PG fixture + 真并发 TOCTOU）。
 
 ---
 
@@ -79,8 +79,12 @@ gridtrade/
 
 ## 4. 测试
 
-- **286 passed**，全程离线（FakeExchange + 内存 SQLite，无网络）。
+- **双后端**：默认 `pytest` 走内存 SQLite（快、离线、CI 不依赖 PG）= **292 passed + 2 skipped**；
+  设 `TEST_DATABASE_URL=postgresql://…` 则全量走真 Postgres = **294 passed**（含 2 个 PG-only 并发 TOCTOU 测试）。
+- 所有 DB 测试经 `tests/conftest.py` 的 `store`（双模式）/ `pg_store`（PG-only）fixture；PG 模式每测 TRUNCATE 隔离。
+- 真并发 TOCTOU：`tests/state/test_transition_concurrency.py` 用真线程 + Barrier 验证 `transition_status` 版本守卫只放一个赢家。
 - 跑测试：`TZ=Asia/Shanghai .venv/bin/python -m pytest`（仓库 `.venv`：py3.9 / pandas 1.3.5 / numpy 1.22.4 / TA-Lib 0.6.8 / ccxt 4.5.61 / SQLAlchemy 2.0）。
+  本地 PG：`docker run -d --name gridpg -e POSTGRES_PASSWORD=grid -e POSTGRES_DB=gridtrade -p 5432:5432 postgres:16` + `export TEST_DATABASE_URL=postgresql://postgres:grid@localhost:5432/gridtrade`。
 - CI：`.github/workflows/ci.yml`（ubuntu py3.9 + TA-Lib bundled wheel + pytest），每 push 跑、已验证绿。
 
 ---
@@ -151,7 +155,7 @@ gridtrade/
 
 - **ThresholdTrigger / ExternalSignalTrigger**（价格/指标阈值、外部信号触发器）——需口径。
 - ✅ ~~MarginGate（保证金门）~~ —— 已实现（准入门链 4/4：cash≥cap 保守口径 + 同轮累计扣减 + fail-closed，置链尾）。
-- **真并发 TOCTOU 测试**（transition_status 重校验已修；线程级红→绿测试待多监控机阶段）。
+- ✅ ~~真并发 TOCTOU 测试~~ —— 已补（`tests/state/test_transition_concurrency.py` 真线程+Barrier 在本地 PG 验证版本守卫只放一个赢家；CI 仍 SQLite，CI PG job 待多监控机阶段）。
 - ✅ ~~OrderFilled 事件~~ —— 已实现（GridManager.monitor_all 逐笔成交发布，带 fee）。
 - **同币种多网格**（二期 LogicalAttributionPolicy / 子账户）。
 - 详见记忆 `p4-deferred-items`、`deferred-toctou-concurrency-test`。

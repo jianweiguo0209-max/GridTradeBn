@@ -75,3 +75,20 @@ fly deploy --config deploy/fly.toml --dockerfile deploy/Dockerfile --remote-only
 - **mainnet 上线前确认 live 策略参数**：factors / weight_list / cap / leverage / choose_symbols（`gridtrade/config.py` 的 `DEFAULT_STRATEGY_CONFIG` 是 legacy 默认 + env 覆盖）。
 - 全程 UTC 存储；offset 由 `UTC_OFFSET` 驱动（默认 8）。
 - 健壮性：交易所调用已自带退避重试 + 熔断，失败降级续跑不退出；monitor 崩溃 fly 自动重启 + 重启对账自愈。
+
+---
+## 本地 Postgres 测试（双后端）
+
+默认 `pytest` 走内存 SQLite（快、离线）。要在真 Postgres 上跑全套（抓 PG-only bug，如 INT4 溢出）
+和 PG-only 并发 TOCTOU 测试：
+
+```bash
+docker run -d --name gridpg -e POSTGRES_PASSWORD=grid -e POSTGRES_DB=gridtrade -p 5432:5432 postgres:16
+export TEST_DATABASE_URL=postgresql://postgres:grid@localhost:5432/gridtrade
+TZ=Asia/Shanghai .venv/bin/python -m pytest -q      # 全量走 PG（含并发 TOCTOU）
+unset TEST_DATABASE_URL                               # 回到默认 SQLite
+```
+
+- DB 测试由 `tests/conftest.py` 的 `store`（双模式）/ `pg_store`（PG-only，无 env 则 skip）fixture 驱动。
+- 并发测试 `tests/state/test_transition_concurrency.py` 仅在设了 `TEST_DATABASE_URL` 时运行。
+- CI 仍跑 SQLite（不依赖 PG）；CI PG job 待多监控机阶段。
