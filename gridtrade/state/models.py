@@ -132,6 +132,7 @@ grid_fills = Table(
     Column('side', String, nullable=False),
     Column('price', Float, nullable=False),
     Column('size', Float, nullable=False),
+    Column('fee', Float, nullable=False, default=0.0),
     Column('ts', BigInteger, nullable=False),
     Column('created_at', BigInteger, nullable=False),
     Index('ix_grid_fills_grid', 'grid_id'),
@@ -262,7 +263,8 @@ class Fill:
     side: str
     price: float
     size: float
-    ts: int
+    fee: float = 0.0
+    ts: int = 0
     created_at: int = 0
 
 

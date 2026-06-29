@@ -32,7 +32,7 @@ class Reconciler:
         for _ in range(len(above)):
             live.record_fill(g.entry_price, 'buy', order_num, 0)
         for f in ex.fills.list_by_grid(grid_id):   # 已按 ts 升序
-            live.record_fill(f.price, f.side, f.size, f.ts)
+            live.record_fill(f.price, f.side, f.size, f.ts, f.fee)
         acc = ex.accounting.get(grid_id)
         if acc is not None:
             live.funding_paid = acc.funding_paid      # recover cumulative funding (durable)

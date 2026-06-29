@@ -35,3 +35,17 @@ def test_max_ts(store):
     repo.add_if_new(_fill('t2', ts=5000))
     assert repo.max_ts('g1') == 5000
     assert repo.max_ts('other') == 0
+
+
+def test_fee_persisted_and_read_back(store):
+    repo = _repo(store)
+    assert repo.add_if_new(_fill('tf', fee=1.23)) is True
+    got = repo.list_by_grid('g1')
+    assert len(got) == 1
+    assert abs(got[0].fee - 1.23) < 1e-12
+
+
+def test_fee_defaults_zero_when_omitted(store):
+    repo = _repo(store)
+    repo.add_if_new(_fill('t0'))          # _fill 不传 fee → Fill.fee 默认 0.0
+    assert repo.list_by_grid('g1')[0].fee == 0.0

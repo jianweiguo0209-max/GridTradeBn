@@ -127,3 +127,36 @@ def test_snapshot_flip_long_to_short_matches_full_path():
     fills = [(1, 100.0, 'buy'), (2, 101.0, 'sell'), (3, 102.0, 'sell')]
     truth = _truth_net_value(fills, 100.0, 103.0)
     assert abs(snap['net_value'] - truth) < 1e-9
+
+
+def test_snapshot_fee_paid_is_real_sum():
+    le = _le(entry=100.0)
+    le.record_fill(99.0, 'buy', 0.5, 60_000, fee=0.7)
+    le.record_fill(99.0, 'sell', 0.5, 120_000, fee=0.9)
+    snap = le.snapshot(100.0)
+    assert abs(snap['fee_paid'] - 1.6) < 1e-12      # 0.7 + 0.9
+
+
+def test_net_value_corrected_to_real_fee():
+    fills_geom = [(99.0, 'buy', 0.5, 60_000), (98.0, 'buy', 0.5, 120_000)]
+    est = _le(entry=100.0)
+    for p, s, sz, ts in fills_geom:
+        est.record_fill(p, s, sz, ts)               # fee=None → 估算费率
+    est_snap = est.snapshot(100.0)
+
+    real = _le(entry=100.0)
+    for p, s, sz, ts in fills_geom:
+        real.record_fill(p, s, sz, ts, fee=3.0)     # 每笔真实费 3.0，共 6.0
+    real_snap = real.snapshot(100.0)
+
+    assert real_snap['fee_paid'] == 6.0
+    # net_value 用真实费替换估算费：real = est + (est_fee - real_fee)/cap
+    expected = est_snap['net_value'] + (est_snap['fee_paid'] - 6.0) / CAP
+    assert abs(real_snap['net_value'] - expected) < 1e-12
+    assert abs(real_snap['pnl_ratio'] - (real_snap['net_value'] - 1.0)) < 1e-12
+
+
+def test_replay_accepts_fee_tuples():
+    fills = [(99.0, 'buy', 0.5, 60_000, 0.4), (98.0, 'buy', 0.5, 120_000, 0.6)]
+    rep = _le(entry=100.0).replay(fills)
+    assert abs(rep.snapshot(100.0)['fee_paid'] - 1.0) < 1e-12

@@ -217,3 +217,20 @@ def test_reconcile_grace_resets_when_order_reingested(store):
         price=victim.price, size=victim.size, status='closed'))   # 模拟 sync 标 closed
     # 该单已不在 expected(open) → 第2轮不应重挂它
     assert rec.reconcile_open_orders(gid, SYM)['replaced'] == 0
+
+
+def test_restore_rebuilds_real_fee_from_persisted_fills(store):
+    ex = FakeExchange(instruments=[Instrument(SYM, 0.1, 0.001, 0.001, 'live', 0)], price=100.0)
+    ex.set_price(SYM, 100.0)
+    gx = _new_executor(ex, store)
+    gid = gx.open('fake', SYM, GP)
+    ex.set_price(SYM, 100.6); gx.sync(gid, SYM)        # 一笔成交，真实费落库（Task 3）
+    fee_before = gx.live[gid].snapshot(ex.fetch_price(SYM))['fee_paid']
+    assert fee_before > 0.0
+
+    # 模拟重启：全新 executor，从持久化 grid_fills 重放
+    gx2 = _new_executor(ex, store)
+    from gridtrade.execution.reconciler import Reconciler
+    Reconciler(gx2).restore(gid)
+    fee_after = gx2.live[gid].snapshot(ex.fetch_price(SYM))['fee_paid']
+    assert abs(fee_after - fee_before) < 1e-9          # 重放自持久化 fee，不丢、与运行态一致

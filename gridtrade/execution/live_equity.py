@@ -19,10 +19,14 @@ class LiveEquity:
         self._fills = []      # trade_df 行：candle_begin_time/last_touch/touch/order_dir/order_num
         self._last_ts = None  # 最后成交时间（ms）
         self.funding_paid = 0.0
+        self.real_fee_paid = 0.0
 
-    def record_fill(self, price, side, size, ts_ms):
+    def record_fill(self, price, side, size, ts_ms, fee=None):
         if side not in ('buy', 'sell'):
             raise ValueError("side must be 'buy' or 'sell'")
+        # fee=None：无真实费时回退估算费率（与共用引擎口径一致），保持向后兼容
+        real_fee = float(size) * float(price) * self.fee if fee is None else float(fee)
+        self.real_fee_paid += real_fee
         order_dir = 1.0 if side == 'buy' else -1.0
         if self._fills:
             last_touch = self._fills[-1]['touch']
@@ -41,14 +45,17 @@ class LiveEquity:
         self.funding_paid += float(amount)
 
     def replay(self, fills) -> 'LiveEquity':
-        """fills: 可迭代的 (price, side, size, ts_ms)。供 reconciler 从持久化成交重建。"""
-        for price, side, size, ts_ms in fills:
-            self.record_fill(price, side, size, ts_ms)
+        """fills: 可迭代的 (price, side, size, ts_ms) 或 (price, side, size, ts_ms, fee)。
+        供 reconciler 从持久化成交重建。"""
+        for price, side, size, ts_ms, *rest in fills:
+            fee = rest[0] if rest else None
+            self.record_fill(price, side, size, ts_ms, fee)
         return self
 
     def snapshot(self, mark_price) -> dict:
         """Mark-to-market snapshot: net_value/fee_paid via cal_equity_curve WITHOUT _apply_exit,
-        so excludes close-out taker fee (applied by executor on actual exit)."""
+        so excludes close-out taker fee (applied by executor on actual exit).
+        fee_paid 取真实累计费（real_fee_paid），net_value 按 (est_fee - real_fee)/cap 修正。"""
         if not self._fills:
             return {'net_value': 1.0, 'pnl_ratio': 0.0, 'net_position': 0.0,
                     'avg_price': 0.0, 'realized_pnl': 0.0, 'fee_paid': 0.0,
@@ -63,8 +70,12 @@ class LiveEquity:
         eq = cal_equity_curve(candle_df, trade_df.copy(), self.fee, self.cap,
                               self.c_rate_taker, funding_df=None)
         last = eq.iloc[-1]
-        net_value = float(last['net_value']) - self.funding_paid / self.cap
+        est_fee = float(last['fee'])                 # 引擎按费率估算的累计费
+        # net_value 内已扣 est_fee；用真实费替换：+est_fee/cap -real_fee/cap -funding/cap
+        net_value = (float(last['net_value'])
+                     + (est_fee - self.real_fee_paid) / self.cap
+                     - self.funding_paid / self.cap)
         return {'net_value': net_value, 'pnl_ratio': net_value - 1.0,
                 'net_position': float(last['hold_num']), 'avg_price': float(last['avg_price']),
-                'realized_pnl': float(last['real_profit']), 'fee_paid': float(last['fee']),
+                'realized_pnl': float(last['real_profit']), 'fee_paid': self.real_fee_paid,
                 'funding_paid': self.funding_paid}

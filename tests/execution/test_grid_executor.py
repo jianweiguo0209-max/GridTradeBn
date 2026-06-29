@@ -167,5 +167,25 @@ def test_sync_refetches_late_visible_trade_below_cursor(store):
     assert any(f.trade_id == 'lo' for f in gx.fills.list_by_grid(gid))
 
 
+def test_sync_wires_real_fee_into_persistence_and_accounting(store):
+    ex, store, gx = _setup(store, price=100.0)
+    gid = gx.open(ex_exchange_name(), SYM, GP)
+    fee_after_open = gx.live[gid].real_fee_paid       # 仅合成底仓（估算回退）
+    ex.set_price(SYM, 100.6)                           # 触发 line 5 卖单成交
+    res = gx.sync(gid, SYM)
+    assert res['new_fills'] == 1
+
+    f = gx.fills.list_by_grid(gid)[0]
+    real_fill_fee = f.size * f.price * 0.0005          # FakeExchange 费率 0.0005
+    # (a) 落库真实费
+    assert abs(f.fee - real_fill_fee) < 1e-9
+    # (b) 运行态 live 累加的是真实费（增量==真实费，而非 0.0002 估算回退）
+    delta = gx.live[gid].real_fee_paid - fee_after_open
+    assert abs(delta - real_fill_fee) < 1e-9
+    # (c) accounting.fee_paid 已用真实快照
+    acc = gx.accounting.get(gid)
+    assert abs(acc.fee_paid - gx.live[gid].snapshot(ex.fetch_price(SYM))['fee_paid']) < 1e-9
+
+
 def ex_exchange_name():
     return 'fake'
