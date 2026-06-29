@@ -6,7 +6,7 @@ from sqlalchemy import insert, select
 
 from gridtrade.state.models import Fill, grid_fills, now_ms
 
-_FIELDS = ('trade_id', 'grid_id', 'line_index', 'side', 'price', 'size', 'ts', 'created_at')
+_FIELDS = ('trade_id', 'grid_id', 'line_index', 'side', 'price', 'size', 'fee', 'ts', 'created_at')
 
 
 def _to_fill(row) -> Fill:
