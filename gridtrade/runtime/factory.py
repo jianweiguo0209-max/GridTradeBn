@@ -32,6 +32,9 @@ class Runtime:
     reconciler: object
     heartbeats: object
     event_bus: object
+    flags: object = None
+    commands: object = None
+    audit: object = None
 
 
 def build_runtime(config) -> Runtime:
@@ -64,9 +67,13 @@ def build_runtime(config) -> Runtime:
                                         utc_offset=config.utc_offset)
     trigger_engine = TriggerEngine([trigger])
 
+    from gridtrade.state.control import (ControlFlagRepository, CommandRepository,
+                                        AuditRepository)
     return Runtime(
         config=config, adapter=adapter, store=store, executor=executor,
         manager=manager, trigger_engine=trigger_engine,
         reconciler=Reconciler(executor),
         heartbeats=HeartbeatRepository(store), event_bus=bus,
+        flags=ControlFlagRepository(store), commands=CommandRepository(store),
+        audit=AuditRepository(store),
     )

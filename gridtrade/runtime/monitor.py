@@ -15,9 +15,14 @@ def run_monitor(runtime, *, once=False, sleep=time.sleep, log=print,
                 cycle_fn=run_monitor_cycle, should_stop=None):
     rt = runtime
     restore_all(rt.reconciler)            # 重启自愈一次
+    # 控制仓储参数只传给默认 cycle_fn（run_monitor_cycle）；测试替换 cycle_fn 时不传，保持兼容。
+    ctrl_kw = {}
+    if cycle_fn is run_monitor_cycle and getattr(rt, 'flags', None) is not None:
+        ctrl_kw = dict(flags=rt.flags, commands=rt.commands,
+                       audit=rt.audit, exchange=rt.config.exchange)
     while True:
         try:
-            cycle_fn(rt.reconciler, rt.manager)
+            cycle_fn(rt.reconciler, rt.manager, **ctrl_kw)
         except Exception as exc:          # 降级：记录 + 续跑，绝不退出
             log('[monitor] degraded: %r' % exc)
         try:

@@ -26,7 +26,8 @@ def restore_all(reconciler) -> List[str]:
     return restored
 
 
-def run_monitor_cycle(reconciler, manager, log=print) -> dict:
+def run_monitor_cycle(reconciler, manager, log=print, *,
+                      flags=None, commands=None, audit=None, exchange='') -> dict:
     """monitor 机循环体：逐网格隔离——单网格故障降级记录，不阻塞其他网格的对账/止损。
 
     顺序：① 续平卡死的 CLOSING 网格（幂等自愈）② 惰性 restore 所有 ACTIVE 网格
@@ -58,7 +59,8 @@ def run_monitor_cycle(reconciler, manager, log=print) -> dict:
                 reconciler.restore(grid.id)
         except Exception as exc:              # 降级：坏网格不掀翻整轮（绝不吞 BaseException）
             degraded[grid.id] = repr(exc)
-    monitored = manager.monitor_all()         # sync（摄入成交、标 closed、补单、止损）—— 先于 reconcile
+    halted = bool(flags.get('trading_halted')) if flags is not None else False
+    monitored = manager.monitor_all(skip_replenish=halted)  # sync（摄入成交、标 closed、补单、止损）—— 先于 reconcile
     synced_ok = {r['grid_id'] for r in monitored
                  if 'error' not in r and not r.get('closed')}
     for grid in _active_grids(ex.grids):      # 仅对 sync 成功且仍 ACTIVE 的网格对账
@@ -79,6 +81,9 @@ def run_monitor_cycle(reconciler, manager, log=print) -> dict:
     for gid, d in drift.items():              # 净仓背离打日志（不自动改仓，留人工/后续处置）
         log('[monitor] grid %s position drift: model=%s exchange=%s drift=%s tol=%s'
             % (gid, d['model'], d['exchange'], d['drift'], d['tol']))
+    if commands is not None and audit is not None:
+        from gridtrade.runtime.commands import consume_one
+        consume_one(commands, audit, manager, flags, exchange=exchange)
     return {'reconciled': reconciled, 'resumed': resumed, 'degraded': degraded,
             'drift': drift, 'monitored': monitored}
 

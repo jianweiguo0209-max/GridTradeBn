@@ -98,7 +98,7 @@ class GridExecutor:
         self.grids.transition_status(gid, ACTIVE, expected_version=g2.version)
         return gid
 
-    def sync(self, grid_id, symbol):
+    def sync(self, grid_id, symbol, *, skip_replenish=False):
         geom = self._geom[grid_id]
         price_array = geom['price_array']
         order_num = geom['order_num']
@@ -129,17 +129,18 @@ class GridExecutor:
             self.orders.upsert(GridOrder(client_oid=go.client_oid, grid_id=grid_id,
                                          line_index=line_index, side=t.side, price=t.price,
                                          size=t.size, status='closed'))
-            # 补对侧单
-            opp_line = line_index - 1 if t.side == 'sell' else line_index + 1
-            if 0 <= opp_line < len(price_array):
-                opp_side = 'buy' if t.side == 'sell' else 'sell'
-                p = price_array[opp_line]
-                oid = self._next_oid(grid_id, opp_line)
-                order = self.adapter.create_limit_order(symbol, opp_side, p, order_num,
-                                                        post_only=False, client_oid=oid)
-                self.orders.upsert(GridOrder(client_oid=oid, grid_id=grid_id, line_index=opp_line,
-                                             side=opp_side, price=p, size=order_num, status='open',
-                                             exchange_order_id=getattr(order, 'id', None)))
+            # 补对侧单（halt 时跳过：fills/记账/止损仍正常，但不挂新单）
+            if not skip_replenish:
+                opp_line = line_index - 1 if t.side == 'sell' else line_index + 1
+                if 0 <= opp_line < len(price_array):
+                    opp_side = 'buy' if t.side == 'sell' else 'sell'
+                    p = price_array[opp_line]
+                    oid = self._next_oid(grid_id, opp_line)
+                    order = self.adapter.create_limit_order(symbol, opp_side, p, order_num,
+                                                            post_only=False, client_oid=oid)
+                    self.orders.upsert(GridOrder(client_oid=oid, grid_id=grid_id, line_index=opp_line,
+                                                 side=opp_side, price=p, size=order_num, status='open',
+                                                 exchange_order_id=getattr(order, 'id', None)))
 
         # 资金费流水
         fcur = self._funding_cursor.get(grid_id, 0)
