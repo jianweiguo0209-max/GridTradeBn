@@ -13,6 +13,10 @@ from gridtrade.state.models import (ACTIVE, CLOSED, CLOSING, Fill, Grid, GridOrd
 from gridtrade.state.orders import OrderRepository
 from gridtrade.state.records import RecordRepository
 
+# E4：成交游标留重叠——从 max_ts 往回 5min 再拉，靠 fills.add_if_new(trade_id) 去重。
+# 防「晚可见、ts 低于被别的成交推高的 max_ts」的成交被游标跳过永久漏（HL fill 可见性延迟）。
+_TRADE_REFETCH_OVERLAP_MS = 5 * 60 * 1000
+
 
 class GridExecutor:
     def __init__(self, adapter, store, *, cap, leverage, fee=0.0002,
@@ -101,7 +105,7 @@ class GridExecutor:
         geom = self._geom[grid_id]
         price_array = geom['price_array']
         order_num = geom['order_num']
-        cursor = self.fills.max_ts(grid_id)
+        cursor = max(0, self.fills.max_ts(grid_id) - _TRADE_REFETCH_OVERLAP_MS)
         trades = self.adapter.fetch_my_trades(symbol, since_ms=cursor)
         # 按 exchange order id 把成交映射回网格线（跨所通用；HL fill 只带 oid，不带 cloid）。
         # 中性底仓/平仓的市价单不在 grid_orders → 其成交 order_id 不在 by_oid，自动排除。

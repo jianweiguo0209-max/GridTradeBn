@@ -100,6 +100,27 @@ def test_monitor_cycle_reports_position_drift(store):
     assert any('position drift' in m for m in logs)
 
 
+def test_monitor_cycle_grace_no_phantom_replace_then_ingests_late_fill(store):
+    # E 端到端：单成交但成交本轮不可见（HL 延迟）→ reconcile 宽限不重挂、不覆盖 oid →
+    # 下一轮成交可见 → sync 摄入、标 closed、不产生多余单。同一 reconciler 跨轮（grace 计数存活）。
+    from gridtrade.runtime.cycles import run_monitor_cycle
+    from gridtrade.exchanges.base import Trade
+    ex, store, gx, mgr = _setup(store, 100.0)
+    gid = mgr.open_proposals([_proposal()])[0]
+    sell = [o for o in ex.fetch_open_orders(BTC) if o.side == 'sell'][0]
+    rec = Reconciler(gx)                              # grace=2 默认
+    ex._open.pop(sell.id, None)                       # 模拟"成交、从 book 消失，但成交尚不可见"
+    out1 = run_monitor_cycle(rec, mgr)
+    assert out1['reconciled'][gid]['replaced'] == 0   # 宽限：不重挂
+    assert gx.orders.get(sell.client_oid).exchange_order_id == sell.id   # oid 未被覆盖
+    # 成交变可见
+    ex._trades.append(Trade(id='late', client_oid=sell.client_oid, symbol=BTC, side='sell',
+                            price=sell.price, size=sell.size, fee=0.0, ts=1, order_id=sell.id))
+    run_monitor_cycle(rec, mgr)
+    assert any(f.trade_id == 'late' for f in gx.fills.list_by_grid(gid))   # 迟到成交已摄入
+    assert gx.orders.get(sell.client_oid).status == 'closed'              # 该单标 closed，未被重挂
+
+
 def test_monitor_cycle_lazy_restores_grid_opened_by_another_process(store):
     # 跨进程：scheduler 进程开网格（gx 内存有），monitor 进程（gx2 空内存、共享同 store/ex）
     # 直接 sync 会 KeyError；run_monitor_cycle 应先惰性 restore 再 monitor。

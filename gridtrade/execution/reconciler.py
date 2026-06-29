@@ -7,8 +7,12 @@ from gridtrade.state.models import GridOrder
 
 
 class Reconciler:
-    def __init__(self, executor):
+    def __init__(self, executor, replace_grace=2):
         self.ex = executor
+        # E2：重挂宽限——一张 open 单连续 replace_grace 轮从挂单簿消失才重挂。延迟窗口内
+        # 「成交但成交尚不可见」也表现为消失；立即重挂会覆盖成交 oid 致漏摄入。给 sync 时间先摄入。
+        self._replace_grace = replace_grace
+        self._missing = {}   # grid_id -> {client_oid: 连续 missing 轮数}
 
     def restore(self, grid_id):
         ex = self.ex
@@ -52,12 +56,19 @@ class Reconciler:
                 ex.adapter.cancel_order(symbol, o.id)
                 canceled += 1
 
+        missing = self._missing.setdefault(grid_id, {})
+        seen_missing = set()
         replaced = 0
         for oid, go in expected.items():
             if oid not in on_exchange:
-                # 先撤旧 oid 再补：HL 抖动时 fetch_open_orders 可能漏返回一张【仍在挂】的单，
-                # 直接重挂会产生重复单（旧单后来成交、其 oid 已被新单覆盖 → 漏摄入、净仓漂）。
-                # 撤掉（已成交/已撤则 no-op 或报错，吞掉）再补，从根上杜绝重复。
+                # E2 宽限：连续 missing 达到 grace 才重挂——延迟窗口内可能是「成交但成交尚不可见」，
+                # 立即重挂会覆盖成交 oid → 漏摄入。给 sync 时间先摄入（它会把该单标 closed、移出 expected）。
+                cnt = missing.get(go.client_oid, 0) + 1
+                missing[go.client_oid] = cnt
+                seen_missing.add(go.client_oid)
+                if cnt < self._replace_grace:
+                    continue
+                # 达宽限 → 重挂。先撤旧 oid 再补（D）：HL 抖动漏返回的仍在挂的单先撤掉，杜绝重复。
                 try:
                     ex.adapter.cancel_order(symbol, oid)
                 except Exception:
@@ -68,7 +79,11 @@ class Reconciler:
                                            line_index=go.line_index, side=go.side, price=go.price,
                                            size=go.size, status='open',
                                            exchange_order_id=getattr(order, 'id', None)))
+                missing.pop(go.client_oid, None)   # 重挂后清零
                 replaced += 1
+        for coid in list(missing):                 # 不再 missing（重回 book / 已 closed 移出 expected）→ 清零
+            if coid not in seen_missing:
+                missing.pop(coid)
         return {'canceled': canceled, 'replaced': replaced}
 
     def check_position_drift(self, grid_id, symbol, *, tol_lots=1.5):

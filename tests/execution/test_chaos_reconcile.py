@@ -29,7 +29,7 @@ def build_stack(store, schedule=None, price=100.0):
 def test_reconcile_converges_despite_transient_fault(store):
     fake, faulty, gx = build_stack(store)
     gid = gx.open('fake', SYM, GP)
-    rec = Reconciler(gx)
+    rec = Reconciler(gx, replace_grace=1)   # 聚焦故障重试收敛，即时重挂（grace=1）
 
     # 缺失：交易所撤掉一个挂单（DB 仍 open）
     victim = fake.fetch_open_orders(SYM)[0]

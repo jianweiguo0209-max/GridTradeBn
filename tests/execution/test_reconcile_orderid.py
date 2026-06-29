@@ -26,7 +26,7 @@ def test_reconcile_replaces_missing_by_order_id(store):
     gid = gx.open('fake', SYM, GP)
     victim = ex.fetch_open_orders(SYM)[0]
     ex._open.pop(victim.id, None)                    # 交易所侧撤掉一个挂单（库里仍 open）
-    r = Reconciler(gx).reconcile_open_orders(gid, SYM)
+    r = Reconciler(gx, replace_grace=1).reconcile_open_orders(gid, SYM)   # 聚焦 oid 匹配，即时重挂
     assert r['replaced'] == 1
 
 

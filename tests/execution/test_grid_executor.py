@@ -146,5 +146,26 @@ def test_close_then_reopen_same_symbol_ok(store):
     assert gid2 != gid
 
 
+def test_sync_refetches_late_visible_trade_below_cursor(store):
+    # E4：一笔成交"晚可见"、其 ts 低于当前游标（被别的已摄入成交推高的 max_ts）→
+    # 游标=max_ts 会把它跳过永久漏；游标留重叠应重新拉到并入账。
+    from gridtrade.exchanges.base import Trade
+    ex, store, gx = _setup(store, 100.0)
+    gid = gx.open(ex_exchange_name(), SYM, GP)
+    sells = [o for o in ex.fetch_open_orders(SYM) if o.side == 'sell']
+    a, b = sells[0], sells[1]
+    ex._trades.append(Trade(id='hi', client_oid=a.client_oid, symbol=SYM, side='sell',
+                            price=a.price, size=a.size, fee=0.0, ts=100, order_id=a.id))
+    gx.sync(gid, SYM)                              # 摄入高 ts → max_ts=100
+    n1 = len(gx.fills.list_by_grid(gid))
+    assert any(f.trade_id == 'hi' for f in gx.fills.list_by_grid(gid))
+    ex._trades.append(Trade(id='lo', client_oid=b.client_oid, symbol=SYM, side='sell',
+                            price=b.price, size=b.size, fee=0.0, ts=50, order_id=b.id))
+    gx.sync(gid, SYM)                              # ts=50 < max_ts=100：晚到成交
+    n2 = len(gx.fills.list_by_grid(gid))
+    assert n2 == n1 + 1, "ts<游标的晚到成交应被游标重叠重新拉到并入账"
+    assert any(f.trade_id == 'lo' for f in gx.fills.list_by_grid(gid))
+
+
 def ex_exchange_name():
     return 'fake'
