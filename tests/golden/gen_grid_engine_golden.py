@@ -11,7 +11,8 @@ import pandas as pd
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.abspath(os.path.join(_HERE, '..', '..'))
-_BT = os.path.join(_ROOT, 'backtest')
+# legacy 回测已 archive 到 legacy/（见 docs/STATUS.md §10）；此脚本仅在重生成金标时运行。
+_BT = os.path.join(_ROOT, 'legacy', 'backtest')
 if _BT not in sys.path:
     sys.path.insert(0, _BT)
 
