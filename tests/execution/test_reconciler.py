@@ -1,6 +1,5 @@
 from gridtrade.exchanges.fake import FakeExchange
 from gridtrade.exchanges.base import Instrument
-from gridtrade.state.store import StateStore
 
 SYM = 'BTC/USDT:USDT'
 GP = {'low_price': 98.0, 'high_price': 102.0, 'grid_count': 8,
@@ -12,10 +11,9 @@ def _new_executor(ex, store):
     return GridExecutor(ex, store, cap=1000.0, leverage=5.0)
 
 
-def test_restore_rebuilds_state_matching_pre_restart():
+def test_restore_rebuilds_state_matching_pre_restart(store):
     ex = FakeExchange(instruments=[Instrument(SYM, 0.1, 0.001, 0.001, 'live', 0)], price=100.0)
     ex.set_price(SYM, 100.0)
-    store = StateStore.in_memory(); store.create_all()
     gx = _new_executor(ex, store)
     gid = gx.open('fake', SYM, GP)
     ex.set_price(SYM, 100.6); gx.sync(gid, SYM)
@@ -33,10 +31,9 @@ def test_restore_rebuilds_state_matching_pre_restart():
     assert abs(snap_before['realized_pnl'] - snap_after['realized_pnl']) < 1e-9
 
 
-def test_restore_then_sync_no_double_replenish():
+def test_restore_then_sync_no_double_replenish(store):
     ex = FakeExchange(instruments=[Instrument(SYM, 0.1, 0.001, 0.001, 'live', 0)], price=100.0)
     ex.set_price(SYM, 100.0)
-    store = StateStore.in_memory(); store.create_all()
     gx = _new_executor(ex, store)
     gid = gx.open('fake', SYM, GP)
     ex.set_price(SYM, 100.6); gx.sync(gid, SYM)
@@ -50,10 +47,9 @@ def test_restore_then_sync_no_double_replenish():
     assert len(ex.fetch_open_orders(SYM)) == open_before
 
 
-def test_reconcile_cancels_orphan_and_replaces_missing():
+def test_reconcile_cancels_orphan_and_replaces_missing(store):
     ex = FakeExchange(instruments=[Instrument(SYM, 0.1, 0.001, 0.001, 'live', 0)], price=100.0)
     ex.set_price(SYM, 100.0)
-    store = StateStore.in_memory(); store.create_all()
     gx = _new_executor(ex, store)
     gid = gx.open('fake', SYM, GP)
     from gridtrade.execution.reconciler import Reconciler
@@ -78,10 +74,9 @@ def test_reconcile_cancels_orphan_and_replaces_missing():
     assert all(o.client_oid != 'zzz:orphan:0' for o in ex.fetch_open_orders(SYM))
 
 
-def test_restore_preserves_funding_without_refetching_full_history():
+def test_restore_preserves_funding_without_refetching_full_history(store):
     ex = FakeExchange(instruments=[Instrument(SYM, 0.1, 0.001, 0.001, 'live', 0)], price=100.0)
     ex.set_price(SYM, 100.0)
-    store = StateStore.in_memory(); store.create_all()
     gx = _new_executor(ex, store)
     gid = gx.open('fake', SYM, GP)
     ex.set_price(SYM, 100.6)

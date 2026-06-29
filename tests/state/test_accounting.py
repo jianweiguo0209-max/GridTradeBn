@@ -3,24 +3,21 @@ import pytest
 from gridtrade.state.models import Accounting, ConcurrencyError
 
 
-def _repo():
-    from gridtrade.state.store import StateStore
+def _repo(store):
     from gridtrade.state.accounting import AccountingRepository
-    s = StateStore.in_memory()
-    s.create_all()
-    return AccountingRepository(s)
+    return AccountingRepository(store)
 
 
-def test_init_creates_zero_row():
-    repo = _repo()
+def test_init_creates_zero_row(store):
+    repo = _repo(store)
     a = repo.init('g1')
     assert a.grid_id == 'g1' and a.realized_pnl == 0.0 and a.version == 1
     # 幂等：再次 init 返回现有
     assert repo.init('g1').version == 1
 
 
-def test_save_optimistic_lock():
-    repo = _repo()
+def test_save_optimistic_lock(store):
+    repo = _repo(store)
     a = repo.init('g1')
     a.realized_pnl = 12.5
     a.net_position = 3.0
@@ -32,8 +29,8 @@ def test_save_optimistic_lock():
         repo.save(stale)
 
 
-def test_bump_peak_only_increases():
-    repo = _repo()
+def test_bump_peak_only_increases(store):
+    repo = _repo(store)
     repo.init('g1')
     a1 = repo.bump_peak('g1', 0.02)
     assert a1.pnl_ratio_max == 0.02

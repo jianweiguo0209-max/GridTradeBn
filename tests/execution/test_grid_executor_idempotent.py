@@ -1,22 +1,20 @@
 from gridtrade.exchanges.fake import FakeExchange
 from gridtrade.exchanges.base import Instrument
-from gridtrade.state.store import StateStore
 
 SYM = 'BTC/USDT:USDT'
 GP = {'low_price': 98.0, 'high_price': 102.0, 'grid_count': 8,
       'stop_low_price': 97.0, 'stop_high_price': 103.0}
 
 
-def _setup(price=100.0):
+def _setup(store, price=100.0):
     ex = FakeExchange(instruments=[Instrument(SYM, 0.1, 0.001, 0.001, 'live', 0)], price=price)
     ex.set_price(SYM, price)
-    store = StateStore.in_memory(); store.create_all()
     from gridtrade.execution.grid_executor import GridExecutor
     return ex, store, GridExecutor(ex, store, cap=1000.0, leverage=5.0)
 
 
-def test_fill_recorded_in_grid_fills():
-    ex, store, gx = _setup()
+def test_fill_recorded_in_grid_fills(store):
+    ex, store, gx = _setup(store)
     gid = gx.open('fake', SYM, GP)
     ex.set_price(SYM, 100.6)
     gx.sync(gid, SYM)
@@ -24,9 +22,9 @@ def test_fill_recorded_in_grid_fills():
     assert len(fills) == 1 and fills[0].side == 'sell'
 
 
-def test_resync_same_trade_not_double_counted():
+def test_resync_same_trade_not_double_counted(store):
     # 即使游标被人为重置（模拟同毫秒/重复返回），trade_id 去重保证不重复摄入/补单
-    ex, store, gx = _setup()
+    ex, store, gx = _setup(store)
     gid = gx.open('fake', SYM, GP)
     ex.set_price(SYM, 100.6)
     r1 = gx.sync(gid, SYM)
@@ -43,8 +41,8 @@ def test_resync_same_trade_not_double_counted():
     assert len(gx.fills.list_by_grid(gid)) == 1       # 仍只一条 fill
 
 
-def test_snapshot_consistent_after_resync():
-    ex, store, gx = _setup()
+def test_snapshot_consistent_after_resync(store):
+    ex, store, gx = _setup(store)
     gid = gx.open('fake', SYM, GP)
     ex.set_price(SYM, 100.6)
     gx.sync(gid, SYM)

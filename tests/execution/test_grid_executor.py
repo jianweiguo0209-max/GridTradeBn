@@ -1,6 +1,5 @@
 from gridtrade.exchanges.fake import FakeExchange
 from gridtrade.exchanges.base import Instrument
-from gridtrade.state.store import StateStore
 from gridtrade.state.models import ACTIVE
 
 
@@ -9,17 +8,16 @@ GP = {'low_price': 98.0, 'high_price': 102.0, 'grid_count': 8,
       'stop_low_price': 97.0, 'stop_high_price': 103.0}
 
 
-def _setup(price=100.0):
+def _setup(store, price=100.0):
     ex = FakeExchange(instruments=[Instrument(SYM, 0.1, 0.001, 0.001, 'live', 0)], price=price)
     ex.set_price(SYM, price)
-    store = StateStore.in_memory(); store.create_all()
     from gridtrade.execution.grid_executor import GridExecutor
     ex_ = GridExecutor(ex, store, cap=1000.0, leverage=5.0)
     return ex, store, ex_
 
 
-def test_open_places_grid_and_neutral_inventory():
-    ex, store, gx = _setup(price=100.0)
+def test_open_places_grid_and_neutral_inventory(store):
+    ex, store, gx = _setup(store, price=100.0)
     gid = gx.open(ex_exchange_name(), SYM, GP, offset=0, tag='t0')
     # 网格记录 ACTIVE
     from gridtrade.state.grids import GridRepository
@@ -37,8 +35,8 @@ def test_open_places_grid_and_neutral_inventory():
     assert len(sells) == 4 and len(buys) == 5
 
 
-def test_open_persists_orders_with_client_oid():
-    ex, store, gx = _setup()
+def test_open_persists_orders_with_client_oid(store):
+    ex, store, gx = _setup(store)
     gid = gx.open(ex_exchange_name(), SYM, GP)
     from gridtrade.state.orders import OrderRepository
     rows = OrderRepository(store).list_by_grid(gid)
@@ -47,9 +45,9 @@ def test_open_persists_orders_with_client_oid():
     assert all(r.status == 'open' for r in rows)
 
 
-def test_open_undercapitalized_raises():
+def test_open_undercapitalized_raises(store):
     import pytest
-    ex, store, _ = _setup()
+    ex, store, _ = _setup(store)
     from gridtrade.execution.grid_executor import GridExecutor
     # min_amount 极大 → 每格量被向下取整到 0 → grid_order_info 返回 None → 建网失败
     gx = GridExecutor(ex, store, cap=1000.0, leverage=5.0, min_amount=1e9)
@@ -57,8 +55,8 @@ def test_open_undercapitalized_raises():
         gx.open(ex_exchange_name(), SYM, GP)
 
 
-def test_sync_records_fill_and_replenishes():
-    ex, store, gx = _setup(price=100.0)
+def test_sync_records_fill_and_replenishes(store):
+    ex, store, gx = _setup(store, price=100.0)
     gid = gx.open(ex_exchange_name(), SYM, GP)
     before_open = len(ex.fetch_open_orders(SYM))
     ex.set_price(SYM, 100.6)   # 触发 line 5 卖单成交（100.4812）
@@ -77,8 +75,8 @@ def test_sync_records_fill_and_replenishes():
     assert abs(gx.live[gid].snapshot(ex.fetch_price(SYM))['net_position'] - ex.fetch_positions(SYM).net_size) < 1e-6
 
 
-def test_sync_funding_payments_accumulate():
-    ex, store, gx = _setup(price=100.0)
+def test_sync_funding_payments_accumulate(store):
+    ex, store, gx = _setup(store, price=100.0)
     gid = gx.open(ex_exchange_name(), SYM, GP)
     ex.seed_funding_payments(SYM, [(10_000, 1.0)])   # 支付 1 USDT
     gx.sync(gid, SYM)
@@ -86,8 +84,8 @@ def test_sync_funding_payments_accumulate():
     assert abs(acc.funding_paid - 1.0) < 1e-9
 
 
-def test_sync_idempotent_no_new_fills():
-    ex, store, gx = _setup(price=100.0)
+def test_sync_idempotent_no_new_fills(store):
+    ex, store, gx = _setup(store, price=100.0)
     gid = gx.open(ex_exchange_name(), SYM, GP)
     ex.set_price(SYM, 100.6)
     gx.sync(gid, SYM)
@@ -95,8 +93,8 @@ def test_sync_idempotent_no_new_fills():
     assert res2['new_fills'] == 0
 
 
-def test_sync_funding_payments_idempotent_across_calls():
-    ex, store, gx = _setup(price=100.0)
+def test_sync_funding_payments_idempotent_across_calls(store):
+    ex, store, gx = _setup(store, price=100.0)
     gid = gx.open(ex_exchange_name(), SYM, GP)
     ex.seed_funding_payments(SYM, [(10_000, 1.0)])   # 支付 1 USDT
     gx.sync(gid, SYM)
@@ -107,9 +105,9 @@ def test_sync_funding_payments_idempotent_across_calls():
     assert abs(second - 1.0) < 1e-9, f"funding double-counted: {second}"
 
 
-def test_close_cancels_orders_flattens_and_records():
+def test_close_cancels_orders_flattens_and_records(store):
     from gridtrade.state.models import CLOSED
-    ex, store, gx = _setup(price=100.0)
+    ex, store, gx = _setup(store, price=100.0)
     gid = gx.open(ex_exchange_name(), SYM, GP)
     out = gx.close(gid, SYM, '固定止损')
     assert out['reason'] == '固定止损'
@@ -126,8 +124,8 @@ def test_close_cancels_orders_flattens_and_records():
     assert len(recs) == 1 and recs[0].exit_reason == '固定止损'
 
 
-def test_close_then_reopen_same_symbol_ok():
-    ex, store, gx = _setup(price=100.0)
+def test_close_then_reopen_same_symbol_ok(store):
+    ex, store, gx = _setup(store, price=100.0)
     gid = gx.open(ex_exchange_name(), SYM, GP)
     gx.close(gid, SYM, '手动停止')
     gid2 = gx.open(ex_exchange_name(), SYM, GP)   # 槽位已释放，可再开

@@ -10,26 +10,24 @@ from gridtrade.exchanges.resilience import RetryPolicy
 from gridtrade.exchanges.resilient_adapter import ResilientAdapter
 from gridtrade.execution.grid_executor import GridExecutor
 from gridtrade.execution.reconciler import Reconciler
-from gridtrade.state.store import StateStore
 
 SYM = 'BTC/USDT:USDT'
 GP = {'low_price': 98.0, 'high_price': 102.0, 'grid_count': 8,
       'stop_low_price': 97.0, 'stop_high_price': 103.0}
 
 
-def build_stack(schedule=None, price=100.0):
+def build_stack(store, schedule=None, price=100.0):
     fake = FakeExchange(instruments=[Instrument(SYM, 0.1, 0.001, 0.001, 'live', 0)], price=price)
     fake.set_price(SYM, price)
     faulty = FaultyAdapter(fake, schedule or {})
     resilient = ResilientAdapter(faulty, policy=RetryPolicy(max_attempts=4),
                                  sleep=lambda _: None, rng=random.Random(0))
-    store = StateStore.in_memory(); store.create_all()
     gx = GridExecutor(resilient, store, cap=1000.0, leverage=5.0)
     return fake, faulty, gx
 
 
-def test_reconcile_converges_despite_transient_fault():
-    fake, faulty, gx = build_stack()
+def test_reconcile_converges_despite_transient_fault(store):
+    fake, faulty, gx = build_stack(store)
     gid = gx.open('fake', SYM, GP)
     rec = Reconciler(gx)
 
