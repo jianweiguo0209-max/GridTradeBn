@@ -8,9 +8,9 @@ from gridtrade.runtime.factory import build_runtime
 from gridtrade.runtime.introspect import adapter_endpoint
 
 
-def build_web_app(config=None):
+def build_web_app(config=None, runtime=None):
     config = config or load_deploy_config()
-    rt = build_runtime(config)
+    rt = runtime if runtime is not None else build_runtime(config)
     secret = config.dashboard_session_secret or secrets.token_hex(32)
     return create_app(rt.store, rt.adapter,
                       username=config.dashboard_user,
@@ -21,10 +21,11 @@ def build_web_app(config=None):
 def main() -> None:   # composition root（不单测）
     import uvicorn
     config = load_deploy_config()
-    app = build_web_app(config)
+    rt = build_runtime(config)
+    app = build_web_app(config, runtime=rt)
     print('[web] exchange=%s testnet=%s endpoint=%s port=%s'
           % (config.exchange, config.testnet,
-             adapter_endpoint(build_runtime(config).adapter),
+             adapter_endpoint(rt.adapter),
              config.dashboard_port), flush=True)
     uvicorn.run(app, host='0.0.0.0', port=config.dashboard_port)
 
