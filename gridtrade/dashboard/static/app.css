@@ -9,3 +9,19 @@ a{color:#6cf}
 .pos{color:#4caf50}.neg{color:#e53935}.zero{color:#999}
 .login{max-width:300px;margin:4rem auto;display:flex;flex-direction:column;gap:.5rem}
 input,button{padding:.5rem;background:#222;color:#ddd;border:1px solid #444}
+
+/* 触控 + 危险按钮 */
+button{min-height:44px;padding:.4rem .8rem;cursor:pointer}
+button.danger{background:#7f1d1d;border-color:#b91c1c;color:#fff}
+.ctl{border:1px solid #333;padding:.6rem;margin:.6rem 0}
+.ctl form{display:inline-block;margin-right:.6rem}
+
+/* 窄屏（手机）：表格可横向滚动，顶栏/导航换行，字大一点 */
+@media (max-width: 640px){
+  body{margin:.5rem;font-size:1rem}
+  table{display:block;overflow-x:auto;white-space:nowrap}
+  .health{flex-direction:column;gap:.3rem;align-items:flex-start}
+  .health nav{margin-left:0;display:flex;flex-wrap:wrap;gap:.6rem}
+  th,td{font-size:.9rem}
+  .login{margin:2rem auto;width:90%}
+}
