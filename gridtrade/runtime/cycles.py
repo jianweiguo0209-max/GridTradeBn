@@ -29,13 +29,21 @@ def restore_all(reconciler) -> List[str]:
 def run_monitor_cycle(reconciler, manager, log=print) -> dict:
     """monitor 机循环体：逐网格隔离——单网格故障降级记录，不阻塞其他网格的对账/止损。
 
-    顺序：① 续平卡死的 CLOSING 网格（幂等自愈）② ACTIVE 网格对账 ③ monitor_all 止损/补单。
+    顺序：① 续平卡死的 CLOSING 网格（幂等自愈）② 惰性 restore 所有 ACTIVE 网格
+    ③ monitor_all（sync 摄入成交→标成交单 closed→补对侧；触发则平仓）④ 仅对「本轮 sync
+    成功且仍 ACTIVE」的网格对账。
+
+    **sync 必须在 reconcile 之前**：否则 reconcile 把刚成交、尚未入账的单当「被丢」重挂、
+    覆盖成交 oid → 该成交永不入账、净仓往一边漂（线上 gt011 实证的核心缺陷）。sync 失败的
+    网格本轮不 reconcile（避免在故障窗口重挂已成交单）。
+
     per-grid 故障收进 degraded 并打日志（隔离防止一坏拖垮全轮，但绝不让故障在日志里隐形）。
     """
     ex = manager.executor
     reconciled = {}
     resumed: List[str] = []
     degraded = {}
+    drift = {}
     for grid in _closing_grids(ex.grids):     # close() 中途失败留下的卡死网格 -> 续平
         try:
             if not ex.is_loaded(grid.id):
@@ -44,21 +52,35 @@ def run_monitor_cycle(reconciler, manager, log=print) -> dict:
             resumed.append(grid.id)
         except Exception as exc:
             degraded[grid.id] = repr(exc)
-    for grid in _active_grids(ex.grids):
+    for grid in _active_grids(ex.grids):      # sync 前先惰性 restore（他进程开的/本进程重启）
         try:
             if not ex.is_loaded(grid.id):
-                reconciler.restore(grid.id)   # 他进程开的或本进程重启 -> 先重建几何/游标/记账
-            reconciled[grid.id] = reconciler.reconcile_open_orders(grid.id, grid.symbol)
+                reconciler.restore(grid.id)
         except Exception as exc:              # 降级：坏网格不掀翻整轮（绝不吞 BaseException）
             degraded[grid.id] = repr(exc)
-    monitored = manager.monitor_all()
+    monitored = manager.monitor_all()         # sync（摄入成交、标 closed、补单、止损）—— 先于 reconcile
+    synced_ok = {r['grid_id'] for r in monitored
+                 if 'error' not in r and not r.get('closed')}
+    for grid in _active_grids(ex.grids):      # 仅对 sync 成功且仍 ACTIVE 的网格对账
+        if grid.id not in synced_ok:
+            continue
+        try:
+            reconciled[grid.id] = reconciler.reconcile_open_orders(grid.id, grid.symbol)
+            d = reconciler.check_position_drift(grid.id, grid.symbol)   # C：净仓对账（只告警）
+            if d is not None and not d['ok']:
+                drift[grid.id] = d
+        except Exception as exc:
+            degraded[grid.id] = repr(exc)
     for gid, err in degraded.items():         # per-grid 故障打日志（否则隐形）
         log('[monitor] grid %s degraded: %s' % (gid, err))
     for r in monitored:
         if 'error' in r:
             log('[monitor] grid %s monitor error: %s' % (r.get('grid_id'), r['error']))
-    return {'reconciled': reconciled, 'resumed': resumed,
-            'degraded': degraded, 'monitored': monitored}
+    for gid, d in drift.items():              # 净仓背离打日志（不自动改仓，留人工/后续处置）
+        log('[monitor] grid %s position drift: model=%s exchange=%s drift=%s tol=%s'
+            % (gid, d['model'], d['exchange'], d['drift'], d['tol']))
+    return {'reconciled': reconciled, 'resumed': resumed, 'degraded': degraded,
+            'drift': drift, 'monitored': monitored}
 
 
 def run_scheduler_cycle(manager, trigger_engine, reconciler, ctx, *,

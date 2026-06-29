@@ -63,3 +63,23 @@ class Reconciler:
                                            exchange_order_id=getattr(order, 'id', None)))
                 replaced += 1
         return {'canceled': canceled, 'replaced': replaced}
+
+    def check_position_drift(self, grid_id, symbol, *, tol_lots=1.5):
+        """净仓对账（防御纵深）：比较模型净仓（grid_accounting.net_position）与交易所真实持仓。
+
+        **只读告警**，不自动改仓（自动纠仓风险高，留人工/后续处置）。容差 = tol_lots × 每格量
+        （正常 sync 时序内的瞬时差应 < 1 格；持续超过 ~1.5 格即真实背离，如漏摄入成交）。
+        无每格量（未 restore）时容差 0。返回 None 表示无法判定（无记账行）。
+        """
+        ex = self.ex
+        acc = ex.accounting.get(grid_id)
+        if acc is None:
+            return None
+        geom = ex._geom.get(grid_id)
+        order_num = float(geom['order_num']) if geom else 0.0
+        model = float(acc.net_position)
+        real = float(ex.adapter.fetch_positions(symbol).net_size)
+        drift = model - real
+        tol = tol_lots * order_num
+        return {'grid_id': grid_id, 'model': model, 'exchange': real,
+                'drift': drift, 'tol': tol, 'ok': abs(drift) <= tol}

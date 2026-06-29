@@ -114,3 +114,28 @@ def test_restore_before_first_sync_excludes_pre_open_funding(store):
     ex.seed_funding_payments(SYM, [(1, 5.0)])   # ts=1：远早于开仓的历史 funding
     gx2.sync(gid, SYM)
     assert gx2.accounting.get(gid).funding_paid == 0.0
+
+
+def test_check_position_drift_flags_divergence_but_does_not_change_position(store):
+    # 净仓对账（防御纵深）：模型净仓与真实持仓偏离超容差 → ok=False 告警；只读、不改仓。
+    from gridtrade.execution.reconciler import Reconciler
+    ex = FakeExchange(instruments=[Instrument(SYM, 0.1, 0.001, 0.001, 'live', 0)], price=100.0)
+    ex.set_price(SYM, 100.0)
+    gx = _new_executor(ex, store)
+    gid = gx.open('fake', SYM, GP)
+    gx.sync(gid, SYM)
+    rec = Reconciler(gx)
+    # 开仓后模型与交易所一致 → 无背离
+    assert rec.check_position_drift(gid, SYM)['ok'] is True
+    # 人为制造背离：模型净仓 +5×每格量（远超容差 1.5×每格量）
+    order_num = gx._geom[gid]['order_num']
+    bump = 5 * order_num
+    acc = gx.accounting.get(gid)
+    real_before = ex.fetch_positions(SYM).net_size
+    acc.net_position = acc.net_position + bump
+    gx.accounting.save(acc)
+    d = rec.check_position_drift(gid, SYM)
+    assert d['ok'] is False
+    assert abs(d['drift'] - bump) < 1e-9
+    assert abs(d['exchange'] - real_before) < 1e-9      # 只读：交易所持仓未被改动
+    assert ex.fetch_positions(SYM).net_size == real_before

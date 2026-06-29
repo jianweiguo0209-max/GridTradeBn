@@ -29,7 +29,7 @@ def _proposal(symbol=BTC, tag='t0'):
                         offset=0, tag=tag, source='test')
 
 
-def test_run_monitor_cycle_reconciles_then_monitors_no_exit(store):
+def test_run_monitor_cycle_syncs_then_reconciles_no_exit(store):
     from gridtrade.runtime.cycles import run_monitor_cycle
     ex, store, gx, mgr = _setup(store, 100.0)
     ids = mgr.open_proposals([_proposal()])
@@ -67,6 +67,37 @@ def test_restore_all_empty_when_no_active(store):
     from gridtrade.runtime.cycles import restore_all
     ex, store, gx, mgr = _setup(store)
     assert restore_all(Reconciler(gx)) == []
+
+
+def test_monitor_cycle_syncs_fill_before_reconcile_no_phantom_replace(store):
+    # 卖单成交后整轮 cycle：必须先 sync 摄入成交（把该单标 closed），再 reconcile。
+    # 否则 reconcile 先跑、把已成交卖单当「被丢」重挂、覆盖成交 oid → 成交永不入账、净仓背离。
+    from gridtrade.runtime.cycles import run_monitor_cycle
+    ex, store, gx, mgr = _setup(store, 100.0)
+    gid = mgr.open_proposals([_proposal()])[0]
+    ex.set_price(BTC, 100.6)        # 触发一个卖单成交（line5 卖 @100.4812）
+    out = run_monitor_cycle(Reconciler(gx), mgr)
+    # 成交已摄入：模型净仓须与交易所真实持仓一致
+    model = gx.accounting.get(gid).net_position
+    real = ex.fetch_positions(BTC).net_size
+    assert abs(model - real) < 1e-9, f"position drift: model={model} real={real}"
+    # 已成交的卖单不得被 reconcile 当「被丢」重挂
+    assert out['reconciled'][gid]['replaced'] == 0
+
+
+def test_monitor_cycle_reports_position_drift(store):
+    # C：净仓对账接线——模型净仓与交易所真实持仓背离超容差时，cycle 收进 out['drift'] 并打日志。
+    from gridtrade.runtime.cycles import run_monitor_cycle
+    ex, store, gx, mgr = _setup(store, 100.0)
+    gid = mgr.open_proposals([_proposal()])[0]
+    run_monitor_cycle(Reconciler(gx), mgr)        # 第一轮：模型与交易所一致
+    order_num = gx._geom[gid]['order_num']
+    # 外部成交（非网格 fill）动了交易所持仓 → sync 不会摄入、模型不变 → 背离活过 sync
+    ex.create_market_order(BTC, 'sell', 3 * order_num, client_oid='external:0')
+    logs = []
+    out = run_monitor_cycle(Reconciler(gx), mgr, log=logs.append)
+    assert gid in out['drift'] and out['drift'][gid]['ok'] is False
+    assert any('position drift' in m for m in logs)
 
 
 def test_monitor_cycle_lazy_restores_grid_opened_by_another_process(store):
