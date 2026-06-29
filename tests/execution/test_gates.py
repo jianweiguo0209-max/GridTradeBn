@@ -157,3 +157,75 @@ def test_risk_budget_at_exact_limit_allows():
     gate = RiskBudgetGate(repo, total_budget=100.0, default_cap=50.0)
     # 80 + 20 = 100 == budget -> 放行（<=）
     assert gate.check(_proposal(cap=20.0)).passed is True
+
+
+class _BalAdapter:
+    """最小余额桩：可配可用余额；raises=True 模拟 fetch_balance 抛错。"""
+    def __init__(self, cash, raises=False):
+        self._cash = cash; self._raises = raises; self.calls = 0
+    def fetch_balance(self):
+        self.calls += 1
+        if self._raises:
+            raise RuntimeError('balance down')
+        from gridtrade.exchanges.base import Balance
+        return Balance(equity=self._cash, cash=self._cash)
+
+
+def test_margin_gate_allows_when_cash_ge_cap():
+    from gridtrade.execution.gates import MarginGate
+    gate = MarginGate(_BalAdapter(100.0), default_cap=100.0)
+    assert gate.check(_proposal()).passed is True       # 惰性快照, 100>=100
+
+
+def test_margin_gate_blocks_when_cash_below_required():
+    from gridtrade.execution.gates import MarginGate
+    gate = MarginGate(_BalAdapter(50.0), default_cap=100.0)
+    r = gate.check(_proposal())
+    assert r.passed is False and r.gate == 'MarginGate'
+
+
+def test_margin_gate_uses_explicit_proposal_cap():
+    from gridtrade.execution.gates import MarginGate
+    gate = MarginGate(_BalAdapter(30.0), default_cap=100.0)
+    assert gate.check(_proposal(cap=20.0)).passed is True   # 用显式 20 而非 default 100
+
+
+def test_margin_gate_cumulative_deduction():
+    from gridtrade.execution.gates import MarginGate
+    gate = MarginGate(_BalAdapter(250.0), default_cap=100.0)
+    gate.begin_batch()
+    assert gate.check(_proposal()).passed is True       # reserve 100, 余 150
+    assert gate.check(_proposal()).passed is True       # reserve 200, 余 50
+    r = gate.check(_proposal())                          # 需 100 > 50 -> 拒
+    assert r.passed is False and r.gate == 'MarginGate'
+
+
+def test_margin_gate_begin_batch_resets_reservation():
+    from gridtrade.execution.gates import MarginGate
+    gate = MarginGate(_BalAdapter(100.0), default_cap=100.0)
+    gate.begin_batch()
+    assert gate.check(_proposal()).passed is True        # reserve 100
+    assert gate.check(_proposal()).passed is False       # 余 0 < 100
+    gate.begin_batch()                                   # 新批: 预留清零 + 重拉余额
+    assert gate.check(_proposal()).passed is True        # 又 100>=100
+
+
+def test_margin_gate_fail_closed_on_balance_error():
+    from gridtrade.execution.gates import MarginGate
+    gate = MarginGate(_BalAdapter(1000.0, raises=True), default_cap=100.0)
+    gate.begin_batch()
+    r = gate.check(_proposal())
+    assert r.passed is False and r.reason == 'balance unavailable'
+
+
+def test_margin_gate_in_chain_filter_cumulative_and_per_batch_snapshot():
+    from gridtrade.execution.gates import MarginGate
+    adapter = _BalAdapter(250.0)
+    chain = GateChain([MarginGate(adapter, default_cap=100.0)])
+    props = [_proposal('BTC/USDT:USDT'), _proposal('ETH/USDT:USDT'),
+             _proposal('SOL/USDT:USDT')]
+    kept = chain.filter(props)
+    assert [p.symbol for p in kept] == ['BTC/USDT:USDT', 'ETH/USDT:USDT']  # 第三超额被拒
+    kept2 = chain.filter(props)                           # 新批 -> begin_batch 重置
+    assert len(kept2) == 2
+    assert adapter.calls == 2                             # 每批仅快照一次余额
