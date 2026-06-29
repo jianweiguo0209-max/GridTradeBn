@@ -12,7 +12,6 @@ from gridtrade.execution.reconciler import Reconciler
 from gridtrade.execution.manager import GridManager
 from gridtrade.execution.gates import GateChain
 from gridtrade.runtime.cycles import run_monitor_cycle
-from gridtrade.state.store import StateStore
 
 SYM_A = 'BTC/USDT:USDT'
 SYM_B = 'ETH/USDT:USDT'
@@ -21,7 +20,7 @@ GP = {'low_price': 98.0, 'high_price': 102.0, 'grid_count': 8,
 STOP_CFG = {'stop_loss': 0.034, 'trailing_k': 0.3, 'trailing_floor': 0.00618}
 
 
-def build():
+def build(store):
     insts = [Instrument(SYM_A, 0.1, 0.001, 0.001, 'live', 0),
              Instrument(SYM_B, 0.1, 0.001, 0.001, 'live', 0)]
     fake = FakeExchange(instruments=insts, price=100.0)
@@ -29,15 +28,14 @@ def build():
     faulty = FaultyAdapter(fake, {})
     resilient = ResilientAdapter(faulty, policy=RetryPolicy(max_attempts=2),
                                  sleep=lambda _: None, rng=random.Random(0))
-    store = StateStore.in_memory(); store.create_all()
     gx = GridExecutor(resilient, store, cap=1000.0, leverage=5.0)
     mgr = GridManager(gx, GateChain([]), stop_cfg=STOP_CFG)
     return fake, faulty, gx, mgr
 
 
-def test_bad_grid_reconcile_does_not_block_healthy_grid():
+def test_bad_grid_reconcile_does_not_block_healthy_grid(store):
     # 一个网格 reconcile 持续故障 -> 降级记录，不阻塞另一网格的对账
-    fake, faulty, gx, mgr = build()
+    fake, faulty, gx, mgr = build(store)
     gid_a = gx.open('fake', SYM_A, GP)
     gid_b = gx.open('fake', SYM_B, GP)
     rec = Reconciler(gx)
@@ -49,9 +47,9 @@ def test_bad_grid_reconcile_does_not_block_healthy_grid():
     assert set(out['degraded']) | set(out['reconciled']) == {gid_a, gid_b}
 
 
-def test_bad_grid_monitor_does_not_block_healthy_grid():
+def test_bad_grid_monitor_does_not_block_healthy_grid(store):
     # monitor_all 段同样隔离：一个网格 sync 故障 -> 记错降级，另一网格仍被 monitor
-    fake, faulty, gx, mgr = build()
+    fake, faulty, gx, mgr = build(store)
     gx.open('fake', SYM_A, GP)
     gx.open('fake', SYM_B, GP)
     rec = Reconciler(gx)
