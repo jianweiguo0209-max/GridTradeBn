@@ -153,7 +153,7 @@ gridtrade/
 
 ## 9. 仍延后（需产品/口径决策，动手前先问）
 
-- **ThresholdTrigger / ExternalSignalTrigger**（价格/指标阈值、外部信号触发器）——需口径。
+- **ThresholdTrigger / ExternalSignalTrigger**（价格/指标阈值、外部信号触发器）——**三期**（需产品定义）；**扩展点已留**：子类化 `TriggerCondition` + 在 `TriggerEngine` 注册（见 `gridtrade/execution/triggers.py` 末尾的「三期预留扩展点」注释）。
 - ✅ ~~MarginGate（保证金门）~~ —— 已实现（准入门链 4/4：cash≥cap 保守口径 + 同轮累计扣减 + fail-closed，置链尾）。
 - ✅ ~~真并发 TOCTOU 测试~~ —— 已补（`tests/state/test_transition_concurrency.py` 真线程+Barrier 在本地 PG 验证版本守卫只放一个赢家；CI 仍 SQLite，CI PG job 待多监控机阶段）。
 - ✅ ~~OrderFilled 事件~~ —— 已实现（GridManager.monitor_all 逐笔成交发布，带 fee）。

@@ -102,3 +102,12 @@ class ScheduledSelectionTrigger(TriggerCondition):
                 exchange=ctx.exchange, symbol=row['symbol'], grid_params=params,
                 offset=offset, tag=tag, source=self.source))
         return proposals
+
+
+# ── 三期预留扩展点 ─────────────────────────────────────────────────────────
+# ThresholdTrigger（价格/指标阈值触发）与 ExternalSignalTrigger（外部信号/手动触发）
+# 留到三期实现（需产品定义：阈值类别、外部信号格式）。扩展方式已就位、无需改本引擎：
+#   1) 子类化 TriggerCondition，实现 propose(ctx) -> List[GridProposal]；
+#   2) 在 TriggerEngine([...]) 注册（factory 处）即并入「触发→准入→执行」流水线；
+#   3) 如需更多输入（现价/指标/外部 payload），给 TriggerContext 追加可选字段即可。
+# 设计依据见 design.md §6① 触发引擎（Strategy + 可插拔 TriggerCondition）。
