@@ -1,7 +1,8 @@
 """控制指令执行分发：CLOSE_GRID / OPEN_GRID / PANIC_CLOSE_ALL。只在 monitor 调用。"""
 import json
+from typing import Optional
 
-from gridtrade.state.models import ACTIVE_STATES
+from gridtrade.state.models import ACTIVE_STATES, CMD_DONE, CMD_FAILED
 
 
 def execute_command(cmd, manager, flags, *, exchange: str) -> str:
@@ -31,3 +32,20 @@ def execute_command(cmd, manager, flags, *, exchange: str) -> str:
             msg += ', %d failed: %s' % (len(failed), '; '.join(failed))
         return msg
     raise ValueError('unknown command type: %s' % cmd.type)
+
+
+def consume_one(commands, audit, manager, flags, *, exchange: str) -> Optional[str]:
+    """认领→执行→DONE/FAILED→审计"""
+    cmd = commands.claim_next()
+    if cmd is None:
+        return None
+    try:
+        result = execute_command(cmd, manager, flags, exchange=exchange)
+        commands.finish(cmd.id, CMD_DONE, result)
+        audit.add(cmd.created_by or 'system', 'CMD_RESULT', cmd.id,
+                  detail=result, outcome='ok')
+    except Exception as exc:
+        commands.finish(cmd.id, CMD_FAILED, repr(exc))
+        audit.add(cmd.created_by or 'system', 'CMD_RESULT', cmd.id,
+                  detail=repr(exc), outcome='fail')
+    return cmd.id
