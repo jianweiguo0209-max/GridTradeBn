@@ -33,14 +33,13 @@ def test_close_clean_flattens_position_baseline():
     assert abs(fake.fetch_positions(SYM).net_size) < 1e-9   # 无故障：平干净
 
 
-def test_close_partial_fill_leaves_residual_position():
-    # 特征化当前行为：reduce 市价单只吃一半 -> 残仓 -> close() 仍转 CLOSED（不补平）
+def test_close_partial_fill_is_flattened_by_bounded_retry():
+    # close() reduce 第一次只成交一半 -> close 必须校残仓并补一笔 reduce 直到平掉
     fake, faulty, gx = build_stack()
     gid = gx.open('fake', SYM, GP)
     net_before = fake.fetch_positions(SYM).net_size
     assert net_before > 0
-    faulty._schedule['create_market_order'] = [Partial(0.5)]   # 平仓 reduce 只成交一半
+    faulty._schedule['create_market_order'] = [Partial(0.5)]   # 仅首笔 reduce 吃一半
     gx.close(gid, SYM, '测试平仓')
-    residual = fake.fetch_positions(SYM).net_size
-    assert residual > 1e-9                                      # 残仓存在（gap）
-    assert gx.grids.get(gid).status == 'CLOSED'                 # 当前实现仍判定已平
+    assert abs(fake.fetch_positions(SYM).net_size) < 1e-9       # 残仓被补平
+    assert gx.grids.get(gid).status == 'CLOSED'
