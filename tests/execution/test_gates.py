@@ -59,101 +59,97 @@ def test_empty_chain_passes():
     assert GateChain([]).evaluate(_proposal()).passed is True
 
 
-def _grid_repo_with(*active_symbols, exchange='okx'):
-    from gridtrade.state.store import StateStore
+def _grid_repo_with(store, *active_symbols, exchange='okx'):
     from gridtrade.state.grids import GridRepository
     from gridtrade.state.models import Grid, ACTIVE
-    s = StateStore.in_memory(); s.create_all()
-    repo = GridRepository(s)
+    repo = GridRepository(store)
     for sym in active_symbols:
         repo.create(Grid(id='', exchange=exchange, symbol=sym, status=ACTIVE))
     return repo
 
 
-def test_symbol_lock_blocks_when_active_grid_exists():
+def test_symbol_lock_blocks_when_active_grid_exists(store):
     from gridtrade.execution.gates import SymbolLockGate
-    repo = _grid_repo_with('BTC/USDT:USDT')
+    repo = _grid_repo_with(store, 'BTC/USDT:USDT')
     gate = SymbolLockGate(repo)
     r = gate.check(_proposal('BTC/USDT:USDT'))
     assert r.passed is False and r.gate == 'SymbolLockGate'
 
 
-def test_symbol_lock_allows_free_symbol():
+def test_symbol_lock_allows_free_symbol(store):
     from gridtrade.execution.gates import SymbolLockGate
-    repo = _grid_repo_with('BTC/USDT:USDT')
+    repo = _grid_repo_with(store, 'BTC/USDT:USDT')
     gate = SymbolLockGate(repo)
     assert gate.check(_proposal('ETH/USDT:USDT')).passed is True
 
 
-def test_symbol_lock_is_per_exchange():
+def test_symbol_lock_is_per_exchange(store):
     from gridtrade.execution.gates import SymbolLockGate
-    repo = _grid_repo_with('BTC/USDT:USDT', exchange='okx')
+    repo = _grid_repo_with(store, 'BTC/USDT:USDT', exchange='okx')
     gate = SymbolLockGate(repo)
     # 同币种但不同交易所 -> 放行
     assert gate.check(_proposal('BTC/USDT:USDT', exchange='hyperliquid')).passed is True
 
 
-def test_max_concurrent_blocks_at_limit():
+def test_max_concurrent_blocks_at_limit(store):
     from gridtrade.execution.gates import MaxConcurrentGate
-    repo = _grid_repo_with('BTC/USDT:USDT', 'ETH/USDT:USDT')
+    repo = _grid_repo_with(store, 'BTC/USDT:USDT', 'ETH/USDT:USDT')
     gate = MaxConcurrentGate(repo, max_concurrent=2)
     r = gate.check(_proposal('SOL/USDT:USDT'))
     assert r.passed is False and r.gate == 'MaxConcurrentGate'
 
 
-def test_max_concurrent_allows_below_limit():
+def test_max_concurrent_allows_below_limit(store):
     from gridtrade.execution.gates import MaxConcurrentGate
-    repo = _grid_repo_with('BTC/USDT:USDT')
+    repo = _grid_repo_with(store, 'BTC/USDT:USDT')
     gate = MaxConcurrentGate(repo, max_concurrent=2)
     assert gate.check(_proposal('SOL/USDT:USDT')).passed is True
 
 
-def test_max_concurrent_zero_active_allows():
+def test_max_concurrent_zero_active_allows(store):
     from gridtrade.execution.gates import MaxConcurrentGate
-    repo = _grid_repo_with()
+    repo = _grid_repo_with(store)
     gate = MaxConcurrentGate(repo, max_concurrent=1)
     assert gate.check(_proposal('BTC/USDT:USDT')).passed is True
 
 
-def _grid_repo_with_caps(*caps, exchange='okx'):
-    from gridtrade.state.store import StateStore
+def _grid_repo_with_caps(store, *caps, exchange='okx'):
     from gridtrade.state.grids import GridRepository
     from gridtrade.state.models import Grid, ACTIVE
-    s = StateStore.in_memory(); s.create_all()
-    repo = GridRepository(s)
+    repo = GridRepository(store)
     for i, cap in enumerate(caps):
         repo.create(Grid(id='', exchange=exchange, symbol='S%d/USDT:USDT' % i,
                          status=ACTIVE, cap=cap))
     return repo
 
 
-def test_risk_budget_blocks_when_cap_sum_exceeds():
+def test_risk_budget_blocks_when_cap_sum_exceeds(store):
     from gridtrade.execution.gates import RiskBudgetGate
-    repo = _grid_repo_with_caps(60.0, 30.0)  # used = 90
+    repo = _grid_repo_with_caps(store, 60.0, 30.0)  # used = 90
     gate = RiskBudgetGate(repo, total_budget=100.0, default_cap=50.0)
     # 显式 cap=20 -> 90 + 20 = 110 > 100 -> 拒绝
     r = gate.check(_proposal(cap=20.0))
     assert r.passed is False and r.gate == 'RiskBudgetGate'
 
 
-def test_risk_budget_allows_within_budget():
+def test_risk_budget_allows_within_budget(store):
     from gridtrade.execution.gates import RiskBudgetGate
-    repo = _grid_repo_with_caps(60.0)
+    repo = _grid_repo_with_caps(store, 60.0)
     gate = RiskBudgetGate(repo, total_budget=100.0, default_cap=50.0)
     assert gate.check(_proposal(cap=20.0)).passed is True  # 60 + 20 = 80 <= 100
 
 
-def test_risk_budget_uses_default_cap_when_proposal_cap_none():
+def test_risk_budget_uses_default_cap_when_proposal_cap_none(store):
     from gridtrade.execution.gates import RiskBudgetGate
-    repo = _grid_repo_with_caps(60.0)
+    repo = _grid_repo_with_caps(store, 60.0)
     gate = RiskBudgetGate(repo, total_budget=100.0, default_cap=50.0)
     # proposal.cap None -> 用 default 50 -> 60 + 50 = 110 > 100 -> 拒绝
     assert gate.check(_proposal()).passed is False
 
 
-def test_risk_budget_at_exact_limit_allows():
+def test_risk_budget_at_exact_limit_allows(store):
     from gridtrade.execution.gates import RiskBudgetGate
-    repo = _grid_repo_with_caps(80.0)
+    repo = _grid_repo_with_caps(store, 80.0)
     gate = RiskBudgetGate(repo, total_budget=100.0, default_cap=50.0)
     # 80 + 20 = 100 == budget -> 放行（<=）
     assert gate.check(_proposal(cap=20.0)).passed is True

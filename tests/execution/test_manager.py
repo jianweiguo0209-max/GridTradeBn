@@ -1,6 +1,5 @@
 from gridtrade.exchanges.fake import FakeExchange
 from gridtrade.exchanges.base import Instrument
-from gridtrade.state.store import StateStore
 from gridtrade.execution.grid_executor import GridExecutor
 from gridtrade.execution.gates import GridProposal, GateChain, SymbolLockGate
 from gridtrade.execution.events import EventBus, GridOpened, GridClosed
@@ -11,11 +10,10 @@ GP = {'low_price': 98.0, 'high_price': 102.0, 'grid_count': 8,
 STOP_CFG = {'stop_loss': 0.034, 'trailing_k': 0.3, 'trailing_floor': 0.00618}
 
 
-def _setup(price=100.0):
+def _setup(store, price=100.0):
     ex = FakeExchange(instruments=[Instrument(SYM, 0.1, 0.001, 0.001, 'live', 0)],
                       price=price)
     ex.set_price(SYM, price)
-    store = StateStore.in_memory(); store.create_all()
     gx = GridExecutor(ex, store, cap=1000.0, leverage=5.0)
     return ex, store, gx
 
@@ -31,8 +29,8 @@ def _manager(gx, store, bus=None):
     return GridManager(gx, chain, stop_cfg=STOP_CFG, event_bus=bus)
 
 
-def test_open_proposals_opens_passing_and_returns_ids():
-    ex, store, gx = _setup()
+def test_open_proposals_opens_passing_and_returns_ids(store):
+    ex, store, gx = _setup(store)
     bus = EventBus(); opened_events = []
     bus.subscribe(lambda e: opened_events.append(e) if isinstance(e, GridOpened) else None)
     mgr = _manager(gx, store, bus)
@@ -45,22 +43,22 @@ def test_open_proposals_opens_passing_and_returns_ids():
     assert opened_events[0].tag == 't0'
 
 
-def test_open_proposals_blocked_by_gate_not_opened():
-    ex, store, gx = _setup()
+def test_open_proposals_blocked_by_gate_not_opened(store):
+    ex, store, gx = _setup(store)
     mgr = _manager(gx, store)
     mgr.open_proposals([_proposal()])           # 先开一个 BTC 活跃网格
     ids2 = mgr.open_proposals([_proposal()])     # 同币种再提议 -> SymbolLockGate 拦
     assert ids2 == []
 
 
-def test_open_proposals_empty_list_noop():
-    ex, store, gx = _setup()
+def test_open_proposals_empty_list_noop(store):
+    ex, store, gx = _setup(store)
     mgr = _manager(gx, store)
     assert mgr.open_proposals([]) == []
 
 
-def test_monitor_all_no_exit_returns_open_results():
-    ex, store, gx = _setup(100.0)
+def test_monitor_all_no_exit_returns_open_results(store):
+    ex, store, gx = _setup(store, 100.0)
     mgr = _manager(gx, store)
     mgr.open_proposals([_proposal()])
     res = mgr.monitor_all()
@@ -68,8 +66,8 @@ def test_monitor_all_no_exit_returns_open_results():
     assert res[0]['closed'] is False and res[0]['reason'] is None
 
 
-def test_monitor_all_triggers_stop_and_publishes_grid_closed():
-    ex, store, gx = _setup(100.0)
+def test_monitor_all_triggers_stop_and_publishes_grid_closed(store):
+    ex, store, gx = _setup(store, 100.0)
     bus = EventBus(); closed_events = []
     bus.subscribe(lambda e: closed_events.append(e) if isinstance(e, GridClosed) else None)
     mgr = _manager(gx, store, bus)
@@ -83,14 +81,14 @@ def test_monitor_all_triggers_stop_and_publishes_grid_closed():
     assert closed_events[0].grid_id == ids[0] and closed_events[0].reason == '固定止损'
 
 
-def test_monitor_all_no_active_grids_returns_empty():
-    ex, store, gx = _setup()
+def test_monitor_all_no_active_grids_returns_empty(store):
+    ex, store, gx = _setup(store)
     mgr = _manager(gx, store)
     assert mgr.monitor_all() == []
 
 
-def test_close_by_tag_closes_matching_active_grids_and_publishes():
-    ex, store, gx = _setup(100.0)
+def test_close_by_tag_closes_matching_active_grids_and_publishes(store):
+    ex, store, gx = _setup(store, 100.0)
     bus = EventBus(); closed_events = []
     bus.subscribe(lambda e: closed_events.append(e) if isinstance(e, GridClosed) else None)
     mgr = _manager(gx, store, bus)
@@ -102,8 +100,8 @@ def test_close_by_tag_closes_matching_active_grids_and_publishes():
     assert closed_events[0].grid_id == ids[0] and closed_events[0].reason == '周期再平衡'
 
 
-def test_close_by_tag_ignores_non_matching_tag():
-    ex, store, gx = _setup(100.0)
+def test_close_by_tag_ignores_non_matching_tag(store):
+    ex, store, gx = _setup(store, 100.0)
     mgr = _manager(gx, store)
     ids = mgr.open_proposals([_proposal()])          # tag='t0'
     out = mgr.close_by_tag('t999', '周期再平衡')      # 无匹配
@@ -111,9 +109,9 @@ def test_close_by_tag_ignores_non_matching_tag():
     assert gx.grids.get(ids[0]).status == 'ACTIVE'   # 未动
 
 
-def test_monitor_all_publishes_orderfilled_per_new_fill():
+def test_monitor_all_publishes_orderfilled_per_new_fill(store):
     from gridtrade.execution.events import EventBus, OrderFilled
-    ex, store, gx = _setup(100.0)
+    ex, store, gx = _setup(store, 100.0)
     bus = EventBus(); filled = []
     bus.subscribe(lambda e: filled.append(e) if isinstance(e, OrderFilled) else None)
     mgr = _manager(gx, store, bus)
