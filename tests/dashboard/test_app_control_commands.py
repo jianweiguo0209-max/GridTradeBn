@@ -55,3 +55,31 @@ def test_open_post_enqueues_open_grid_with_overridden_cap(store):
     p = json.loads(cmd.payload)
     assert p['symbol'] == 'ETH/USDT:USDT' and p['cap'] == 250.0
     assert p['params']['grid_count'] == 8
+
+
+def test_command_routes_require_login(store):
+    app = create_app(store, _Adapter(), username='admin',
+                     password_hash=hash_password('pw', iterations=1000), session_secret='sek',
+                     flags=ControlFlagRepository(store), commands=CommandRepository(store),
+                     audit=AuditRepository(store))
+    anon = TestClient(app, base_url='https://testserver')
+
+    # POST /control/close
+    r = anon.post('/control/close',
+                   data={'grid_id': 'g1', 'symbol': 'BTC/USDT:USDT', 'reason': 'manual'},
+                   follow_redirects=False)
+    assert r.status_code == 302
+    assert r.headers['location'].endswith('/login')
+
+    # GET /open
+    r = anon.get('/open?symbol=BTC/USDT:USDT', follow_redirects=False)
+    assert r.status_code == 302
+    assert r.headers['location'].endswith('/login')
+
+    # POST /open
+    r = anon.post('/open',
+                   data={'symbol': 'X', 'low_price': '1', 'high_price': '2', 'grid_count': '8',
+                         'stop_low_price': '0.8', 'stop_high_price': '2.2'},
+                   follow_redirects=False)
+    assert r.status_code == 302
+    assert r.headers['location'].endswith('/login')

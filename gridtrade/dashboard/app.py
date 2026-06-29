@@ -18,10 +18,6 @@ _DIR = Path(__file__).parent
 _COOKIE = 'gt_session'
 
 
-def _json(s: str) -> str:
-    return json.dumps(s)
-
-
 def create_app(store, adapter, *, username: str, password_hash: str,
                session_secret: str, throttle: Optional[LoginThrottle] = None,
                stale_threshold_sec: float = 30.0,
@@ -136,8 +132,7 @@ def create_app(store, adapter, *, username: str, password_hash: str,
         u = _user(request)
         if not u:
             return RedirectResponse('/login', status_code=302)
-        payload = '{"grid_id": %s, "symbol": %s, "reason": %s}' % (
-            _json(grid_id), _json(symbol), _json(reason))
+        payload = json.dumps({'grid_id': grid_id, 'symbol': symbol, 'reason': reason})
         cmd = commands.enqueue('CLOSE_GRID', payload, created_by=u)
         audit.add(u, 'CMD_SUBMIT', cmd.id, detail='{"type": "CLOSE_GRID"}')
         return RedirectResponse('/controls', status_code=302)
