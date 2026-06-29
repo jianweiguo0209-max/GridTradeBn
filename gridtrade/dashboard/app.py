@@ -18,10 +18,15 @@ _DIR = Path(__file__).parent
 _COOKIE = 'gt_session'
 
 
+def _json(s: str) -> str:
+    return json.dumps(s)
+
+
 def create_app(store, adapter, *, username: str, password_hash: str,
                session_secret: str, throttle: Optional[LoginThrottle] = None,
                stale_threshold_sec: float = 30.0,
-               flags=None, commands=None, audit=None) -> FastAPI:
+               flags=None, commands=None, audit=None,
+               compute_fn=None) -> FastAPI:
     from gridtrade.state.control import (ControlFlagRepository, CommandRepository,
                                          AuditRepository)
     flags = flags or ControlFlagRepository(store)
@@ -123,6 +128,45 @@ def create_app(store, adapter, *, username: str, password_hash: str,
         flags.set('trading_halted', True, actor=u)
         cmd = commands.enqueue('PANIC_CLOSE_ALL', '{"reason": "panic"}', created_by=u)
         audit.add(u, 'CMD_SUBMIT', cmd.id, detail='{"type": "PANIC_CLOSE_ALL"}')
+        return RedirectResponse('/controls', status_code=302)
+
+    @app.post('/control/close')
+    def control_close(request: Request, grid_id: str = Form(...),
+                      symbol: str = Form(...), reason: str = Form('manual')):
+        u = _user(request)
+        if not u:
+            return RedirectResponse('/login', status_code=302)
+        payload = '{"grid_id": %s, "symbol": %s, "reason": %s}' % (
+            _json(grid_id), _json(symbol), _json(reason))
+        cmd = commands.enqueue('CLOSE_GRID', payload, created_by=u)
+        audit.add(u, 'CMD_SUBMIT', cmd.id, detail='{"type": "CLOSE_GRID"}')
+        return RedirectResponse('/controls', status_code=302)
+
+    @app.get('/open', response_class=HTMLResponse)
+    def open_form(request: Request, symbol: str = ''):
+        if not _user(request):
+            return RedirectResponse('/login', status_code=302)
+        prefill = compute_fn(symbol) if (symbol and compute_fn) else None
+        return templates.TemplateResponse(request, 'open.html',
+                                          {'symbol': symbol, 'prefill': prefill})
+
+    @app.post('/open')
+    def open_submit(request: Request, symbol: str = Form(...),
+                    low_price: float = Form(...), high_price: float = Form(...),
+                    grid_count: int = Form(...), stop_low_price: float = Form(...),
+                    stop_high_price: float = Form(...), cap: str = Form(''),
+                    tag: str = Form('gt0'), offset: int = Form(0)):
+        u = _user(request)
+        if not u:
+            return RedirectResponse('/login', status_code=302)
+        params = {'low_price': low_price, 'high_price': high_price,
+                  'grid_count': grid_count, 'stop_low_price': stop_low_price,
+                  'stop_high_price': stop_high_price}
+        body = {'symbol': symbol, 'params': params, 'tag': tag, 'offset': offset}
+        if cap.strip():
+            body['cap'] = float(cap)
+        cmd = commands.enqueue('OPEN_GRID', json.dumps(body), created_by=u)
+        audit.add(u, 'CMD_SUBMIT', cmd.id, detail='{"type": "OPEN_GRID"}')
         return RedirectResponse('/controls', status_code=302)
 
     return app
