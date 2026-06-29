@@ -48,10 +48,11 @@
 - `gridtrade/state/fills.py`：`FillRepository._FIELDS` 加入 `'fee'`
   → `add_if_new` 自动持久化、`list_by_grid` / `_to_fill` 自动读回。
 
-### 2. 写入路径
+### 2. 写入路径（grid_executor，两处）
 
-- `gridtrade/execution/grid_executor.py`：构造 `Fill(...)` 时带 `fee=float(t.fee)`。
-  `t.fee` 本就存在（交易所回报），不再被丢弃；`add_if_new` 负责持久化与去重。
+- 持久化：`sync()` 构造 `Fill(...)` 时带 `fee=float(t.fee)`（约 119-120 行）。`t.fee` 本就存在（交易所回报），不再被丢弃；`add_if_new` 负责持久化与去重。
+- 运行态记账：`sync()` 喂运行中累加器的 `self.live[grid_id].record_fill(t.price, t.side, t.size, t.ts)`（约 127 行）须改为带 `float(t.fee)`，否则运行进程的 `real_fee_paid`（进而 `accounting.fee_paid`，由约 156 行 `acc.fee_paid = snap['fee_paid']` 落库）仍是估算值。
+- 底仓不动：`open()` 的合成底仓 `record_fill(entry, 'buy', order_num, 0)`（约 80 行）保持不传 fee，走估算回退（合成、无真实成交，保持 net_value 连续）。
 
 ### 3. 汇总真实化（核心）
 
