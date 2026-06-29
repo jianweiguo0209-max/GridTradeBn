@@ -118,7 +118,7 @@ gridtrade/
 | 行情 | timeframe `1H`→`1h`（ccxt 小写）；fetch_universe_candles 逐币容错；熔断不计 fatal（坏币不拉垮全局电路）；fetch_balance 读 USDC（`quote_currency`） |
 | 下单 | 市价单传参考价（HL 滑点）；**省略非法 cloid**（HL cloid 须 128-bit hex）；`to_canonical/to_native` 处理 None（createOrder 响应不带 symbol）；`cancel_all` 逐个撤（ccxt 无 HL cancelAllOrders） |
 | 执行核心 | **fill/对账改 exchange order id 匹配**（HL fill/open order 只带 oid 不带 cloid）；monitor 周期**惰性 restore** 他进程开的网格（跨进程内存态） |
-| 记账（巡检发现） | **funding 逐币种 + 开仓后归属**：HL `fetch_funding_history` 忽略 symbol 过滤（返回账户级全币种流水）＋开仓游标=0 → 新网格把**别币种 + 开仓前**的历史 funding 全计入自己（线上实测多网格 funding_paid 雷同 `-0.652633`）。修：适配器按 native symbol 过滤；`open` 与 `reconciler.restore` 的资金费游标置 `grid.created_at`（而非 0） |
+| 记账（巡检发现） | **funding 逐币种 + 开仓后归属**：开仓游标=0（计入开仓前）+ symbol 未过滤（计入他币种）→ 新网格把别币种＋开仓前的 funding 全计入自己（线上实测多网格 funding_paid 雷同 `-0.652633`）。游标修复（`open`/`reconciler.restore` 置 `grid.created_at`）见 v20。**v21 改正 symbol 口径**：HL 的 `fetch_funding_history` 返回账户级全币种且把【查询 symbol】盖到每行，靠 symbol 区分不出币种（v20 误用 `r['symbol']` → no-op）；改 `HyperliquidAdapter` 覆写按 `info.delta.coin` 过滤（真实 HL testnet 验证 BTC/ETH 已正确区分） |
 
 ---
 
