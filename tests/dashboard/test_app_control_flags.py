@@ -43,6 +43,18 @@ def test_panic_requires_confirm_and_enqueues(store):
     assert len(cmds) == 1 and cmds[0].type == 'PANIC_CLOSE_ALL'
 
 
+def test_scheduler_pause_sets_flag_and_audits(store):
+    c = _client(store)
+    r = c.post('/control/scheduler', data={'action': 'pause'}, follow_redirects=False)
+    assert r.status_code == 302
+    assert ControlFlagRepository(store).get('scheduler_paused') is True
+    audits = AuditRepository(store).list_recent()
+    assert any(a.action == 'FLAG_SET' and a.target == 'scheduler_paused' for a in audits)
+    r = c.post('/control/scheduler', data={'action': 'resume'}, follow_redirects=False)
+    assert r.status_code == 302
+    assert ControlFlagRepository(store).get('scheduler_paused') is False
+
+
 def test_control_routes_require_login(store):
     app = create_app(store, _Adapter(), username='admin',
                      password_hash=hash_password('pw', iterations=1000), session_secret='sek',
@@ -50,4 +62,8 @@ def test_control_routes_require_login(store):
                      audit=AuditRepository(store))
     anon = TestClient(app, base_url='https://testserver')
     r = anon.post('/control/halt', data={'action': 'on'}, follow_redirects=False)
+    assert r.status_code == 302 and r.headers['location'].endswith('/login')
+    r = anon.post('/control/scheduler', data={'action': 'pause'}, follow_redirects=False)
+    assert r.status_code == 302 and r.headers['location'].endswith('/login')
+    r = anon.post('/control/panic', data={'confirm': 'PANIC'}, follow_redirects=False)
     assert r.status_code == 302 and r.headers['location'].endswith('/login')

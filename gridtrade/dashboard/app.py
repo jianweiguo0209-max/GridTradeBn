@@ -1,4 +1,5 @@
 """FastAPI 应用工厂：登录鉴权 + 四个只读视图。web 进程绝不写库/写交易所。"""
+import json
 from pathlib import Path
 from typing import Optional
 
@@ -98,7 +99,7 @@ def create_app(store, adapter, *, username: str, password_hash: str,
         paused = action == 'pause'
         flags.set('scheduler_paused', paused, actor=u)
         audit.add(u, 'FLAG_SET', 'scheduler_paused',
-                  detail='{"value": %s}' % ('true' if paused else 'false'))
+                  detail=json.dumps({'value': paused}))
         return RedirectResponse('/controls', status_code=302)
 
     @app.post('/control/halt')
@@ -109,7 +110,7 @@ def create_app(store, adapter, *, username: str, password_hash: str,
         on = action == 'on'
         flags.set('trading_halted', on, actor=u)
         audit.add(u, 'FLAG_SET', 'trading_halted',
-                  detail='{"value": %s}' % ('true' if on else 'false'))
+                  detail=json.dumps({'value': on}))
         return RedirectResponse('/controls', status_code=302)
 
     @app.post('/control/panic')
