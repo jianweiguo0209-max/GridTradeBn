@@ -55,6 +55,13 @@ class Reconciler:
         replaced = 0
         for oid, go in expected.items():
             if oid not in on_exchange:
+                # 先撤旧 oid 再补：HL 抖动时 fetch_open_orders 可能漏返回一张【仍在挂】的单，
+                # 直接重挂会产生重复单（旧单后来成交、其 oid 已被新单覆盖 → 漏摄入、净仓漂）。
+                # 撤掉（已成交/已撤则 no-op 或报错，吞掉）再补，从根上杜绝重复。
+                try:
+                    ex.adapter.cancel_order(symbol, oid)
+                except Exception:
+                    pass
                 order = ex.adapter.create_limit_order(symbol, go.side, go.price, go.size,
                                                       post_only=False, client_oid=go.client_oid)
                 ex.orders.upsert(GridOrder(client_oid=go.client_oid, grid_id=grid_id,
@@ -63,3 +70,23 @@ class Reconciler:
                                            exchange_order_id=getattr(order, 'id', None)))
                 replaced += 1
         return {'canceled': canceled, 'replaced': replaced}
+
+    def check_position_drift(self, grid_id, symbol, *, tol_lots=1.5):
+        """净仓对账（防御纵深）：比较模型净仓（grid_accounting.net_position）与交易所真实持仓。
+
+        **只读告警**，不自动改仓（自动纠仓风险高，留人工/后续处置）。容差 = tol_lots × 每格量
+        （正常 sync 时序内的瞬时差应 < 1 格；持续超过 ~1.5 格即真实背离，如漏摄入成交）。
+        无每格量（未 restore）时容差 0。返回 None 表示无法判定（无记账行）。
+        """
+        ex = self.ex
+        acc = ex.accounting.get(grid_id)
+        if acc is None:
+            return None
+        geom = ex._geom.get(grid_id)
+        order_num = float(geom['order_num']) if geom else 0.0
+        model = float(acc.net_position)
+        real = float(ex.adapter.fetch_positions(symbol).net_size)
+        drift = model - real
+        tol = tol_lots * order_num
+        return {'grid_id': grid_id, 'model': model, 'exchange': real,
+                'drift': drift, 'tol': tol, 'ok': abs(drift) <= tol}

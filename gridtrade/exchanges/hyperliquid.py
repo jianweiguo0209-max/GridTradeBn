@@ -1,4 +1,5 @@
 """Hyperliquid 适配器：钱包凭证/资金费 1h/USDC 计价符号映射。"""
+from gridtrade.exchanges.base import FundingPayment
 from gridtrade.exchanges.ccxt_adapter import CcxtAdapter
 
 
@@ -33,6 +34,25 @@ class HyperliquidAdapter(CcxtAdapter):
         # ccxt 的 HL 无 cancelAllOrders；逐个撤当前挂单。
         for o in self.fetch_open_orders(symbol):
             self.cancel_order(symbol, o.id)
+
+    def fetch_funding_payments(self, symbol, since_ms=None):
+        # 实测：HL 的 fetch_funding_history 返回【账户级全币种】流水，并把【查询的 symbol】
+        # 盖到每行的 symbol 字段（无法据此区分币种）；真实资产在 info.delta.coin。
+        # 故按 info.coin 过滤只留本币种，避免把别币种 funding 计入本网格。
+        base = symbol.split('/')[0] if symbol else symbol
+        rows = self.client.fetch_funding_history(self.to_native(symbol), since=since_ms)
+        out = []
+        for r in rows:
+            ts = int(r['timestamp'])
+            if since_ms is not None and ts < since_ms:
+                continue
+            coin = ((r.get('info') or {}).get('delta') or {}).get('coin')
+            if coin != base:
+                continue
+            # ccxt 约定 amount 负=支付；统一成"支付为正"
+            out.append(FundingPayment(ts=ts, amount=-float(r['amount'])))
+        out.sort(key=lambda p: p.ts)
+        return out
 
     def create_market_order(self, symbol, side, size, *,
                             reduce_only=False, client_oid=None):
