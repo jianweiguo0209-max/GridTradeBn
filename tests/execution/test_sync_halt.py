@@ -64,6 +64,15 @@ def test_sync_skip_replenish_no_new_order(store):
     acc = gx.accounting.get(gid)
     assert acc is not None
 
+    # IMPORTANT: verify that accounting actually reflected the fill under halt
+    # The sell fill should have increased realized_pnl or changed net_position.
+    # Check that at least one accounting field changed from init (non-zero values indicate fill was processed)
+    assert acc.net_position != 0 or acc.realized_pnl != 0 or acc.fee_paid != 0, (
+        "Accounting must reflect the fill under skip_replenish=True halt; "
+        f"expected net_position/realized_pnl/fee_paid to be non-zero after fill, "
+        f"got net_position={acc.net_position}, realized_pnl={acc.realized_pnl}, fee_paid={acc.fee_paid}"
+    )
+
 
 def test_sync_normal_replenishes(store):
     """Without skip_replenish (default=False): fill ingested AND opposite order placed."""

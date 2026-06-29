@@ -17,9 +17,12 @@ def run_monitor(runtime, *, once=False, sleep=time.sleep, log=print,
     restore_all(rt.reconciler)            # 重启自愈一次
     # 控制仓储参数只传给默认 cycle_fn（run_monitor_cycle）；测试替换 cycle_fn 时不传，保持兼容。
     ctrl_kw = {}
-    if cycle_fn is run_monitor_cycle and getattr(rt, 'flags', None) is not None:
-        ctrl_kw = dict(flags=rt.flags, commands=rt.commands,
-                       audit=rt.audit, exchange=rt.config.exchange)
+    if cycle_fn is run_monitor_cycle:
+        if getattr(rt, 'flags', None) is not None:
+            ctrl_kw = dict(flags=rt.flags, commands=rt.commands,
+                           audit=rt.audit, exchange=rt.config.exchange)
+        else:
+            log('[monitor] WARNING: control plane disabled (rt.flags is None)')
     while True:
         try:
             cycle_fn(rt.reconciler, rt.manager, **ctrl_kw)
