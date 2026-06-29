@@ -1,0 +1,26 @@
+<!-- gridtrade/dashboard/templates/base.html -->
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"><title>GridTradeGP</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/htmx.min.js"></script>
+</head>
+<body>
+{% if health is defined %}
+<header class="health">
+  <span>endpoint: {{ health.endpoint }}</span>
+  <span>equity: {{ health.equity | fmt_num }}</span>
+  <span>cash: {{ health.cash | fmt_num }}</span>
+  <span>DB: {{ 'ok' if health.db_ok else 'DOWN' }}</span>
+  {% for m in health.machines %}
+    <span class="{{ 'neg' if m.stale else 'pos' }}">
+      {{ m.machine }}: {{ m.age_sec | age_human }}{{ ' STALE' if m.stale }}</span>
+  {% endfor %}
+  {% if health.balance_error %}<span class="neg">balance err</span>{% endif %}
+  <nav><a href="/">overview</a> <a href="/history">history</a></nav>
+</header>
+{% endif %}
+<main>{% block content %}{% endblock %}</main>
+</body>
+</html>

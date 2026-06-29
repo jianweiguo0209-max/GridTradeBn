@@ -1,0 +1,25 @@
+<!-- gridtrade/dashboard/templates/detail.html -->
+{% extends "base.html" %}{% block content %}
+<h1>{{ d.grid.symbol }} <small>{{ d.grid.id }}</small></h1>
+<p>status={{ d.grid.status }} dir={{ d.grid.direction }}
+   range={{ d.grid.low_price | fmt_num }}–{{ d.grid.high_price | fmt_num }}
+   stop={{ d.grid.stop_low_price | fmt_num }}/{{ d.grid.stop_high_price | fmt_num }}</p>
+{% if d.accounting %}
+<p>realized={{ d.accounting.realized_pnl | fmt_num }}
+   fee={{ d.accounting.fee_paid | fmt_num }}
+   funding={{ d.accounting.funding_paid | fmt_num }}
+   net={{ d.accounting.net_position | fmt_num }}
+   avg={{ d.accounting.avg_price | fmt_num }}
+   peak={{ d.accounting.pnl_ratio_max | fmt_pct }}</p>
+{% endif %}
+<h2>Orders</h2>
+<table><thead><tr><th>line</th><th>side</th><th>price</th><th>size</th><th>status</th></tr></thead><tbody>
+{% for o in d.orders %}<tr><td>{{ o.line_index }}</td><td>{{ o.side }}</td>
+<td>{{ o.price | fmt_num }}</td><td>{{ o.size | fmt_num }}</td><td>{{ o.status }}</td></tr>{% endfor %}
+</tbody></table>
+<h2>Recent Fills</h2>
+<table><thead><tr><th>ts</th><th>line</th><th>side</th><th>price</th><th>size</th></tr></thead><tbody>
+{% for f in d.fills %}<tr><td>{{ f.ts | ms_to_human }}</td><td>{{ f.line_index }}</td>
+<td>{{ f.side }}</td><td>{{ f.price | fmt_num }}</td><td>{{ f.size | fmt_num }}</td></tr>{% endfor %}
+</tbody></table>
+{% endblock %}

@@ -1,0 +1,20 @@
+<!-- gridtrade/dashboard/templates/history.html -->
+{% extends "base.html" %}{% block content %}
+<h1>By Tag</h1>
+<table><thead><tr><th>tag</th><th>count</th><th>total pnl</th><th>win</th><th>win rate</th></tr></thead><tbody>
+{% for s in r.tag_summaries %}<tr><td>{{ s.tag }}</td><td>{{ s.count }}</td>
+<td class="{{ s.total_pnl | pnl_class }}">{{ s.total_pnl | fmt_num }}</td>
+<td>{{ s.win_count }}</td><td>{{ s.win_rate | fmt_pct }}</td></tr>{% endfor %}
+</tbody></table>
+<h1>Closed Grids</h1>
+<table><thead><tr><th>closed</th><th>symbol</th><th>tag</th><th>pnl</th><th>ratio</th><th>reason</th></tr></thead><tbody>
+{% for rec in r.records %}<tr><td>{{ rec.closed_at | ms_to_human }}</td><td>{{ rec.symbol }}</td>
+<td>{{ rec.tag }}</td><td class="{{ rec.total_pnl | pnl_class }}">{{ rec.total_pnl | fmt_num }}</td>
+<td>{{ rec.pnl_ratio | fmt_pct }}</td><td>{{ rec.exit_reason }}</td></tr>{% endfor %}
+</tbody></table>
+<h1>Recent Fills (global)</h1>
+<table><thead><tr><th>ts</th><th>grid</th><th>line</th><th>side</th><th>price</th><th>size</th></tr></thead><tbody>
+{% for f in r.recent_fills %}<tr><td>{{ f.ts | ms_to_human }}</td><td>{{ f.grid_id }}</td>
+<td>{{ f.line_index }}</td><td>{{ f.side }}</td><td>{{ f.price | fmt_num }}</td><td>{{ f.size | fmt_num }}</td></tr>{% endfor %}
+</tbody></table>
+{% endblock %}

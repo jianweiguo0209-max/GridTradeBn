@@ -1,0 +1,24 @@
+<!-- gridtrade/dashboard/templates/overview.html -->
+{% extends "base.html" %}{% block content %}
+<meta http-equiv="refresh" content="8">
+<h1>Active Grids</h1>
+<table><thead><tr>
+<th>symbol</th><th>status</th><th>dir</th><th>range</th><th>orders</th>
+<th>net</th><th>realized</th><th>unreal</th><th>price</th><th>stop dist</th></tr></thead>
+<tbody>
+{% for r in rows %}
+<tr>
+  <td><a href="/grid/{{ r.grid_id }}">{{ r.symbol }}</a></td>
+  <td>{{ r.status }}</td><td>{{ r.direction }}</td>
+  <td>{{ r.low_price | fmt_num }}–{{ r.high_price | fmt_num }}</td>
+  <td>{{ r.open_order_count }}</td>
+  <td>{{ r.net_position | fmt_num }}</td>
+  <td class="{{ r.realized_pnl | pnl_class }}">{{ r.realized_pnl | fmt_num }}</td>
+  <td class="{{ r.unrealized_pnl | pnl_class }}">{{ r.unrealized_pnl | fmt_num }}</td>
+  <td>{{ r.current_price | fmt_num }}{% if r.price_error %} <span class="neg">(stale)</span>{% endif %}</td>
+  <td>L {{ r.stop_low_dist_pct | fmt_pct }} / H {{ r.stop_high_dist_pct | fmt_pct }}</td>
+</tr>
+{% endfor %}
+</tbody></table>
+{% if not rows %}<p>no active grids</p>{% endif %}
+{% endblock %}

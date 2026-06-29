@@ -9,3 +9,9 @@ SQLAlchemy>=2.0,<2.1
 psycopg2-binary>=2.9,<3
 # 回测选币回放复用 account_0 的因子计算，需要 TA-Lib（与实盘环境一致）
 # TA-Lib  # 需先装系统库 ta-lib，再 pip install TA-Lib；实盘环境已具备
+# Dashboard（web 进程；monitor/scheduler 不依赖）
+fastapi>=0.110,<0.116
+uvicorn[standard]>=0.27,<0.35
+jinja2>=3.1,<4
+python-multipart>=0.0.12  # FastAPI Form() support
+httpx>=0.23  # starlette.testclient dependency
