@@ -187,11 +187,16 @@ class CcxtAdapter(ExchangeAdapter):
         return 'ok'
 
     def fetch_funding_payments(self, symbol, since_ms=None):
-        rows = self.client.fetch_funding_history(self.to_native(symbol), since=since_ms)
+        native = self.to_native(symbol)
+        rows = self.client.fetch_funding_history(native, since=since_ms)
         out = []
         for r in rows:
             ts = int(r['timestamp'])
             if since_ms is not None and ts < since_ms:
+                continue
+            # HL 的 fetch_funding_history 忽略 symbol 过滤、返回账户级全币种流水（各行自带
+            # symbol）。只保留本币种，否则会把别的币种 funding 计入本网格。
+            if r.get('symbol') != native:
                 continue
             # ccxt 约定 amount 负=支付；统一成"支付为正"
             out.append(FundingPayment(ts=ts, amount=-float(r['amount'])))

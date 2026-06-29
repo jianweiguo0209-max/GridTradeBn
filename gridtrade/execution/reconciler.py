@@ -34,7 +34,10 @@ class Reconciler:
             live.funding_paid = acc.funding_paid      # recover cumulative funding (durable)
         ex.live[grid_id] = live
         ex._trade_cursor[grid_id] = ex.fills.max_ts(grid_id)
-        ex._funding_cursor[grid_id] = acc.funding_cursor if acc is not None else 0
+        # 无已推进的游标（acc 缺失或 0=开仓后尚未 sync）时回退到开仓时刻，而非 0，
+        # 否则首次 sync 会把开仓前的历史 funding 计入本网格。
+        ex._funding_cursor[grid_id] = (acc.funding_cursor if acc is not None and acc.funding_cursor
+                                       else g.created_at)
 
     def reconcile_open_orders(self, grid_id, symbol):
         ex = self.ex
