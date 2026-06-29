@@ -19,7 +19,13 @@ _COOKIE = 'gt_session'
 
 def create_app(store, adapter, *, username: str, password_hash: str,
                session_secret: str, throttle: Optional[LoginThrottle] = None,
-               stale_threshold_sec: float = 30.0) -> FastAPI:
+               stale_threshold_sec: float = 30.0,
+               flags=None, commands=None, audit=None) -> FastAPI:
+    from gridtrade.state.control import (ControlFlagRepository, CommandRepository,
+                                         AuditRepository)
+    flags = flags or ControlFlagRepository(store)
+    commands = commands or CommandRepository(store)
+    audit = audit or AuditRepository(store)
     app = FastAPI()
     throttle = throttle or LoginThrottle()
     templates = Jinja2Templates(directory=str(_DIR / 'templates'))
@@ -83,5 +89,39 @@ def create_app(store, adapter, *, username: str, password_hash: str,
             return RedirectResponse('/login', status_code=302)
         return templates.TemplateResponse(request, 'history.html', {
             'health': _health(), 'r': build_records(store)})
+
+    @app.post('/control/scheduler')
+    def control_scheduler(request: Request, action: str = Form(...)):
+        u = _user(request)
+        if not u:
+            return RedirectResponse('/login', status_code=302)
+        paused = action == 'pause'
+        flags.set('scheduler_paused', paused, actor=u)
+        audit.add(u, 'FLAG_SET', 'scheduler_paused',
+                  detail='{"value": %s}' % ('true' if paused else 'false'))
+        return RedirectResponse('/controls', status_code=302)
+
+    @app.post('/control/halt')
+    def control_halt(request: Request, action: str = Form(...)):
+        u = _user(request)
+        if not u:
+            return RedirectResponse('/login', status_code=302)
+        on = action == 'on'
+        flags.set('trading_halted', on, actor=u)
+        audit.add(u, 'FLAG_SET', 'trading_halted',
+                  detail='{"value": %s}' % ('true' if on else 'false'))
+        return RedirectResponse('/controls', status_code=302)
+
+    @app.post('/control/panic')
+    def control_panic(request: Request, confirm: str = Form('')):
+        u = _user(request)
+        if not u:
+            return RedirectResponse('/login', status_code=302)
+        if confirm != 'PANIC':
+            return RedirectResponse('/controls?err=confirm', status_code=302)
+        flags.set('trading_halted', True, actor=u)
+        cmd = commands.enqueue('PANIC_CLOSE_ALL', '{"reason": "panic"}', created_by=u)
+        audit.add(u, 'CMD_SUBMIT', cmd.id, detail='{"type": "PANIC_CLOSE_ALL"}')
+        return RedirectResponse('/controls', status_code=302)
 
     return app

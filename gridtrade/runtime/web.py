@@ -15,7 +15,8 @@ def build_web_app(config=None, runtime=None):
     return create_app(rt.store, rt.adapter,
                       username=config.dashboard_user,
                       password_hash=config.dashboard_password_hash,
-                      session_secret=secret)
+                      session_secret=secret,
+                      flags=rt.flags, commands=rt.commands, audit=rt.audit)
 
 
 def main() -> None:   # composition root（不单测）
