@@ -38,6 +38,8 @@ def create_app(store, adapter, *, username: str, password_hash: str,
 
     @app.get('/login', response_class=HTMLResponse)
     def login_form(request: Request):
+        if _user(request):                       # 已登录 -> 直接回首页
+            return RedirectResponse('/', status_code=302)
         return templates.TemplateResponse(request, 'login.html', {'error': None})
 
     @app.post('/login')
