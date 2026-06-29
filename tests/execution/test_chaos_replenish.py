@@ -38,6 +38,7 @@ def _baseline_after_one_fill():
 
 def test_replenish_under_timeout_matches_baseline():
     base_res, base_snap, base_open = _baseline_after_one_fill()
+    assert base_res['new_fills'] > 0   # baseline must actually fill+replenish, else test is vacuous
 
     # 干净开仓后，仅在补单阶段注入超时（open 不受影响）
     fake, faulty, gx = build_stack()
@@ -46,6 +47,7 @@ def test_replenish_under_timeout_matches_baseline():
                                               ccxt.RequestTimeout('t')]
     fake.set_price(SYM, 100.6)
     res = gx.sync(gid, SYM)
+    assert faulty._schedule.get('create_limit_order', []) == []   # both injected timeouts were consumed (retry path exercised)
     snap = gx.live[gid].snapshot(fake.fetch_price(SYM))
 
     assert res['new_fills'] == base_res['new_fills']
