@@ -12,11 +12,14 @@ def build_web_app(config=None, runtime=None):
     config = config or load_deploy_config()
     rt = runtime if runtime is not None else build_runtime(config)
     secret = config.dashboard_session_secret or secrets.token_hex(32)
+    from gridtrade.dashboard import control_compute
     return create_app(rt.store, rt.adapter,
                       username=config.dashboard_user,
                       password_hash=config.dashboard_password_hash,
                       session_secret=secret,
-                      flags=rt.flags, commands=rt.commands, audit=rt.audit)
+                      flags=rt.flags, commands=rt.commands, audit=rt.audit,
+                      compute_fn=lambda s: control_compute.defaults_for_symbol(rt, s),
+                      universe_fn=lambda: control_compute.compute_proposals(rt))
 
 
 def main() -> None:   # composition root（不单测）

@@ -4,6 +4,11 @@
 <p>status={{ d.grid.status }} dir={{ d.grid.direction }}
    range={{ d.grid.low_price | fmt_num }}–{{ d.grid.high_price | fmt_num }}
    stop={{ d.grid.stop_low_price | fmt_num }}/{{ d.grid.stop_high_price | fmt_num }}</p>
+<form method="post" action="/control/close" onsubmit="return confirm('确认关网格 ' + this.symbol.value + '?')" style="display:inline">
+  <input type="hidden" name="grid_id" value="{{ d.grid.id }}">
+  <input type="hidden" name="symbol" value="{{ d.grid.symbol }}">
+  <input type="hidden" name="reason" value="manual">
+  <button class="danger">关</button></form>
 {% if d.accounting %}
 <p>realized={{ d.accounting.realized_pnl | fmt_num }}
    fee={{ d.accounting.fee_paid | fmt_num }}

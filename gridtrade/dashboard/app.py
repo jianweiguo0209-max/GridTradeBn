@@ -22,7 +22,7 @@ def create_app(store, adapter, *, username: str, password_hash: str,
                session_secret: str, throttle: Optional[LoginThrottle] = None,
                stale_threshold_sec: float = 30.0,
                flags=None, commands=None, audit=None,
-               compute_fn=None) -> FastAPI:
+               compute_fn=None, universe_fn=None) -> FastAPI:
     from gridtrade.state.control import (ControlFlagRepository, CommandRepository,
                                          AuditRepository)
     flags = flags or ControlFlagRepository(store)
@@ -144,6 +144,22 @@ def create_app(store, adapter, *, username: str, password_hash: str,
         prefill = compute_fn(symbol) if (symbol and compute_fn) else None
         return templates.TemplateResponse(request, 'open.html',
                                           {'symbol': symbol, 'prefill': prefill})
+
+    @app.get('/controls', response_class=HTMLResponse)
+    def controls_page(request: Request):
+        if not _user(request):
+            return RedirectResponse('/login', status_code=302)
+        return templates.TemplateResponse(request, 'controls.html', {
+            'halted': flags.get('trading_halted'),
+            'scheduler_paused': flags.get('scheduler_paused'),
+            'commands': commands.list_recent(), 'audit': audit.list_recent()})
+
+    @app.get('/universe', response_class=HTMLResponse)
+    def universe_page(request: Request):
+        if not _user(request):
+            return RedirectResponse('/login', status_code=302)
+        rows = universe_fn() if universe_fn else []
+        return templates.TemplateResponse(request, 'universe.html', {'rows': rows})
 
     @app.post('/open')
     def open_submit(request: Request, symbol: str = Form(...),
