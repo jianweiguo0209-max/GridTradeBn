@@ -1,7 +1,7 @@
 # GridTradeGP — 项目状态与进度（固化文档）
 
 > 单一事实源：任何新 session / 协作者读这一份即可掌握「系统设计完成度 + testnet 运行状态」。
-> 最后更新：2026-06-29。代码状态：**SQLite 299 passed（+2 PG-only 并发测试 skipped）/ Postgres 301 passed**（双后端 TDD；含 P6① 混沌加固 + quote_volume 回退 + OrderFilled + funding 缓存 + funding 逐币种归属修复 + sync 先于 reconcile + 净仓对账 + MarginGate + 双模式 PG fixture + 真并发 TOCTOU）。
+> 最后更新：2026-06-29。代码状态：**SQLite 300 passed（+2 PG-only 并发测试 skipped）/ Postgres 302 passed**（双后端 TDD；含 P6① 混沌加固 + quote_volume 回退 + OrderFilled + funding 缓存 + funding 逐币种归属修复 + sync 先于 reconcile + 净仓对账 + reconcile 撤旧再补 + MarginGate + 双模式 PG fixture + 真并发 TOCTOU）。
 
 ---
 
@@ -119,7 +119,7 @@ gridtrade/
 | 下单 | 市价单传参考价（HL 滑点）；**省略非法 cloid**（HL cloid 须 128-bit hex）；`to_canonical/to_native` 处理 None（createOrder 响应不带 symbol）；`cancel_all` 逐个撤（ccxt 无 HL cancelAllOrders） |
 | 执行核心 | **fill/对账改 exchange order id 匹配**（HL fill/open order 只带 oid 不带 cloid）；monitor 周期**惰性 restore** 他进程开的网格（跨进程内存态） |
 | 记账（巡检发现） | **funding 逐币种 + 开仓后归属**：开仓游标=0（计入开仓前）+ symbol 未过滤（计入他币种）→ 新网格把别币种＋开仓前的 funding 全计入自己（线上实测多网格 funding_paid 雷同 `-0.652633`）。游标修复（`open`/`reconciler.restore` 置 `grid.created_at`）见 v20。**v21 改正 symbol 口径**：HL 的 `fetch_funding_history` 返回账户级全币种且把【查询 symbol】盖到每行，靠 symbol 区分不出币种（v20 误用 `r['symbol']` → no-op）；改 `HyperliquidAdapter` 覆写按 `info.delta.coin` 过滤（真实 HL testnet 验证 BTC/ETH 已正确区分） |
-| 执行核心（巡检发现） | **sync 先于 reconcile + 净仓对账**：`run_monitor_cycle` 原每轮先 reconcile 后 sync → 卖单成交离开挂单簿后 reconcile 当「被丢」用新 oid 重挂、覆盖成交 oid → 成交永不入账、反复重卖、净仓往空漂（线上 gt011 实测真实成交 17 笔仅入账 2 笔、模型 +0.00165 vs 真实 -0.00017）。修：调顺序 `restore→sync→reconcile`（仅对 sync 成功网格 reconcile）+ `Reconciler.check_position_drift` 净仓偏离超容差只告警。订单对账只对单不对仓的盲点补上 |
+| 执行核心（巡检发现） | **sync 先于 reconcile + 净仓对账**：`run_monitor_cycle` 原每轮先 reconcile 后 sync → 卖单成交离开挂单簿后 reconcile 当「被丢」用新 oid 重挂、覆盖成交 oid → 成交永不入账、反复重卖、净仓往空漂（线上 gt011 实测真实成交 17 笔仅入账 2 笔、模型 +0.00165 vs 真实 -0.00017）。修：调顺序 `restore→sync→reconcile`（仅对 sync 成功网格 reconcile）+ `Reconciler.check_position_drift` 净仓偏离超容差只告警。订单对账只对单不对仓的盲点补上。**残留路径（D）**：HL 抖动时 `fetch_open_orders` 漏返回一张仍在挂的单 → reconcile 直接重挂产生重复单（旧单成交漏摄入，线上 gt011 09:43 实测）→ 改为**重挂前先撤旧 oid**（仍在挂则撤、已没则 no-op），杜绝重复 |
 
 ---
 
