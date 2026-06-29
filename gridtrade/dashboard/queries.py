@@ -143,3 +143,86 @@ def build_grid_detail(store, grid_id: str, *, fills_limit: int = 50):
                    key=lambda f: f.ts, reverse=True)[:fills_limit]
     acc = AccountingRepository(store).get(grid_id)
     return GridDetailDTO(grid=grid, orders=orders, fills=fills, accounting=acc)
+
+
+# --- 追加到 gridtrade/dashboard/queries.py ---
+from sqlalchemy import select
+from gridtrade.state.models import order_records, grid_fills
+
+
+@dataclass
+class TagSummary:
+    tag: str
+    count: int
+    total_pnl: float
+    win_count: int
+    win_rate: float
+
+
+@dataclass
+class RecordRow:
+    id: str
+    symbol: str
+    tag: str
+    total_pnl: Optional[float]
+    pnl_ratio: Optional[float]
+    exit_reason: Optional[str]
+    closed_at: Optional[int]
+
+
+@dataclass
+class RecentFill:
+    grid_id: str
+    line_index: int
+    side: str
+    price: float
+    size: float
+    ts: int
+
+
+@dataclass
+class RecordsDTO:
+    records: List[RecordRow]
+    tag_summaries: List[TagSummary]
+    recent_fills: List[RecentFill]
+
+
+def build_records(store, *, records_limit: int = 200,
+                  fills_limit: int = 50) -> RecordsDTO:
+    with store.engine.connect() as c:
+        rows = c.execute(
+            select(order_records)
+            .where(order_records.c.closed_at.isnot(None))
+            .order_by(order_records.c.closed_at.desc())
+            .limit(records_limit)
+        ).all()
+        fill_rows = c.execute(
+            select(grid_fills).order_by(grid_fills.c.ts.desc()).limit(fills_limit)
+        ).all()
+
+    records = [RecordRow(id=r._mapping['id'], symbol=r._mapping['symbol'],
+                         tag=r._mapping['tag'], total_pnl=r._mapping['total_pnl'],
+                         pnl_ratio=r._mapping['pnl_ratio'],
+                         exit_reason=r._mapping['exit_reason'],
+                         closed_at=r._mapping['closed_at']) for r in rows]
+
+    agg = {}
+    for r in records:
+        s = agg.setdefault(r.tag, {'count': 0, 'total': 0.0, 'win': 0})
+        s['count'] += 1
+        s['total'] += (r.total_pnl or 0.0)
+        if (r.total_pnl or 0.0) > 0:
+            s['win'] += 1
+    tag_summaries = [
+        TagSummary(tag=t, count=v['count'], total_pnl=v['total'],
+                   win_count=v['win'],
+                   win_rate=(v['win'] / v['count'] if v['count'] else 0.0))
+        for t, v in sorted(agg.items())]
+
+    recent_fills = [RecentFill(grid_id=f._mapping['grid_id'],
+                               line_index=f._mapping['line_index'],
+                               side=f._mapping['side'], price=f._mapping['price'],
+                               size=f._mapping['size'], ts=f._mapping['ts'])
+                    for f in fill_rows]
+    return RecordsDTO(records=records, tag_summaries=tag_summaries,
+                      recent_fills=recent_fills)
