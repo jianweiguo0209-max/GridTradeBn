@@ -2,9 +2,11 @@
 from dataclasses import dataclass
 from typing import List, Optional
 
+from sqlalchemy import select
+
 from gridtrade.runtime.introspect import adapter_endpoint
 from gridtrade.state.heartbeats import HeartbeatRepository
-from gridtrade.state.models import now_ms
+from gridtrade.state.models import now_ms, order_records, grid_fills
 from gridtrade.state.accounting import AccountingRepository
 from gridtrade.state.grids import GridRepository
 from gridtrade.state.orders import OrderRepository
@@ -145,11 +147,6 @@ def build_grid_detail(store, grid_id: str, *, fills_limit: int = 50):
     return GridDetailDTO(grid=grid, orders=orders, fills=fills, accounting=acc)
 
 
-# --- 追加到 gridtrade/dashboard/queries.py ---
-from sqlalchemy import select
-from gridtrade.state.models import order_records, grid_fills
-
-
 @dataclass
 class TagSummary:
     tag: str
@@ -209,9 +206,10 @@ def build_records(store, *, records_limit: int = 200,
     agg = {}
     for r in records:
         s = agg.setdefault(r.tag, {'count': 0, 'total': 0.0, 'win': 0})
+        pnl = r.total_pnl if r.total_pnl is not None else 0.0
         s['count'] += 1
-        s['total'] += (r.total_pnl or 0.0)
-        if (r.total_pnl or 0.0) > 0:
+        s['total'] += pnl
+        if pnl > 0:
             s['win'] += 1
     tag_summaries = [
         TagSummary(tag=t, count=v['count'], total_pnl=v['total'],
