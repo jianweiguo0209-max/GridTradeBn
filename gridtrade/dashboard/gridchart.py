@@ -2,6 +2,8 @@
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
+from gridtrade.dashboard import svgaxes as ax
+
 import pandas as pd
 
 from gridtrade.core.grid_engine import grid_order_info
@@ -122,31 +124,34 @@ def render(dto, *, width: int = 720, height: int = 320, pad: int = 28) -> str:
     dy = (ymax - ymin) or 1.0
     xmin, xmax = dto.start_ms, dto.end_ms
     dx = (xmax - xmin) or 1.0
-    iw, ih = width - 2 * pad, height - 2 * pad
+    _L, _R, _T, _B = 40, 12, 18, 16
+    pl, pr, pt, pb = _L, width - _R, _T, height - _B
 
-    def sx(t): return pad + (t - xmin) / dx * iw
-    def sy(p): return pad + (ymax - p) / dy * ih
+    def sx(t): return pl + (t - xmin) / dx * (pr - pl)
+    def sy(p): return pt + (ymax - p) / dy * (pb - pt)
 
-    buy = {round(pr, 8) for pr, sd in dto.open_orders if sd == 'buy'}
-    sell = {round(pr, 8) for pr, sd in dto.open_orders if sd == 'sell'}
+    buy = {round(pr_p, 8) for pr_p, sd in dto.open_orders if sd == 'buy'}
+    sell = {round(pr_p, 8) for pr_p, sd in dto.open_orders if sd == 'sell'}
     parts = []
+    parts.append(ax.y_axis(ax.nice_ticks(ymin, ymax), sy, pl, pr))
+    parts.append(ax.x_time_axis(xmin, xmax, sx, pb))
     # 网格挂点线（买绿/卖红/其余灰）
     for gl in dto.grid_lines:
         key = round(gl, 8)
         color = '#4caf50' if key in buy else ('#e53935' if key in sell else '#333')
         y = sy(gl)
         parts.append('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" '
-                     'stroke-width="0.8"/>' % (pad, y, width - pad, y, color))
+                     'stroke-width="0.8"/>' % (pl, y, pr, y, color))
     # 入场（中性虚线）+ 止盈/止损（红虚线）
     if dto.entry_price is not None:
         y = sy(dto.entry_price)
         parts.append('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="#999" '
-                     'stroke-dasharray="4" stroke-width="0.8"/>' % (pad, y, width - pad, y))
+                     'stroke-dasharray="4" stroke-width="0.8"/>' % (pl, y, pr, y))
     for stop in (dto.stop_low, dto.stop_high):
         if stop is not None:
             y = sy(stop)
             parts.append('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="#e53935" '
-                         'stroke-dasharray="4" stroke-width="0.8"/>' % (pad, y, width - pad, y))
+                         'stroke-dasharray="4" stroke-width="0.8"/>' % (pl, y, pr, y))
     # 价格走势 / 降级文案
     if dto.ohlcv_ok and dto.price_series:
         coords = ' '.join('%.1f,%.1f' % (sx(t), sy(p)) for t, p in dto.price_series)
@@ -154,7 +159,7 @@ def render(dto, *, width: int = 720, height: int = 320, pad: int = 28) -> str:
                      % coords)
     else:
         parts.append('<text x="%d" y="%d" text-anchor="middle" fill="#e53935">行情暂不可用</text>'
-                     % (width // 2, pad + 12))
+                     % (width // 2, pt + 12))
     # 已成交点（买绿卖红）
     for ts, price, side in dto.fills:
         if not (xmin <= ts <= xmax):
@@ -165,6 +170,8 @@ def render(dto, *, width: int = 720, height: int = 320, pad: int = 28) -> str:
     if dto.current_price is not None:
         y = sy(dto.current_price)
         parts.append('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="#fb0" '
-                     'stroke-dasharray="2" stroke-width="0.8"/>' % (pad, y, width - pad, y))
-        parts.append('<circle cx="%.1f" cy="%.1f" r="3" fill="#fb0"/>' % (width - pad, y))
+                     'stroke-dasharray="2" stroke-width="0.8"/>' % (pl, y, pr, y))
+        parts.append('<circle cx="%.1f" cy="%.1f" r="3" fill="#fb0"/>' % (pr, y))
+    parts.append(ax.legend([('#6cf', '走势'), ('#4caf50', '买单'), ('#e53935', '卖单'),
+                            ('#fb0', '成交/现价'), ('#999', '入场'), ('#e53935', '止损')], pl, 8))
     return '<svg viewBox="0 0 %d %d" class="chart">%s</svg>' % (width, height, ''.join(parts))
