@@ -1,7 +1,7 @@
 # GridTradeGP — 项目状态与进度（固化文档）
 
 > 单一事实源：任何新 session / 协作者读这一份即可掌握「系统设计完成度 + testnet 运行状态」。
-> 最后更新：2026-06-29。代码状态：**SQLite 328 passed（+2 PG-only 并发测试 skipped）/ Postgres 330 passed**（双后端 TDD；含 P6① 混沌加固 + quote_volume 回退 + OrderFilled + funding 缓存 + funding 逐币种归属修复 + sync 先于 reconcile + 净仓对账 + reconcile 撤旧再补 + reconcile 重挂宽限 + sync 游标重叠 + MarginGate + 双模式 PG fixture + 真并发 TOCTOU）。
+> 最后更新：2026-06-30。代码状态：**SQLite 435 passed（+2 PG-only 并发测试 skipped）/ Postgres 437 passed**（双后端 TDD；含 P6① 混沌加固 + quote_volume 回退 + OrderFilled + funding 缓存 + funding 逐币种归属修复 + sync 先于 reconcile + 净仓对账 + reconcile 撤旧再补 + reconcile 重挂宽限 + sync 游标重叠 + MarginGate + 双模式 PG fixture + 真并发 TOCTOU + 门链拒绝/MarginGate fail-closed 结构化日志）。
 
 ---
 
@@ -152,7 +152,8 @@ gridtrade/
 - **`SCHEDULER_RUN_ON_START`**：只决定 scheduler 启动瞬间是否抢跑一轮。生产 `false`（避免每次部署/重启在半点关掉刚开的网格再重开 = churn）；调试期想立即看效果设 `true`。
 - **agent 模式地址**：`HL_WALLET_ADDRESS` 填**有钱的主账户地址**，`HL_PRIVATE_KEY` 填 **agent 私钥**（二者地址不同是正常的）。私钥须 66 字符（`0x`+64hex）；40hex 那是地址不是私钥。
 - **DB 重置**：`fly console -a gridtrade-hl -C "python -m gridtrade.runtime.dbadmin reset"`（drop+create，仅 testnet/无价值数据时）。
-- **观察状态**：`fly logs -a gridtrade-hl`；或 console 查 `grids/grid_orders/grid_fills/grid_accounting/order_records/heartbeats`。
+- **观察状态**：`fly logs -a gridtrade-hl`；或 console 查 `grids/grid_orders/grid_fills/grid_accounting/order_records/heartbeats`。一键只读快照：`bash scripts/testnet_status.sh`（fly 机器状态 + 心跳/标志/活跃网格/指令/余额）。
+- **「该开未开」诊断（app v40+）**：scheduler 选币提案后 0 开仓时，先看 `fly logs` 的 `[gate] rejected <symbol> by <gate>: <reason>`——多数是 `SymbolLockGate: active grid already exists`（选中币已活跃，正确拒绝、稳态 1~N 网格随选币轮换，**非 bug**）。`MarginGate fail-closed: balance fetch failed: ...` 才是余额读取异常需关注。2026-06-30 巡检曾因门链拒绝静默无日志误判一次假警报，已加结构化日志根治（见记忆 `margin-gate-silent-fail-closed`）。
 
 ---
 
