@@ -29,10 +29,10 @@
 - Test: `tests/dashboard/test_gridchart_window.py`
 
 **Interfaces:**
-- Consumes: `gridtrade.state.models.now_ms`；`Grid` 数据类字段（`opened_at`/`created_at`/`closed_at`/`status`）。
+- Consumes: `gridtrade.state.models.now_ms`、`TERMINAL_STATES`；`Grid` 数据类**已有**字段（`created_at`/`updated_at`/`status`）——注意 grids 表**没有** opened_at/closed_at 列（那是 order_records 的列），**不要给 Grid 加新字段**；life 起点用 `created_at`（≈开仓时刻，已持久化），终点用 `updated_at`（状态转移时由 `transition_status` 写 now_ms，CLOSED/FAILED 时 ≈ 平仓时刻）。
 - Produces:
   - `@dataclass ChartDTO(symbol, window, timeframe, start_ms, end_ms, price_series, ohlcv_ok, grid_lines, open_orders, fills, entry_price, stop_low, stop_high, current_price)`——`price_series: List[Tuple[int,float]]`、`grid_lines: List[float]`、`open_orders: List[Tuple[float,str]]`(price,side)、`fills: List[Tuple[int,float,str]]`(ts,price,side)、`ohlcv_ok: bool`、`entry_price/stop_low/stop_high/current_price: Optional[float]`。
-  - `def window_bounds(grid, window: str, *, now_ms_fn=now_ms) -> Tuple[int, int, str]`——返回 `(start_ms, end_ms, timeframe)`。`life`：start=`grid.opened_at or grid.created_at`，end=`grid.closed_at or now`；`1h/6h/24h`：start=`now - N*3600_000`，end=`now`；非法 window 当 `life`。timeframe 按 `end-start` 跨度：≤2h→`1m`、≤12h→`5m`、≤2d→`15m`、否则 `1h`。
+  - `def window_bounds(grid, window: str, *, now_ms_fn=now_ms) -> Tuple[int, int, str]`——返回 `(start_ms, end_ms, timeframe)`。`life`：start=`grid.created_at`，end=`grid.updated_at`（当 `grid.status in TERMINAL_STATES`，即 CLOSED/FAILED）否则 `now`；`1h/6h/24h`：start=`now - N*3600_000`，end=`now`；非法 window 当 `life`。timeframe 按 `end-start` 跨度：≤2h→`1m`、≤12h→`5m`、≤2d→`15m`、否则 `1h`。
 
 - [ ] **Step 1: Write the failing test**
 
@@ -44,22 +44,23 @@ from gridtrade.state.models import Grid, ACTIVE, CLOSED
 
 def _grid(**kw):
     base = dict(id='g1', exchange='x', symbol='BTC/USDT:USDT', status=ACTIVE,
-                created_at=1_000_000, opened_at=1_000_000)
+                created_at=1_000_000, updated_at=1_000_000)
     base.update(kw)
     return Grid(**base)
 
 
-def test_window_bounds_life_active():
-    g = _grid(opened_at=1_000_000)
+def test_window_bounds_life_active_uses_created_at_and_now():
+    g = _grid(created_at=1_000_000)
     start, end, tf = window_bounds(g, 'life', now_ms_fn=lambda: 1_000_000 + 3600_000)
-    assert start == 1_000_000 and end == 1_000_000 + 3600_000
+    assert start == 1_000_000 and end == 1_000_000 + 3600_000   # 活跃：created_at → now
     assert tf == '1m'                       # 1h 跨度 ≤2h → 1m
 
 
-def test_window_bounds_life_closed_uses_closed_at():
-    g = _grid(status=CLOSED, opened_at=1_000_000, closed_at=1_000_000 + 6 * 3600_000)
+def test_window_bounds_life_closed_uses_updated_at():
+    g = _grid(status=CLOSED, created_at=1_000_000, updated_at=1_000_000 + 6 * 3600_000)
     start, end, tf = window_bounds(g, 'life', now_ms_fn=lambda: 9_999_999_999)
-    assert end == 1_000_000 + 6 * 3600_000  # 已平用 closed_at，不用 now
+    assert start == 1_000_000
+    assert end == 1_000_000 + 6 * 3600_000  # 已平（CLOSED）用 updated_at，不用 now
     assert tf == '5m'                        # 6h 跨度 ≤12h → 5m
 
 
@@ -72,9 +73,9 @@ def test_window_bounds_fixed_24h():
 
 
 def test_window_bounds_bad_value_falls_back_to_life():
-    g = _grid(opened_at=5_000_000)
+    g = _grid(created_at=5_000_000)
     start, _end, _tf = window_bounds(g, 'nonsense', now_ms_fn=lambda: 5_000_000 + 1000)
-    assert start == 5_000_000                # 回退 life
+    assert start == 5_000_000                # 回退 life（用 created_at）
 
 
 def test_chart_dto_defaults():
@@ -98,7 +99,7 @@ Expected: FAIL — `ModuleNotFoundError: gridtrade.dashboard.gridchart`
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
-from gridtrade.state.models import now_ms
+from gridtrade.state.models import now_ms, TERMINAL_STATES
 
 _HOUR = 3600_000
 
@@ -137,8 +138,8 @@ def window_bounds(grid, window: str, *, now_ms_fn=now_ms) -> Tuple[int, int, str
         hours = {'1h': 1, '6h': 6, '24h': 24}[window]
         start, end = now - hours * _HOUR, now
     else:                                    # life（含非法回退）
-        start = int(grid.opened_at or grid.created_at or now)
-        end = int(grid.closed_at) if getattr(grid, 'closed_at', None) else now
+        start = int(grid.created_at or now)
+        end = int(grid.updated_at) if grid.status in TERMINAL_STATES else now
     return start, end, _timeframe_for(end - start)
 ```
 
@@ -183,7 +184,7 @@ from gridtrade.state.models import Grid, GridOrder, Fill, ACTIVE
 def _seed(store):
     GridRepository(store).create(Grid(
         id='g1', exchange='fake', symbol='BTC/USDT:USDT', status=ACTIVE,
-        created_at=1_000_000, opened_at=1_000_000, entry_price=100.0,
+        created_at=1_000_000, entry_price=100.0,
         low_price=90.0, high_price=110.0, grid_count=10,
         stop_low_price=80.0, stop_high_price=120.0, cap=100.0, leverage=5.0))
     OrderRepository(store).upsert(GridOrder(client_oid='o1', grid_id='g1', line_index=1,
@@ -492,7 +493,7 @@ def _app(store):
 
 def _seed(store):
     GridRepository(store).create(Grid(id='g1', exchange='x', symbol='BTC/USDT:USDT',
-                                      status=ACTIVE, created_at=1000, opened_at=1000,
+                                      status=ACTIVE, created_at=1000,
                                       low_price=90.0, high_price=110.0, grid_count=10,
                                       stop_low_price=80.0, stop_high_price=120.0,
                                       cap=100.0, leverage=5.0, entry_price=100.0))
@@ -642,7 +643,7 @@ git commit -m "docs(livechart): STATUS/DEPLOY 同步 P1 实时网格价格图"
 - §5 路由 + 轮询 JS（窗口按钮/document.hidden/5s）→ T4。§5.1 TTL 缓存 → 列为可选，未建任务（YAGNI，spec 标「可选」；如需在 T2 加，留实现注意）。⚠️ 见下。
 - §6 鉴权/只读/`|safe` 仅 SVG → T4 端点 gate；render 无文本插值（T3）；detail 用 `tojson` 安全注入 gid。✅
 - §7 测试（render/build/window/端点/detail 页）→ T1–T4 各 TDD。✅
-- §8 开放项（opened_at 回退 created_at / CANDLE 列名 / 已平网格）→ T1 回退、T2 列名（candle_begin_time/close）、window_bounds 已平用 closed_at。✅
+- §8 开放项（life 起点 created_at / 已平用 updated_at / CANDLE 列名 candle_begin_time·close）→ T1 window_bounds（grids 表无 opened_at/closed_at，用 created_at+updated_at）、T2 列名。✅
 
 **§5.1 TTL 缓存取舍：** spec 标为「可选但建议」。本计划**未**单列任务以保持最小可用面（YAGNI）；首版每次刷新一次 fetch_ohlcv，单运维可接受。若上线后限频再加：在 `build_grid_chart` 的 fetch_ohlcv 外包一个 `(symbol,timeframe,start//4000,end//4000)→(df,ts)` 的 ~4s 进程内字典缓存。此为有意延后，非计划缺口。
 
