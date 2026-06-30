@@ -22,6 +22,10 @@ from gridtrade.state.heartbeats import HeartbeatRepository
 from gridtrade.state.store import StateStore
 
 
+def _flush_log(msg):   # fly logs 行缓冲：守护进程里 stdout 需 flush 才即时可见
+    print(msg, flush=True)
+
+
 @dataclass
 class Runtime:
     config: object
@@ -59,8 +63,8 @@ def build_runtime(config) -> Runtime:
         SymbolLockGate(executor.grids),
         MaxConcurrentGate(executor.grids, config.max_concurrent),
         RiskBudgetGate(executor.grids, config.total_budget, config.default_cap),
-        MarginGate(adapter, config.default_cap),
-    ])
+        MarginGate(adapter, config.default_cap, log=_flush_log),
+    ], log=_flush_log)
     bus = EventBus()
     manager = GridManager(executor, gates, stop_cfg=DEFAULT_STOP_CFG,
                           event_bus=bus)
