@@ -49,9 +49,10 @@ class CommandRepository:
     def __init__(self, store):
         self.engine = store.engine
 
-    def enqueue(self, type: str, payload: str, *, created_by: str = '') -> ControlCommand:
+    def enqueue(self, type: str, payload: str, *, created_by: str = '',
+                now_ms_fn=now_ms) -> ControlCommand:
         cid = uuid.uuid4().hex
-        ts = now_ms()
+        ts = int(now_ms_fn())
         with self.engine.begin() as c:
             c.execute(insert(control_commands), {
                 'id': cid, 'type': type, 'payload': payload, 'status': CMD_PENDING,

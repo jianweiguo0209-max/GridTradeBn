@@ -22,7 +22,9 @@ def test_enqueue_claim_finish_cycle(store):
 
 def test_claim_is_fifo(store):
     repo = CommandRepository(store)
-    a = repo.enqueue('CLOSE_GRID', '{}', created_by='admin')
-    b = repo.enqueue('CLOSE_GRID', '{}', created_by='admin')
+    # 注入不同 created_at，避免同毫秒入队时 created_at 相等、退化到 uuid id 随机次序
+    # 导致的偶发非确定性（claim 排序为 created_at, id）。
+    a = repo.enqueue('CLOSE_GRID', '{}', created_by='admin', now_ms_fn=lambda: 1000)
+    b = repo.enqueue('CLOSE_GRID', '{}', created_by='admin', now_ms_fn=lambda: 2000)
     assert repo.claim_next().id == a.id      # 先进先出
     assert repo.claim_next().id == b.id

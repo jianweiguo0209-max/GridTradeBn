@@ -85,6 +85,16 @@ def create_app(store, adapter, *, username: str, password_hash: str,
         return templates.TemplateResponse(request, 'detail.html', {
             'health': _health(), 'd': dto})
 
+    @app.get('/grid/{grid_id}/chart', response_class=HTMLResponse)
+    def grid_chart(request: Request, grid_id: str, window: str = 'life'):
+        if not _user(request):
+            return RedirectResponse('/login', status_code=302)
+        from gridtrade.dashboard import gridchart as gc
+        dto = gc.build_grid_chart(store, adapter, grid_id, window)
+        if dto is None:
+            return HTMLResponse('grid not found', status_code=404)
+        return HTMLResponse(gc.render(dto))
+
     @app.get('/history', response_class=HTMLResponse)
     def history(request: Request):
         if not _user(request):
