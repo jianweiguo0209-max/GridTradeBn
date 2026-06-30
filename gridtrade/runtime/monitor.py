@@ -23,6 +23,9 @@ def run_monitor(runtime, *, once=False, sleep=time.sleep, log=print,
                            audit=rt.audit, exchange=rt.config.exchange)
         else:
             log('[monitor] WARNING: control plane disabled (rt.flags is None)')
+        if getattr(rt, 'equity', None) is not None:
+            ctrl_kw['equity_repo'] = rt.equity
+            ctrl_kw['snapshot_interval_sec'] = rt.config.equity_snapshot_interval_sec
     while True:
         try:
             cycle_fn(rt.reconciler, rt.manager, **ctrl_kw)

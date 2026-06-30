@@ -1,0 +1,38 @@
+<!-- gridtrade/dashboard/templates/analytics.html -->
+{% extends "base.html" %}{% block content %}
+<h1>复盘分析</h1>
+<nav class="rangesel">范围：
+  <a href="/analytics?range=all">全部</a>
+  <a href="/analytics?range=7d">近7天</a>
+  <a href="/analytics?range=30d">近30天</a>
+  <small>（当前：{{ range }}）</small>
+</nav>
+
+<h2>权益 / 已实现盈亏曲线</h2>
+{{ equity_svg | safe }}
+
+<h2>tag 盈亏归因</h2>
+<table><thead><tr><th>tag</th><th>笔数</th><th>总盈亏</th><th>总fee</th><th>净盈亏</th>
+<th>胜率</th><th>平均持仓</th><th>最大回撤</th></tr></thead><tbody>
+{% for s in tags %}<tr><td>{{ s.tag }}</td><td>{{ s.count }}</td>
+<td class="{{ s.total_pnl | pnl_class }}">{{ s.total_pnl | fmt_num }}</td>
+<td>{{ s.total_fee | fmt_num }}</td>
+<td class="{{ s.net_pnl | pnl_class }}">{{ s.net_pnl | fmt_num }}</td>
+<td>{{ s.win_rate | fmt_pct }}</td>
+<td>{{ (s.avg_hold_ms / 3600000) | fmt_num if s.avg_hold_ms else '-' }}h</td>
+<td>{{ s.max_drawdown | fmt_num }}</td></tr>{% endfor %}
+</tbody></table>
+
+<h2>成交分布</h2>
+<h3>活动（按小时桶）</h3>{{ by_hour_svg | safe }}
+<h3>买卖方向</h3>{{ by_side_svg | safe }}
+<h3>网格线 line_index</h3>{{ by_line_svg | safe }}
+<h3>累计手续费</h3>{{ fee_cum_svg | safe }}
+
+<h2>退出原因</h2>
+<table><thead><tr><th>原因</th><th>笔数</th><th>占比</th><th>平均盈亏</th></tr></thead><tbody>
+{% for e in exits %}<tr><td>{{ e.reason }}</td><td>{{ e.count }}</td>
+<td>{{ e.share | fmt_pct }}</td>
+<td class="{{ e.avg_pnl | pnl_class }}">{{ e.avg_pnl | fmt_num }}</td></tr>{% endfor %}
+</tbody></table>
+{% endblock %}

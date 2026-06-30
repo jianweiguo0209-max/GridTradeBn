@@ -83,6 +83,7 @@ class GridOverviewRow:
     stop_high_price: Optional[float]
     stop_low_dist_pct: Optional[float]
     stop_high_dist_pct: Optional[float]
+    fee_paid: float = 0.0
 
 
 def _unrealized(net_position: float, avg_price: float, price: float) -> float:
@@ -99,6 +100,7 @@ def build_overview(store, adapter) -> List[GridOverviewRow]:
         net = acc.net_position if acc else 0.0
         avg = acc.avg_price if acc else 0.0
         realized = acc.realized_pnl if acc else 0.0
+        fee = acc.fee_paid if acc else 0.0
         open_n = len(orders.list_open_by_grid(g.id))
 
         price = unreal = None
@@ -124,7 +126,7 @@ def build_overview(store, adapter) -> List[GridOverviewRow]:
             net_position=net, avg_price=avg, realized_pnl=realized,
             current_price=price, unrealized_pnl=unreal, price_error=price_error,
             stop_low_price=g.stop_low_price, stop_high_price=g.stop_high_price,
-            stop_low_dist_pct=low_dist, stop_high_dist_pct=high_dist))
+            stop_low_dist_pct=low_dist, stop_high_dist_pct=high_dist, fee_paid=fee))
     return rows
 
 
@@ -177,6 +179,7 @@ class RecentFill:
     price: float
     size: float
     ts: int
+    fee: float = 0.0
 
 
 @dataclass
@@ -222,7 +225,8 @@ def build_records(store, *, records_limit: int = 200,
     recent_fills = [RecentFill(grid_id=f._mapping['grid_id'],
                                line_index=f._mapping['line_index'],
                                side=f._mapping['side'], price=f._mapping['price'],
-                               size=f._mapping['size'], ts=f._mapping['ts'])
+                               size=f._mapping['size'], ts=f._mapping['ts'],
+                               fee=f._mapping['fee'])
                     for f in fill_rows]
     return RecordsDTO(records=records, tag_summaries=tag_summaries,
                       recent_fills=recent_fills)

@@ -185,6 +185,15 @@ control_audit = Table(
     Index('ix_control_audit_ts', 'ts'),
 )
 
+equity_snapshots = Table(
+    'equity_snapshots', metadata,
+    Column('id', String, primary_key=True),
+    Column('ts', BigInteger, nullable=False),
+    Column('equity', Float, nullable=False),
+    Column('cash', Float, nullable=True),
+    Index('ix_equity_snapshots_ts', 'ts'),
+)
+
 
 # ---- 数据类（仓储层入参/出参）----
 @dataclass
@@ -305,3 +314,11 @@ class AuditEntry:
     target: str
     detail: str = ''
     outcome: str = 'ok'
+
+
+@dataclass
+class EquitySnapshot:
+    id: str
+    ts: int
+    equity: float
+    cash: Optional[float] = None

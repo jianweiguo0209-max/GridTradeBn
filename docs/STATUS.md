@@ -94,7 +94,7 @@ gridtrade/
 **fly app `gridtrade-hl`（region nrt 东京）**，三个 process group（同一镜像）：
 - **monitor**：~5s 循环，对账补单 + 实时记账 + 止盈止损 + 跨进程惰性 restore。
 - **scheduler**：常驻、睡到整点跑（关旧 tag→选币→准入→开新）。
-- **web**：fly 第三进程（**常驻 ≥1 台 / long-live**，`min_machines_running=1`），FastAPI 只读 dashboard（系统健康/活跃网格/单网格明细/历史战绩）；登录鉴权。P2 控制台：kill 两档(halt/panic) + 关/开网格 + 暂停 scheduler，均经 control_commands 指令队列由 monitor 执行（web 零下单）；control_flags 标志门控；control_audit 审计。注：原设 scale-to-zero(min=0)，但 CI 滚动部署不为空的新进程组建首台机器，故改 min=1（见 deploy/DEPLOY.md）。
+- **web**：fly 第三进程（**常驻 ≥1 台 / long-live**，`min_machines_running=1`），FastAPI 只读 dashboard（系统健康/活跃网格/单网格明细/历史战绩）；登录鉴权。P2 控制台：kill 两档(halt/panic) + 关/开网格 + 暂停 scheduler，均经 control_commands 指令队列由 monitor 执行（web 零下单）；control_flags 标志门控；control_audit 审计。注：原设 scale-to-zero(min=0)，但 CI 滚动部署不为空的新进程组建首台机器，故改 min=1（见 deploy/DEPLOY.md）。P3 复盘分析：/analytics 页（权益/已实现曲线、tag 归因、成交分布、退出原因，全服务端 SVG）；真实手续费铺表；equity_snapshots 由 monitor 节流写（EQUITY_SNAPSHOT_INTERVAL_SEC，默认 300s）。
 
 | 项 | 值 |
 |---|---|

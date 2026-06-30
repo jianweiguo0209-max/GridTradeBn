@@ -28,7 +28,8 @@ def restore_all(reconciler) -> List[str]:
 
 
 def run_monitor_cycle(reconciler, manager, log=print, *,
-                      flags=None, commands=None, audit=None, exchange='') -> dict:
+                      flags=None, commands=None, audit=None, exchange='',
+                      equity_repo=None, snapshot_interval_sec=300) -> dict:
     """monitor 机循环体：逐网格隔离——单网格故障降级记录，不阻塞其他网格的对账/止损。
 
     顺序：① 续平卡死的 CLOSING 网格（幂等自愈）② 惰性 restore 所有 ACTIVE 网格
@@ -84,6 +85,13 @@ def run_monitor_cycle(reconciler, manager, log=print, *,
             % (gid, d['model'], d['exchange'], d['drift'], d['tol']))
     if commands is not None and audit is not None:
         consume_one(commands, audit, manager, flags, exchange=exchange)
+    if equity_repo is not None:
+        try:
+            bal = manager.executor.adapter.fetch_balance()
+            equity_repo.add_if_due(bal.equity, getattr(bal, 'cash', None),
+                                   interval_sec=int(snapshot_interval_sec))
+        except Exception as exc:
+            log('[monitor] equity snapshot skipped: %r' % exc)
     return {'reconciled': reconciled, 'resumed': resumed, 'degraded': degraded,
             'drift': drift, 'monitored': monitored}
 
