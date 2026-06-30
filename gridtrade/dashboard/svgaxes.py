@@ -53,7 +53,7 @@ def legend(items: List[Tuple[str, str]], x, y) -> str:
     cx = x
     for color, text in items:
         out.append('<rect x="%.1f" y="%.1f" width="8" height="8" fill="%s"/>'
-                   % (cx, y, color))
+                   % (cx, y, svg_escape(color)))
         out.append('<text x="%.1f" y="%.1f" font-size="9" fill="#ccc">%s</text>'
                    % (cx + 10, y + 8, svg_escape(text)))
         cx += 60

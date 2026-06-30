@@ -35,5 +35,11 @@ def test_legend_swatches_and_text():
     assert svg.count('<rect') == 2 and '买' in svg and '卖' in svg
 
 
+def test_legend_escapes_text_and_color():
+    svg = legend([('"><script>', '<b>label')], x=0, y=0)
+    assert '<script>' not in svg and '<b>label' not in svg
+    assert '&lt;script&gt;' in svg and '&lt;b&gt;label' in svg
+
+
 def test_value_label_escapes():
     assert '<text' in value_label(10, 10, '1.5') and '1.5' in value_label(10, 10, '1.5')
