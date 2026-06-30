@@ -204,12 +204,17 @@ def create_app(store, adapter, *, username: str, password_hash: str,
         dist = an.fill_distribution(store, start_ms=start_ms)
         ctx = {
             'range': range,
-            'equity_svg': ch.line_chart([realized, equity]),
+            'equity_svg': ch.line_chart([realized, equity], x_is_time=True,
+                                        series_labels=[('#6cf', '已实现'), ('#fb0', '真权益')],
+                                        value_labels=True),
             'tags': an.tag_attribution(store, start_ms=start_ms),
-            'by_hour_svg': ch.bar_chart([(str(h), n) for h, n in dist.by_hour]),
-            'by_side_svg': ch.stacked_bar([('成交', dist.by_side)]) if dist.by_side else ch.bar_chart([]),
-            'by_line_svg': ch.bar_chart([(str(li), n) for li, n in dist.by_line]),
-            'fee_cum_svg': ch.line_chart([dist.fee_cum]),
+            'by_hour_svg': ch.bar_chart([(str(h), n) for h, n in dist.by_hour], value_labels=True),
+            'by_side_svg': (ch.stacked_bar([('成交', dist.by_side)],
+                                           seg_labels=[('#4caf50', '买'), ('#e53935', '卖')])
+                            if dist.by_side else ch.bar_chart([])),
+            'by_line_svg': ch.bar_chart([(str(li), n) for li, n in dist.by_line], value_labels=True),
+            'fee_cum_svg': ch.line_chart([dist.fee_cum], x_is_time=True,
+                                         series_labels=[('#6cf', '累计手续费')], value_labels=True),
             'exits': an.exit_reason_stats(store, start_ms=start_ms),
         }
         return templates.TemplateResponse(request, 'analytics.html', ctx)

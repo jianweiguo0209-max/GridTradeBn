@@ -36,3 +36,11 @@ def test_analytics_renders_with_data(store):
     assert r.status_code == 200
     assert '<svg' in r.text            # 图表渲染
     assert 'gt0' in r.text             # tag 归因表
+
+
+def test_analytics_charts_have_legend(store):
+    RecordRepository(store).add(Record(id='r9', exchange='x', symbol='BTC', tag='gt0',
+                                       total_pnl=5.0, exit_reason='take_profit', closed_at=1000))
+    r = _client(store).get('/analytics')
+    assert r.status_code == 200
+    assert '已实现' in r.text and '真权益' in r.text     # 权益图图例
