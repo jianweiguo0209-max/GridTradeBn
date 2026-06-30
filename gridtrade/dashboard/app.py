@@ -180,4 +180,28 @@ def create_app(store, adapter, *, username: str, password_hash: str,
         audit.add(u, 'CMD_SUBMIT', cmd.id, detail='{"type": "OPEN_GRID"}')
         return RedirectResponse('/controls', status_code=302)
 
+    @app.get('/analytics', response_class=HTMLResponse)
+    def analytics_page(request: Request, range: str = 'all'):
+        if not _user(request):
+            return RedirectResponse('/login', status_code=302)
+        from gridtrade.dashboard import analytics as an
+        from gridtrade.dashboard import charts as ch
+        from gridtrade.state.models import now_ms
+        cutoff = {'7d': 7 * 86400_000, '30d': 30 * 86400_000}.get(range, 0)
+        start_ms = (now_ms() - cutoff) if cutoff else 0
+        realized = an.realized_curve(store, start_ms=start_ms)
+        equity = an.equity_curve(store, start_ms=start_ms)
+        dist = an.fill_distribution(store, start_ms=start_ms)
+        ctx = {
+            'range': range,
+            'equity_svg': ch.line_chart([realized, equity]),
+            'tags': an.tag_attribution(store, start_ms=start_ms),
+            'by_hour_svg': ch.bar_chart([(str(h), n) for h, n in dist.by_hour]),
+            'by_side_svg': ch.stacked_bar([('成交', dist.by_side)]) if dist.by_side else ch.bar_chart([]),
+            'by_line_svg': ch.bar_chart([(str(li), n) for li, n in dist.by_line]),
+            'fee_cum_svg': ch.line_chart([dist.fee_cum]),
+            'exits': an.exit_reason_stats(store, start_ms=start_ms),
+        }
+        return templates.TemplateResponse(request, 'analytics.html', ctx)
+
     return app

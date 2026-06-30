@@ -18,7 +18,7 @@
       {{ m.machine }}: {{ m.age_sec | age_human }}{{ ' STALE' if m.stale }}</span>
   {% endfor %}
   {% if health.balance_error %}<span class="neg">balance err</span>{% endif %}
-  <nav><a href="/">overview</a> <a href="/history">history</a> <a href="/controls">controls</a> <a href="/universe">universe</a></nav>
+  <nav><a href="/">overview</a> <a href="/history">history</a> <a href="/controls">controls</a> <a href="/universe">universe</a> <a href="/analytics">analytics</a></nav>
 </header>
 {% endif %}
 <main>{% block content %}{% endblock %}</main>
