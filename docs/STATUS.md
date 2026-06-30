@@ -158,7 +158,8 @@ gridtrade/
 
 ## 9. 仍延后（需产品/口径决策，动手前先问）
 
-- **计价/结算币诚实化**（HL 内部曾用假 `USDT` 标签、实为 USDC）——**P1 代码+测试已完成**：`quote_currency` 驱动 canonical 符号（HL→`/USDC:USDC`，OKX 不变 `/USDT:USDT`），新增可选 `QUOTE_CURRENCY` config（空→用适配器类默认）；registry 实例覆写、factory 透传。core 视符号为不透明 ID 故零逻辑改动。**待 P2 testnet 切换**（决策已拍板：**A 等 flat** 再改白名单 secret `UNIVERSE_WHITELIST`→USDC 串并部署；历史已平网格**留旧 USDT 标签**）。完整方案见 [docs/计价币诚实化设计.md](计价币诚实化设计.md)。
+- ✅ ~~**计价/结算币诚实化**~~（HL 曾用假 `USDT` 标签、实为 USDC）——**P1+P2 完成**：`quote_currency` 驱动 canonical 符号（HL→`/USDC:USDC`，OKX 不变 `/USDT:USDT`），新增可选 `QUOTE_CURRENCY` config；registry 实例覆写、factory 透传；core 零逻辑改动。**testnet 已切 USDC（2026-06-30，app v39）**：A 等 flat（PANIC_CLOSE_ALL 平掉 4 个旧 USDT 网格）→ stage `UNIVERSE_WHITELIST`→USDC（26 币）→ push+CD 部署 → 核验 universe 全 USDC + 新网格 `OP/USDC:USDC`（26 挂单）开成。历史已平网格留旧 USDT 标签。完整方案见 [docs/计价币诚实化设计.md](计价币诚实化设计.md)。
+  - 遗留小观察：HL `list_instruments()` 含重复 native 折叠到同一 canonical（whitelist 26 → universe 56），**非本次引入**（base 提取结构未变），候选后续去重。
 - **ThresholdTrigger / ExternalSignalTrigger**（价格/指标阈值、外部信号触发器）——**三期**（需产品定义）；**扩展点已留**：子类化 `TriggerCondition` + 在 `TriggerEngine` 注册（见 `gridtrade/execution/triggers.py` 末尾的「三期预留扩展点」注释）。
 - ✅ ~~MarginGate（保证金门）~~ —— 已实现（准入门链 4/4：cash≥cap 保守口径 + 同轮累计扣减 + fail-closed，置链尾）。
 - ✅ ~~真并发 TOCTOU 测试~~ —— 已补（`tests/state/test_transition_concurrency.py` 真线程+Barrier 在本地 PG 验证版本守卫只放一个赢家；CI 仍 SQLite，CI PG job 待多监控机阶段）。
