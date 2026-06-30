@@ -216,8 +216,6 @@ class Grid:
     cap: Optional[float] = None
     created_at: int = 0
     updated_at: int = 0
-    opened_at: Optional[int] = None
-    closed_at: Optional[int] = None
     version: int = 1
 
 

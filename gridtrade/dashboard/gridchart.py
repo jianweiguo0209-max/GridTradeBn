@@ -2,7 +2,7 @@
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
-from gridtrade.state.models import now_ms
+from gridtrade.state.models import now_ms, TERMINAL_STATES
 
 _HOUR = 3600_000
 
@@ -41,6 +41,6 @@ def window_bounds(grid, window: str, *, now_ms_fn=now_ms) -> Tuple[int, int, str
         hours = {'1h': 1, '6h': 6, '24h': 24}[window]
         start, end = now - hours * _HOUR, now
     else:                                    # life（含非法回退）
-        start = int(grid.opened_at or grid.created_at or now)
-        end = int(grid.closed_at) if getattr(grid, 'closed_at', None) else now
+        start = int(grid.created_at or now)
+        end = int(grid.updated_at) if grid.status in TERMINAL_STATES else now
     return start, end, _timeframe_for(end - start)
