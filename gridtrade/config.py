@@ -56,6 +56,7 @@ class DeployConfig:
     blacklist: tuple = ()
     whitelist: tuple = ()
     scheduler_run_on_start: bool = False
+    equity_snapshot_interval_sec: float = 300.0
     dashboard_user: str = 'admin'
     dashboard_password_hash: str = ''
     dashboard_session_secret: str = ''
@@ -86,6 +87,7 @@ def load_deploy_config(env=None) -> DeployConfig:
         dashboard_password_hash=_s(env, 'DASHBOARD_PASSWORD_HASH', ''),
         dashboard_session_secret=_s(env, 'DASHBOARD_SESSION_SECRET', ''),
         dashboard_port=_i(env, 'PORT', 8080),
+        equity_snapshot_interval_sec=_f(env, 'EQUITY_SNAPSHOT_INTERVAL_SEC', 300.0),
     )
 
 

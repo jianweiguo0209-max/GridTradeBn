@@ -17,6 +17,7 @@ from gridtrade.execution.manager import GridManager
 from gridtrade.execution.reconciler import Reconciler
 from gridtrade.execution.triggers import (ScheduledSelectionTrigger,
                                           TriggerEngine)
+from gridtrade.state.equity import EquitySnapshotRepository
 from gridtrade.state.heartbeats import HeartbeatRepository
 from gridtrade.state.store import StateStore
 
@@ -35,6 +36,7 @@ class Runtime:
     flags: object = None
     commands: object = None
     audit: object = None
+    equity: object = None
 
 
 def build_runtime(config) -> Runtime:
@@ -76,4 +78,5 @@ def build_runtime(config) -> Runtime:
         heartbeats=HeartbeatRepository(store), event_bus=bus,
         flags=ControlFlagRepository(store), commands=CommandRepository(store),
         audit=AuditRepository(store),
+        equity=EquitySnapshotRepository(store),
     )
