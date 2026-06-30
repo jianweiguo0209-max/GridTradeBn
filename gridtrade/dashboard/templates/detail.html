@@ -1,6 +1,32 @@
 <!-- gridtrade/dashboard/templates/detail.html -->
 {% extends "base.html" %}{% block content %}
 <h1>{{ d.grid.symbol }} <small>{{ d.grid.id }}</small></h1>
+<section class="livechart-wrap" data-chart-src="/grid/{{ d.grid.id }}/chart">
+  <div class="rangesel">
+    走势：<a href="#" data-w="life">生命周期</a>
+    <a href="#" data-w="1h">1h</a> <a href="#" data-w="6h">6h</a> <a href="#" data-w="24h">24h</a>
+  </div>
+  <div id="livechart">加载中…</div>
+</section>
+<script>
+(function(){
+  var gid = {{ d.grid.id | tojson }};
+  var cur = 'life';
+  var box = document.getElementById('livechart');
+  function load(){
+    if (document.hidden) return;               // 隐藏标签不拉
+    fetch('/grid/' + encodeURIComponent(gid) + '/chart?window=' + cur)
+      .then(function(r){ return r.text(); })
+      .then(function(h){ box.innerHTML = h; })
+      .catch(function(){});
+  }
+  document.querySelectorAll('.rangesel a').forEach(function(a){
+    a.addEventListener('click', function(e){ e.preventDefault(); cur = a.getAttribute('data-w'); load(); });
+  });
+  load();
+  setInterval(load, 5000);
+})();
+</script>
 <p>status={{ d.grid.status }} dir={{ d.grid.direction }}
    range={{ d.grid.low_price | fmt_num }}–{{ d.grid.high_price | fmt_num }}
    stop={{ d.grid.stop_low_price | fmt_num }}/{{ d.grid.stop_high_price | fmt_num }}</p>
