@@ -117,3 +117,10 @@ unset TEST_DATABASE_URL                               # 回到默认 SQLite
 - 控制动作 = web 写 DB（control_flags/control_commands/control_audit），monitor 每 ~5s 消费执行，web 永不下单。
 - halt：冻结补单/开仓/选币，止损与记账照常。panic：置 halt + 入队全平（需输入 PANIC 确认）。
 - 关/开网格、暂停 scheduler 同走指令/标志；审计与队列状态在 /controls 页可查。
+
+---
+
+### 复盘分析（P3）
+- /analytics：权益/已实现盈亏曲线 + tag 盈亏归因 + 成交分布（时间/买卖/line/累计费）+ 退出原因，全部服务端内联 SVG（零 JS）。范围过滤 all/7d/30d。
+- equity_snapshots 表随 create_all 自动建（无需 migrate）；monitor 每 EQUITY_SNAPSHOT_INTERVAL_SEC（默认 300s）节流写一行真权益（fetch_balance().equity，含未实现），取余额失败跳过不崩。
+- 真实手续费（grid_fills.fee）已铺进成交流水表 / 总览 / tag 归因。
