@@ -159,6 +159,17 @@ class CcxtAdapter(ExchangeAdapter):
                                      self._params(reduce_only, client_oid))
         return self._to_order(r)
 
+    def create_stop_order(self, symbol, side, size, trigger_price, *,
+                          reduce_only=True, slippage=0.15, client_oid=None) -> Order:
+        # 触发市价单：stopLossPrice -> HL tpsl='sl'；参考价传触发价本身，
+        # 故成交底线 = trigger_price×(1∓slippage)，slippage 控制为保成交愿追多远。
+        p = self._params(reduce_only, client_oid)
+        p['stopLossPrice'] = trigger_price
+        p['slippage'] = slippage
+        r = self.client.create_order(self.to_native(symbol), 'market', side, size,
+                                     trigger_price, p)
+        return self._to_order(r)
+
     def cancel_order(self, symbol, order_id) -> None:
         self.client.cancel_order(order_id, self.to_native(symbol))
 

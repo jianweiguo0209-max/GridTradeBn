@@ -27,11 +27,13 @@ class FakeExchange(ExchangeAdapter):
         self._ts = itertools.count(1)
         self._fee_rate = 0.0005
         self._default_price = price
+        self._stops = {}
 
     # ---- 测试钩子 ----
     def set_price(self, symbol: str, price: float) -> None:
         self._price[symbol] = price
         self._match(symbol, price)
+        self._check_stops(symbol, price)
 
     def seed_ohlcv(self, symbol: str, df: pd.DataFrame) -> None:
         self._ohlcv[symbol] = df.copy()
@@ -72,6 +74,38 @@ class FakeExchange(ExchangeAdapter):
             id=str(tid), client_oid=o.client_oid, symbol=o.symbol,
             side=o.side, price=fill_price, size=o.size,
             fee=o.size * fill_price * self._fee_rate, ts=tid, order_id=o.id))
+
+    def create_stop_order(self, symbol, side, size, trigger_price, *,
+                          reduce_only=True, slippage=0.15, client_oid=None) -> Order:
+        oid = str(next(self._ids))
+        o = Order(id=oid, client_oid=client_oid or oid, symbol=symbol, side=side,
+                  price=trigger_price, size=size, filled=0.0, status='open',
+                  reduce_only=reduce_only)
+        self._stops.setdefault(symbol, []).append(o)
+        return o
+
+    def _check_stops(self, symbol: str, price: float) -> None:
+        for o in list(self._stops.get(symbol, [])):
+            crossed = (o.side == 'sell' and price <= o.price) or \
+                      (o.side == 'buy' and price >= o.price)
+            if not crossed:
+                continue
+            pos = self._pos.get(symbol, Position(symbol, 0.0, 0.0))
+            if o.reduce_only:
+                # 只在有反向持仓时成交，size 封顶到持仓
+                if o.side == 'sell' and pos.net_size > 0:
+                    fill_size = min(o.size, pos.net_size)
+                elif o.side == 'buy' and pos.net_size < 0:
+                    fill_size = min(o.size, -pos.net_size)
+                else:
+                    continue   # 无可减仓位 -> 空操作，留在簿上
+            else:
+                fill_size = o.size
+            filled = Order(id=o.id, client_oid=o.client_oid, symbol=symbol,
+                           side=o.side, price=o.price, size=fill_size, filled=fill_size,
+                           status='closed', reduce_only=o.reduce_only)
+            self._fill(filled, price)
+            self._stops[symbol].remove(o)
 
     # ---- 行情 ----
     def list_instruments(self) -> List[Instrument]:
@@ -124,9 +158,11 @@ class FakeExchange(ExchangeAdapter):
     def cancel_all(self, symbol) -> None:
         for oid in [k for k, v in self._open.items() if v.symbol == symbol]:
             del self._open[oid]
+        self._stops.pop(symbol, None)
 
     def fetch_open_orders(self, symbol) -> List[Order]:
-        return [o for o in self._open.values() if o.symbol == symbol]
+        return ([o for o in self._open.values() if o.symbol == symbol]
+                + list(self._stops.get(symbol, [])))
 
     def fetch_my_trades(self, symbol, since_ms=None) -> List[Trade]:
         return [t for t in self._trades if t.symbol == symbol

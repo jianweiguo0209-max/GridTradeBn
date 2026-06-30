@@ -114,6 +114,15 @@ class ExchangeAdapter(ABC):
                             client_oid: Optional[str] = None) -> Order: ...
 
     @abstractmethod
+    def create_stop_order(self, symbol: str, side: str, size: float,
+                          trigger_price: float, *,
+                          reduce_only: bool = True, slippage: float = 0.15,
+                          client_oid: Optional[str] = None) -> Order:
+        """交易所原生触发市价单（灾难保险丝）。trigger_price=触发价；触发后市价成交，
+        成交底线 = trigger_price×(1∓slippage)；reduce_only 默认 True。"""
+        ...
+
+    @abstractmethod
     def cancel_order(self, symbol: str, order_id: str) -> None: ...
 
     @abstractmethod

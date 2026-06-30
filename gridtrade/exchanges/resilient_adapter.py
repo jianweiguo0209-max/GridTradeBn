@@ -63,6 +63,14 @@ class ResilientAdapter(ExchangeAdapter):
         return self._call('create_market_order', symbol, side, size,
                           reduce_only=reduce_only, client_oid=client_oid)
 
+    def create_stop_order(self, symbol: str, side: str, size: float,
+                          trigger_price: float, *, reduce_only: bool = True,
+                          slippage: float = 0.15,
+                          client_oid: Optional[str] = None) -> Order:
+        return self._call('create_stop_order', symbol, side, size, trigger_price,
+                          reduce_only=reduce_only, slippage=slippage,
+                          client_oid=client_oid)
+
     def cancel_order(self, symbol: str, order_id: str) -> None:
         return self._call('cancel_order', symbol, order_id)
 
