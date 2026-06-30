@@ -1,4 +1,5 @@
 import pandas as pd
+from unittest.mock import patch
 from gridtrade.dashboard.gridchart import build_grid_chart
 from gridtrade.exchanges.fake import FakeExchange
 from gridtrade.state.grids import GridRepository
@@ -58,3 +59,18 @@ def test_build_degrades_on_ohlcv_error(store):
 
 def test_build_missing_grid_returns_none(store):
     assert build_grid_chart(store, FakeExchange(), 'nope', 'life') is None
+
+
+def test_build_degrades_on_missing_price_sequence_key(store):
+    """Ensure that if grid_order_info returns dict without '价格序列' key, chart still builds."""
+    _seed(store)
+    fake = FakeExchange(); fake.seed_ohlcv('BTC/USDT:USDT', _candles()); fake.set_price('BTC/USDT:USDT', 102.0)
+
+    # Monkeypatch grid_order_info to return empty dict (no '价格序列' key)
+    with patch('gridtrade.dashboard.gridchart.grid_order_info', return_value={}):
+        dto = build_grid_chart(store, fake, 'g1', 'life', now_ms_fn=lambda: 2_000_000)
+
+    # Chart should build successfully with empty grid_lines, not crash
+    assert dto is not None
+    assert dto.grid_lines == []
+    assert dto.price_series == [(1_000_000, 101.0), (1_060_000, 102.5)]

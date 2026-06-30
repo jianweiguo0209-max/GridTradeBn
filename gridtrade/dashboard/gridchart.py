@@ -60,7 +60,10 @@ def _grid_lines(grid) -> List[float]:
         return []
     if gi is None:
         return []
-    return [float(p) for p in gi['价格序列']]
+    seq = gi.get('价格序列')
+    if seq is None:
+        return []
+    return [float(p) for p in seq]
 
 
 def build_grid_chart(store, adapter, grid_id, window, *, now_ms_fn=now_ms) -> Optional[ChartDTO]:
