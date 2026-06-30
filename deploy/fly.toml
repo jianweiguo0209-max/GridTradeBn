@@ -16,6 +16,11 @@ primary_region = "nrt"
 [build]
   dockerfile = "Dockerfile"
 
+# 发布前一次性钩子：在新镜像里、用 app 的 DATABASE_URL 跑增量迁移，成功后才上线新代码。
+# dbadmin migrate 幂等（缺列才 ALTER），保证 schema 先于新代码就绪（避免新代码读 grid_fills.fee 时列不存在）。
+[deploy]
+  release_command = "python -m gridtrade.runtime.dbadmin migrate"
+
 # 非敏感默认配置（敏感项走 `fly secrets set`：HL_WALLET_ADDRESS / HL_PRIVATE_KEY / DATABASE_URL）
 [env]
   EXCHANGE = "hyperliquid"
