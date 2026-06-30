@@ -27,6 +27,13 @@ def test_render_degrades_without_ohlcv():
     assert svg.count('<line') >= 2                 # 网格线仍在
 
 
+def test_render_degrades_on_empty_series_even_if_ohlcv_ok():
+    svg = render(_dto(price_series=[], ohlcv_ok=True), width=200, height=200, pad=20)
+    assert '<polyline' not in svg          # 空序列即降级，即便 ohlcv_ok=True
+    assert '行情暂不可用' in svg
+    assert svg.count('<line') >= 2         # 网格线仍在
+
+
 def test_render_all_empty_placeholder():
     svg = render(_dto(price_series=[], ohlcv_ok=False, grid_lines=[], open_orders=[],
                       fills=[], entry_price=None, stop_low=None, stop_high=None,
