@@ -92,3 +92,65 @@ def tag_attribution(store, *, start_ms: int = 0) -> List[TagStat]:
             win_rate=(a['win'] / a['count'] if a['count'] else 0.0),
             avg_hold_ms=avg_hold, max_drawdown=_max_drawdown(a['cum'])))
     return out
+
+
+@dataclass
+class FillDist:
+    by_hour: List[Tuple]
+    by_side: List[Tuple]
+    by_line: List[Tuple]
+    fee_cum: List[Tuple]
+
+
+def fill_distribution(store, *, start_ms: int = 0) -> FillDist:
+    with store.engine.connect() as c:
+        rows = c.execute(
+            select(grid_fills.c.side, grid_fills.c.line_index,
+                   grid_fills.c.fee, grid_fills.c.ts)
+            .where(grid_fills.c.ts >= start_ms)
+            .order_by(grid_fills.c.ts)
+        ).all()
+    hour = {}; side = {}; line = {}
+    fee_cum = []; run = 0.0
+    for s, li, fee, ts in rows:
+        hb = int(ts) // 3_600_000
+        hour[hb] = hour.get(hb, 0) + 1
+        side[s] = side.get(s, 0) + 1
+        line[li] = line.get(li, 0) + 1
+        run += (fee or 0.0)
+        fee_cum.append((int(ts), run))
+    by_side = [(k, side.get(k, 0)) for k in ('buy', 'sell') if k in side]
+    return FillDist(
+        by_hour=sorted(hour.items()),
+        by_side=by_side,
+        by_line=sorted(line.items()),
+        fee_cum=fee_cum)
+
+
+@dataclass
+class ExitStat:
+    reason: str
+    count: int
+    share: float
+    avg_pnl: float
+
+
+def exit_reason_stats(store, *, start_ms: int = 0) -> List[ExitStat]:
+    with store.engine.connect() as c:
+        rows = c.execute(
+            select(order_records.c.exit_reason, order_records.c.total_pnl)
+            .where(order_records.c.closed_at.isnot(None),
+                   order_records.c.closed_at >= start_ms)
+        ).all()
+    agg = {}
+    for reason, pnl in rows:
+        r = reason or 'unknown'
+        a = agg.setdefault(r, {'count': 0, 'pnl': 0.0})
+        a['count'] += 1
+        a['pnl'] += (pnl or 0.0)
+    total = sum(a['count'] for a in agg.values()) or 1
+    out = [ExitStat(reason=r, count=a['count'], share=a['count'] / total,
+                    avg_pnl=a['pnl'] / a['count'] if a['count'] else 0.0)
+           for r, a in agg.items()]
+    out.sort(key=lambda s: s.count, reverse=True)
+    return out
