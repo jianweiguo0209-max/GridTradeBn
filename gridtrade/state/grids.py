@@ -11,7 +11,9 @@ from gridtrade.state.models import (ACTIVE_STATES, ConcurrencyError, Grid,
 _FIELDS = ('id', 'exchange', 'symbol', 'status', 'offset', 'tag', 'direction',
            'entry_price', 'low_price', 'high_price', 'stop_low_price',
            'stop_high_price', 'grid_count', 'order_num', 'leverage', 'cap',
-           'created_at', 'updated_at', 'version')
+           'created_at', 'updated_at', 'version', 'fuse_low_oid', 'fuse_high_oid')
+
+_UNSET = object()
 
 
 def _to_grid(row) -> Grid:
@@ -92,3 +94,15 @@ class GridRepository:
                 raise ConcurrencyError(
                     f'stale version for grid {grid_id}: expected {expected_version}')
         return self.get(grid_id)
+
+    def set_fuse_oids(self, grid_id, *, low_oid=_UNSET, high_oid=_UNSET) -> None:
+        vals = {}
+        if low_oid is not _UNSET:
+            vals['fuse_low_oid'] = low_oid
+        if high_oid is not _UNSET:
+            vals['fuse_high_oid'] = high_oid
+        if not vals:
+            return
+        vals['updated_at'] = now_ms()
+        with self.engine.begin() as c:
+            c.execute(update(grids).where(grids.c.id == grid_id).values(**vals))

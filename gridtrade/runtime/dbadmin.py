@@ -30,9 +30,22 @@ def add_grid_fills_fee(store) -> str:
     return 'added'
 
 
+def add_grids_fuse_oids(store) -> str:
+    """幂等：grids 缺 fuse_low_oid/fuse_high_oid 列则加上（NULL 允许）。"""
+    cols = {c['name'] for c in sa.inspect(store.engine).get_columns('grids')}
+    todo = [c for c in ('fuse_low_oid', 'fuse_high_oid') if c not in cols]
+    if not todo:
+        return 'skipped'
+    with store.engine.begin() as c:
+        for col in todo:
+            c.execute(sa.text('ALTER TABLE grids ADD COLUMN %s VARCHAR' % col))
+    return 'added'
+
+
 def migrate(store) -> list:
     """跑所有增量迁移（幂等）。返回每步结果。"""
-    return [('add_grid_fills_fee', add_grid_fills_fee(store))]
+    return [('add_grid_fills_fee', add_grid_fills_fee(store)),
+            ('add_grids_fuse_oids', add_grids_fuse_oids(store))]
 
 
 def run(action, *, store_factory=None):
