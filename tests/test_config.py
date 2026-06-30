@@ -68,6 +68,12 @@ def test_whitelist_parsing():
     assert cfg.whitelist == ('BTC/USDT:USDT', 'ETH/USDT:USDT')
 
 
+def test_quote_currency_optional_defaults_empty():
+    # 未设 -> 空串（用适配器类默认 HL=USDC / OKX=USDT）
+    assert load_deploy_config(env={}).quote_currency == ''
+    assert load_deploy_config(env={'QUOTE_CURRENCY': 'USDC'}).quote_currency == 'USDC'
+
+
 def test_scheduler_run_on_start_flag():
     assert load_deploy_config(env={}).scheduler_run_on_start is False
     assert load_deploy_config(

@@ -1,5 +1,8 @@
 """交易所抽象层（Ports & Adapters 的端口）。
-规范符号 = ccxt 统一符号，永续如 'BTC/USDT:USDT'。各所原生格式仅在各自适配器内部映射。
+规范符号 = ccxt 统一符号，永续如 'BASE/QUOTE:QUOTE'，其中 QUOTE 如实反映各所结算币
+（OKX→USDT 即 'BTC/USDT:USDT'、HL→USDC 即 'BTC/USDC:USDC'）；由各适配器的
+`quote_currency` 驱动（可经 QUOTE_CURRENCY config 覆写）。各所原生格式仅在各自适配器内部映射。
+core 视符号为不透明字符串 ID，不解析其 quote 段。
 """
 from abc import ABC, abstractmethod
 from dataclasses import dataclass

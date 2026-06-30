@@ -45,6 +45,7 @@ def build_runtime(config) -> Runtime:
         'wallet_address': config.wallet_address,
         'private_key': config.private_key,
         'testnet': config.testnet,
+        'quote_currency': config.quote_currency,
     })
     adapter = ResilientAdapter(inner, breaker=CircuitBreaker())
 

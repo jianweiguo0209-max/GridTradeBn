@@ -9,14 +9,16 @@ class OkxAdapter(CcxtAdapter):
     def __init__(self, client):
         super().__init__(client, name='okx')
 
-    # 规范 'BTC/USDT:USDT' <-> 原生 'BTC-USDT-SWAP'
+    # 规范 'BTC/USDT:USDT' <-> 原生 'BTC-USDT-SWAP'（结算币由 self.quote_currency 派生）
     def to_native(self, symbol: str) -> str:
         base = symbol.split('/')[0]
-        return f'{base}-USDT-SWAP'
+        return f'{base}-{self.quote_currency}-SWAP'
 
     def to_canonical(self, native: str) -> str:
-        if native.endswith('-USDT-SWAP'):
-            return f'{native[:-len("-USDT-SWAP")]}/USDT:USDT'
+        suffix = f'-{self.quote_currency}-SWAP'
+        if native.endswith(suffix):
+            q = self.quote_currency
+            return f'{native[:-len(suffix)]}/{q}:{q}'
         return native
 
     @classmethod

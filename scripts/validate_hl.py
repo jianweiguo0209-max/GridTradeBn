@@ -36,8 +36,9 @@ class RetryingHyperliquidAdapter(HyperliquidAdapter):
     def fetch_funding_history(self, symbol, start_ms, end_ms):
         return self._retry(super().fetch_funding_history, symbol, start_ms, end_ms)
 
-UNIVERSE = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'AVAX/USDT:USDT',
-            'ARB/USDT:USDT', 'OP/USDT:USDT', 'LINK/USDT:USDT', 'DOGE/USDT:USDT']
+# HL 结算币为 USDC，canonical 如实反映（见 docs/计价币诚实化设计.md）
+UNIVERSE = ['BTC/USDC:USDC', 'ETH/USDC:USDC', 'SOL/USDC:USDC', 'AVAX/USDC:USDC',
+            'ARB/USDC:USDC', 'OP/USDC:USDC', 'LINK/USDC:USDC', 'DOGE/USDC:USDC']
 
 STRATEGY = {
     'period': '12H', 'max_candle_num': 160, 'weight_list': [1, 1, 1],
