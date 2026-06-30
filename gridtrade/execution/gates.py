@@ -37,8 +37,9 @@ class AdmissionGate(ABC):
 
 
 class GateChain:
-    def __init__(self, gates: Iterable[AdmissionGate]):
+    def __init__(self, gates: Iterable[AdmissionGate], *, log=None):
         self.gates: List[AdmissionGate] = list(gates)
+        self.log = log      # 可选：被拒提案留痕（None=静默）
 
     def evaluate(self, proposal: GridProposal) -> GateResult:
         for gate in self.gates:
@@ -51,7 +52,15 @@ class GateChain:
         proposals = list(proposals)
         for gate in self.gates:
             gate.begin_batch()
-        return [p for p in proposals if self.evaluate(p).passed]
+        kept: List[GridProposal] = []
+        for p in proposals:
+            res = self.evaluate(p)
+            if res.passed:
+                kept.append(p)
+            elif self.log is not None:   # 可观测性：该开未开必须留痕（gate+reason+symbol）
+                self.log('[gate] rejected %s tag=%s by %s: %s'
+                         % (p.symbol, p.tag, res.gate, res.reason))
+        return kept
 
 
 class SymbolLockGate(AdmissionGate):
@@ -116,21 +125,25 @@ class MarginGate(AdmissionGate):
     fail-closed（余额读不到则全拒）。须置于门链末尾（短路链中过它即准入，预留不虚高）。
     """
 
-    def __init__(self, adapter, default_cap):
+    def __init__(self, adapter, default_cap, *, log=None):
         self.adapter = adapter
         self.default_cap = float(default_cap)
         self._available = None      # 本批可用余额快照；None=未快照
         self._reserved = 0.0        # 本批已放行提议的累计所需
         self._balance_ok = True
+        self.log = log              # 可选：fail-closed 时把被吞的余额异常打出来
 
     def begin_batch(self) -> None:
         self._reserved = 0.0
         try:
             self._available = float(self.adapter.fetch_balance().cash)
             self._balance_ok = True
-        except Exception:           # fail-closed：余额读不到 -> 本批全拒（绝不吞 BaseException）
+        except Exception as exc:    # fail-closed：余额读不到 -> 本批全拒（绝不吞 BaseException）
             self._available = 0.0
             self._balance_ok = False
+            if self.log is not None:    # 不再静默：留真因，否则整批被拒却零线索
+                self.log('[gate] MarginGate fail-closed: balance fetch failed: %r'
+                         % (exc,))
 
     def check(self, proposal: GridProposal) -> GateResult:
         if self._available is None:     # 未经 begin_batch 的独立 evaluate -> 惰性快照一次

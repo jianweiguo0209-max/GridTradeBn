@@ -59,6 +59,36 @@ def test_empty_chain_passes():
     assert GateChain([]).evaluate(_proposal()).passed is True
 
 
+def test_chain_filter_logs_each_rejection():
+    # 可观测性：被门拒掉的提案必须留痕（symbol + gate + reason），
+    # 否则「该开未开」无法事后定位（cf. 2026-06-30 11:00 JUP 静默被丢）。
+    logs = []
+
+    class _BySymbol(AdmissionGate):
+        def check(self, proposal):
+            ok = proposal.symbol != 'ETH/USDT:USDT'
+            return GateResult(ok, 'BySymbol', '' if ok else 'eth blocked')
+
+    chain = GateChain([_BySymbol()], log=logs.append)
+    chain.filter([_proposal('BTC/USDT:USDT'), _proposal('ETH/USDT:USDT')])
+    assert any('ETH/USDT:USDT' in m and 'BySymbol' in m and 'eth blocked' in m
+               for m in logs), logs
+    # 放行的提案不应被当作拒绝打日志
+    assert not any('BTC/USDT:USDT' in m for m in logs), logs
+
+
+def test_chain_filter_without_log_is_silent_and_works():
+    # 向后兼容：不传 log 不报错、过滤语义不变
+    class _BySymbol(AdmissionGate):
+        def check(self, proposal):
+            ok = proposal.symbol != 'ETH/USDT:USDT'
+            return GateResult(ok, 'BySymbol', '' if ok else 'blocked')
+
+    kept = GateChain([_BySymbol()]).filter(
+        [_proposal('BTC/USDT:USDT'), _proposal('ETH/USDT:USDT')])
+    assert [p.symbol for p in kept] == ['BTC/USDT:USDT']
+
+
 def _grid_repo_with(store, *active_symbols, exchange='okx'):
     from gridtrade.state.grids import GridRepository
     from gridtrade.state.models import Grid, ACTIVE
@@ -212,6 +242,27 @@ def test_margin_gate_fail_closed_on_balance_error():
     gate.begin_batch()
     r = gate.check(_proposal())
     assert r.passed is False and r.reason == 'balance unavailable'
+
+
+def test_margin_gate_logs_swallowed_balance_exception():
+    # fail-closed 不再静默：被吞掉的真实余额异常必须打出来，否则整批被拒却零线索
+    # （cf. MarginGate 静默 fail-closed → 整轮开仓被无声丢弃）。
+    from gridtrade.execution.gates import MarginGate
+    logs = []
+    gate = MarginGate(_BalAdapter(1000.0, raises=True), default_cap=100.0,
+                      log=logs.append)
+    gate.begin_batch()
+    assert any('MarginGate' in m and ('balance down' in m or 'RuntimeError' in m)
+               for m in logs), logs
+
+
+def test_margin_gate_log_silent_on_success():
+    # 正常取到余额时不应打错误日志
+    from gridtrade.execution.gates import MarginGate
+    logs = []
+    gate = MarginGate(_BalAdapter(1000.0), default_cap=100.0, log=logs.append)
+    gate.begin_batch()
+    assert logs == []
 
 
 def test_margin_gate_in_chain_filter_cumulative_and_per_batch_snapshot():
