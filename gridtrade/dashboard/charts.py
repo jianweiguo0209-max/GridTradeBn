@@ -19,7 +19,7 @@ def _frame(width, height):
     return _L, width - _R, _T, height - _B     # plot_left, plot_right, plot_top, plot_bottom
 
 
-def line_chart(series, *, width: int = 720, height: int = 240, pad: int = 10,
+def line_chart(series, *, width: int = 720, height: int = 240,
                x_is_time: bool = False, series_labels=None, value_labels: bool = False) -> str:
     pts = [p for s in series for p in s]
     if not pts:
@@ -56,7 +56,7 @@ def line_chart(series, *, width: int = 720, height: int = 240, pad: int = 10,
     return '<svg viewBox="0 0 %d %d" class="chart">%s</svg>' % (width, height, ''.join(parts))
 
 
-def bar_chart(bars, *, width: int = 720, height: int = 240, pad: int = 10,
+def bar_chart(bars, *, width: int = 720, height: int = 240,
               value_labels: bool = False) -> str:
     if not bars:
         return _placeholder(width, height)
@@ -84,7 +84,7 @@ def bar_chart(bars, *, width: int = 720, height: int = 240, pad: int = 10,
     return '<svg viewBox="0 0 %d %d" class="chart">%s</svg>' % (width, height, ''.join(parts))
 
 
-def stacked_bar(groups, *, width: int = 720, height: int = 240, pad: int = 10,
+def stacked_bar(groups, *, width: int = 720, height: int = 240,
                 seg_labels=None) -> str:
     if not groups:
         return _placeholder(width, height)

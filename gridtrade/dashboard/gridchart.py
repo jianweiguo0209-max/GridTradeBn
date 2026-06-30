@@ -114,7 +114,7 @@ def _yvals(dto) -> List[float]:
     return vs
 
 
-def render(dto, *, width: int = 720, height: int = 320, pad: int = 28) -> str:
+def render(dto, *, width: int = 720, height: int = 320) -> str:
     yvals = _yvals(dto)
     if not yvals:
         return ('<svg viewBox="0 0 %d %d" class="chart"><text x="%d" y="%d" '

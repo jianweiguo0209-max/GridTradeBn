@@ -12,7 +12,7 @@ def _dto(**kw):
 
 
 def test_render_full_chart():
-    svg = render(_dto(), width=200, height=200, pad=20)
+    svg = render(_dto(), width=200, height=200)
     assert svg.startswith('<svg') and svg.endswith('</svg>')
     assert '<polyline' in svg                      # 价格走势
     assert svg.count('<line') >= 2 + 1 + 2         # 2 网格线 + entry + 2 stop（至少）
@@ -21,14 +21,14 @@ def test_render_full_chart():
 
 
 def test_render_degrades_without_ohlcv():
-    svg = render(_dto(price_series=[], ohlcv_ok=False), width=200, height=200, pad=20)
+    svg = render(_dto(price_series=[], ohlcv_ok=False), width=200, height=200)
     assert '<polyline' not in svg                  # 无价格折线
     assert '行情暂不可用' in svg
     assert svg.count('<line') >= 2                 # 网格线仍在
 
 
 def test_render_degrades_on_empty_series_even_if_ohlcv_ok():
-    svg = render(_dto(price_series=[], ohlcv_ok=True), width=200, height=200, pad=20)
+    svg = render(_dto(price_series=[], ohlcv_ok=True), width=200, height=200)
     assert '<polyline' not in svg          # 空序列即降级，即便 ohlcv_ok=True
     assert '行情暂不可用' in svg
     assert svg.count('<line') >= 2         # 网格线仍在

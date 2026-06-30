@@ -2,10 +2,10 @@ from gridtrade.dashboard.charts import line_chart, bar_chart, stacked_bar
 
 
 def test_line_chart_maps_points():
-    # 单线两点 (0,0),(10,10)；width=height=100,pad=10
-    # 新绘图区 _L=34,_R=10,_T=16,_B=16 → pl=34,pr=90,pt=16,pb=84
+    # 单线两点 (0,0),(10,10)；width=height=100
+    # 绘图区 _L=34,_R=10,_T=16,_B=16 → pl=34,pr=90,pt=16,pb=84
     # sx(0)=34, sy(0)=84; sx(10)=90, sy(10)=16
-    svg = line_chart([[(0, 0), (10, 10)]], width=100, height=100, pad=10)
+    svg = line_chart([[(0, 0), (10, 10)]], width=100, height=100)
     assert '<svg' in svg and '<polyline' in svg
     assert '34.0,84.0' in svg and '90.0,16.0' in svg
 
@@ -16,7 +16,7 @@ def test_line_chart_empty_placeholder():
 
 
 def test_bar_chart_rects():
-    svg = bar_chart([('a', 5.0), ('b', 10.0)], width=100, height=100, pad=10)
+    svg = bar_chart([('a', 5.0), ('b', 10.0)], width=100, height=100)
     assert svg.count('<rect') == 2
     # 新绘图区 _L=34,_R=10,_T=16,_B=16 → pl=34,pr=90,pt=16,pb=84 → ih=68
     # 最大值 10 → 满高(68)，5 → 半高(34)
@@ -28,7 +28,7 @@ def test_bar_chart_empty():
 
 
 def test_stacked_bar_segments():
-    svg = stacked_bar([('g1', [('buy', 3.0), ('sell', 1.0)])], width=100, height=100, pad=10)
+    svg = stacked_bar([('g1', [('buy', 3.0), ('sell', 1.0)])], width=100, height=100)
     assert svg.count('<rect') == 2     # 两段堆叠
 
 
