@@ -101,3 +101,70 @@ def build_grid_chart(store, adapter, grid_id, window, *, now_ms_fn=now_ms) -> Op
         grid_lines=grid_lines, open_orders=open_orders, fills=fills,
         entry_price=grid.entry_price, stop_low=grid.stop_low_price,
         stop_high=grid.stop_high_price, current_price=current_price)
+
+
+def _yvals(dto) -> List[float]:
+    vs = [p for _, p in dto.price_series]
+    vs += list(dto.grid_lines)
+    for v in (dto.entry_price, dto.stop_low, dto.stop_high, dto.current_price):
+        if v is not None:
+            vs.append(float(v))
+    return vs
+
+
+def render(dto, *, width: int = 720, height: int = 320, pad: int = 28) -> str:
+    yvals = _yvals(dto)
+    if not yvals:
+        return ('<svg viewBox="0 0 %d %d" class="chart"><text x="%d" y="%d" '
+                'text-anchor="middle" fill="#999">无数据</text></svg>'
+                % (width, height, width // 2, height // 2))
+    ymin, ymax = min(yvals), max(yvals)
+    dy = (ymax - ymin) or 1.0
+    xmin, xmax = dto.start_ms, dto.end_ms
+    dx = (xmax - xmin) or 1.0
+    iw, ih = width - 2 * pad, height - 2 * pad
+
+    def sx(t): return pad + (t - xmin) / dx * iw
+    def sy(p): return pad + (ymax - p) / dy * ih
+
+    buy = {round(pr, 8) for pr, sd in dto.open_orders if sd == 'buy'}
+    sell = {round(pr, 8) for pr, sd in dto.open_orders if sd == 'sell'}
+    parts = []
+    # 网格挂点线（买绿/卖红/其余灰）
+    for gl in dto.grid_lines:
+        key = round(gl, 8)
+        color = '#4caf50' if key in buy else ('#e53935' if key in sell else '#333')
+        y = sy(gl)
+        parts.append('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" '
+                     'stroke-width="0.8"/>' % (pad, y, width - pad, y, color))
+    # 入场（中性虚线）+ 止盈/止损（红虚线）
+    if dto.entry_price is not None:
+        y = sy(dto.entry_price)
+        parts.append('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="#999" '
+                     'stroke-dasharray="4" stroke-width="0.8"/>' % (pad, y, width - pad, y))
+    for stop in (dto.stop_low, dto.stop_high):
+        if stop is not None:
+            y = sy(stop)
+            parts.append('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="#e53935" '
+                         'stroke-dasharray="4" stroke-width="0.8"/>' % (pad, y, width - pad, y))
+    # 价格走势 / 降级文案
+    if dto.ohlcv_ok and dto.price_series:
+        coords = ' '.join('%.1f,%.1f' % (sx(t), sy(p)) for t, p in dto.price_series)
+        parts.append('<polyline fill="none" stroke="#6cf" stroke-width="1.5" points="%s"/>'
+                     % coords)
+    else:
+        parts.append('<text x="%d" y="%d" text-anchor="middle" fill="#e53935">行情暂不可用</text>'
+                     % (width // 2, pad + 12))
+    # 已成交点（买绿卖红）
+    for ts, price, side in dto.fills:
+        if not (xmin <= ts <= xmax):
+            continue
+        c = '#4caf50' if side == 'buy' else '#e53935'
+        parts.append('<circle cx="%.1f" cy="%.1f" r="2.5" fill="%s"/>' % (sx(ts), sy(price), c))
+    # 当前价（横虚线 + 右缘点）
+    if dto.current_price is not None:
+        y = sy(dto.current_price)
+        parts.append('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="#fb0" '
+                     'stroke-dasharray="2" stroke-width="0.8"/>' % (pad, y, width - pad, y))
+        parts.append('<circle cx="%.1f" cy="%.1f" r="3" fill="#fb0"/>' % (width - pad, y))
+    return '<svg viewBox="0 0 %d %d" class="chart">%s</svg>' % (width, height, ''.join(parts))
