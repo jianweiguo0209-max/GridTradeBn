@@ -44,6 +44,7 @@ class DeployConfig:
     wallet_address: str
     private_key: str
     testnet: bool
+    quote_currency: str  # 计价/结算币覆写；'' -> 用适配器类默认（HL=USDC / OKX=USDT）
     database_url: str
     cap: float
     leverage: float
@@ -71,6 +72,7 @@ def load_deploy_config(env=None) -> DeployConfig:
         wallet_address=_s(env, 'HL_WALLET_ADDRESS', ''),
         private_key=_s(env, 'HL_PRIVATE_KEY', ''),
         testnet=_b(env, 'HL_TESTNET', False),
+        quote_currency=_s(env, 'QUOTE_CURRENCY', ''),
         database_url=_s(env, 'DATABASE_URL', ''),
         cap=cap,
         leverage=_f(env, 'LEVERAGE', 5.0),

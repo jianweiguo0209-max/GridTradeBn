@@ -52,6 +52,20 @@ def test_build_runtime_creates_tables_and_trigger_uses_engine():
                for t in rt.trigger_engine.triggers)
 
 
+def test_build_runtime_threads_quote_currency_override():
+    from gridtrade.runtime.factory import build_runtime
+    rt = build_runtime(_cfg(EXCHANGE='hyperliquid', HL_WALLET_ADDRESS='0xW',
+                            HL_PRIVATE_KEY='0xK', QUOTE_CURRENCY='USDT'))
+    assert rt.adapter._inner.quote_currency == 'USDT'
+
+
+def test_build_runtime_quote_currency_defaults_to_class_value():
+    from gridtrade.runtime.factory import build_runtime
+    rt = build_runtime(_cfg(EXCHANGE='hyperliquid', HL_WALLET_ADDRESS='0xW',
+                            HL_PRIVATE_KEY='0xK'))
+    assert rt.adapter._inner.quote_currency == 'USDC'
+
+
 def test_build_runtime_manager_shares_executor_and_bus_wired():
     from gridtrade.runtime.factory import build_runtime
     from gridtrade.execution.events import EventBus
