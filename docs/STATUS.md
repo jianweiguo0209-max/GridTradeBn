@@ -1,7 +1,7 @@
 # GridTradeGP — 项目状态与进度（固化文档）
 
 > 单一事实源：任何新 session / 协作者读这一份即可掌握「系统设计完成度 + testnet 运行状态」。
-> 最后更新：2026-06-30。代码状态：**SQLite 435 passed（+2 PG-only 并发测试 skipped）/ Postgres 437 passed**（双后端 TDD；含 P6① 混沌加固 + quote_volume 回退 + OrderFilled + funding 缓存 + funding 逐币种归属修复 + sync 先于 reconcile + 净仓对账 + reconcile 撤旧再补 + reconcile 重挂宽限 + sync 游标重叠 + MarginGate + 双模式 PG fixture + 真并发 TOCTOU + 门链拒绝/MarginGate fail-closed 结构化日志）。
+> 最后更新：2026-07-01。代码状态：**SQLite 456 passed（+2 PG-only 并发测试 skipped）/ Postgres 458 passed**（双后端 TDD；含 P6① 混沌加固 + quote_volume 回退 + OrderFilled + funding 缓存 + funding 逐币种归属修复 + sync 先于 reconcile + 净仓对账 + reconcile 撤旧再补 + reconcile 重挂宽限 + sync 游标重叠 + MarginGate + 双模式 PG fixture + 真并发 TOCTOU + 门链拒绝/MarginGate fail-closed 结构化日志 + 交易所原生止损保险丝）。
 
 ---
 
@@ -108,6 +108,8 @@ gridtrade/
 **决策依据**：见记忆 `p4-deploy-decisions`；ops 命令清单 [deploy/DEPLOY.md](../deploy/DEPLOY.md)。
 
 > **真实手续费落库（新）**：`grid_fills.fee` 记录每笔成交的交易所真实手续费；`accounting.fee_paid` 与 `net_value/pnl_ratio` 改用真实费（共用回测引擎 `cal_equity_curve` 不动）。**上线对已有库需跑一次幂等迁移**：`fly machine run <image> python -m gridtrade.runtime.dbadmin migrate`（加 `fee` 列）。历史 fill 不回填（fee=0），存量在跑网格重启重放会漏历史段真实费、随新成交自愈。设计/计划见 `docs/superpowers/{specs,plans}/2026-06-30-real-fee-persistence*`。
+
+> **交易所原生止损保险丝（新，offline 完成/待 testnet 验证）**：给软止损补一道**交易所原生 reduce-only 触发单**作灾难保险丝——堵软止损在跳空/爆拉/进程宕机/API 熔断/5s 盲区下失效的结构性风险。开网时挂两张（`sell@stop_low_price` / `buy@stop_high_price`，破网价触发、参考价=破网价故成交底线=破网价×(1∓`STOP_SLIPPAGE`)、size=最坏满仓、`reduce_only` 封顶到真实仓），exchange order id 持久化到 `grids.fuse_low_oid/fuse_high_oid`（跨重启可判定已触发）。`Reconciler.reconcile_fuses` 每轮三态：在挂→无动作 / 被丢→重挂 / 已触发→**撑网全拆**（`ex.close` 同软止损收尾路径，exit_reason='保险丝触发'）；并修 `reconcile_open_orders` 排除 fuse oid（HL `frontendOpenOrders` 含触发单，否则每轮误撤保险丝）。软止损保留为主刹车、逻辑零改。开关 `STOP_ORDERS_ENABLED`（默认 true，可一键回退纯软止损）/ `STOP_SLIPPAGE`（默认 0.15）。**上线对已有库跑一次 `dbadmin migrate`**（加 `fuse_low_oid/fuse_high_oid` 列）。**待 testnet 验证**：HL reduce-only 超额 size 是否封顶到持仓、HL 触发对 mark/last、端到端破网触发→撑网全拆、`cancel_all` 是否覆盖触发单。设计/计划见 `docs/superpowers/{specs,plans}/2026-07-01-native-stop-order-backstop*`。
 
 ---
 
