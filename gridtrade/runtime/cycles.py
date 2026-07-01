@@ -76,6 +76,10 @@ def run_monitor_cycle(reconciler, manager, log=print, *,
             fuse = reconciler.reconcile_fuses(grid.id, grid.symbol)     # 保险丝三态
             if fuse.get('fired'):
                 log('[monitor] grid %s fuse fired -> grid closed' % grid.id)
+            elif fuse.get('replaced'):
+                # 健康网格几乎从不重挂；若每轮都打这行 = 保险丝没出现在 fetch_open_orders
+                # （如 HL 触发单不在 frontendOpenOrders）→ 每轮重挂、孤儿触发单堆积，需排查。
+                log('[monitor] grid %s fuse re-placed x%d' % (grid.id, fuse['replaced']))
         except Exception as exc:
             degraded[grid.id] = repr(exc)
     for gid, err in degraded.items():         # per-grid 故障打日志（否则隐形）
