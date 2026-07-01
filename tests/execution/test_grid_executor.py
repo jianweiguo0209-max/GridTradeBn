@@ -63,15 +63,19 @@ def test_open_undercapitalized_raises(store):
         gx.open(ex_exchange_name(), SYM, GP)
 
 
-def test_sync_records_fill_and_replenishes(store):
+def test_sync_records_fill_partner_present_no_over_replenish(store):
+    from collections import Counter
     ex, store, gx = _setup(store, price=100.0)
     gid = gx.open(ex_exchange_name(), SYM, GP)
     before_open = len(ex.fetch_open_orders(SYM))
     ex.set_price(SYM, 100.6)   # 触发 line 5 卖单成交（100.4812）
     res = gx.sync(gid, SYM)
     assert res['new_fills'] == 1
-    # 补单：卖成交后总挂单数不变（撤一卖、补一买）
-    assert len(ex.fetch_open_orders(SYM)) == before_open
+    # 配对层级：sell@5 的配对 buy@4 本就 resting → 不重复补对侧；挂单数减一、无 (line,side) 重复。
+    # （补对侧「挂得住」的正向场景见 test_sync_normal_replenishes 的往返走格）
+    assert len(ex.fetch_open_orders(SYM)) == before_open - 1
+    opens = [o for o in gx.orders.list_by_grid(gid) if o.status == 'open']
+    assert not [k for k, v in Counter((o.line_index, o.side) for o in opens).items() if v > 1]
     # 真中性：开网 flat，一笔卖单成交 → 净空一格量（-on）
     from gridtrade.state.grids import GridRepository
     on = GridRepository(store).get(gid).order_num
