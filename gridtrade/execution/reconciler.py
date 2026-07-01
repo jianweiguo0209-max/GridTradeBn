@@ -42,6 +42,7 @@ class Reconciler:
         # 否则首次 sync 会把开仓前的历史 funding 计入本网格。
         ex._funding_cursor[grid_id] = (acc.funding_cursor if acc is not None and acc.funding_cursor
                                        else g.created_at)
+        ex._fuses[grid_id] = {'low': g.fuse_low_oid, 'high': g.fuse_high_oid}
 
     def reconcile_open_orders(self, grid_id, symbol):
         ex = self.ex
@@ -50,9 +51,15 @@ class Reconciler:
                     if o.exchange_order_id}
         on_exchange = {o.id: o for o in ex.adapter.fetch_open_orders(symbol)}
 
+        # 保险丝 oid 排除于「unexpected 撤单」循环：HL 默认 fetch_open_orders 走
+        # frontendOpenOrders（含 trigger/stop 单），保险丝不在 grid_orders(expected)，
+        # 若不排除则每轮对账都会误撤两张保险丝。
+        g = ex.grids.get(grid_id)
+        fuse_oids = {oid for oid in (g.fuse_low_oid, g.fuse_high_oid) if oid is not None}
+
         canceled = 0
         for oid, o in on_exchange.items():
-            if oid not in expected:
+            if oid not in expected and oid not in fuse_oids:
                 ex.adapter.cancel_order(symbol, o.id)
                 canceled += 1
 
@@ -105,3 +112,39 @@ class Reconciler:
         tol = tol_lots * order_num
         return {'grid_id': grid_id, 'model': model, 'exchange': real,
                 'drift': drift, 'tol': tol, 'ok': abs(drift) <= tol}
+
+    def _fuse_filled(self, symbol, oid, since_ms=None):
+        """保险丝是否已成交。按 exchange order id 匹配（唯一）；since_ms 作限时优化，
+        传 None 则全量扫（FakeExchange 用逻辑计数器 ts，与 epoch ms 不可比较时退化全量）。
+        """
+        if oid is None:
+            return False
+        return any(t.order_id == oid
+                   for t in self.ex.adapter.fetch_my_trades(symbol, since_ms=since_ms))
+
+    def reconcile_fuses(self, grid_id, symbol):
+        """灾难保险丝三态对账：在挂→无动作；被丢→重挂；已触发→撑网全拆。"""
+        ex = self.ex
+        if not ex.stop_orders_enabled:
+            return {'replaced': 0, 'fired': False}
+        g = ex.grids.get(grid_id)
+        on_exchange = {o.id for o in ex.adapter.fetch_open_orders(symbol)}
+        specs = [('low', 'sell', g.stop_low_price, g.fuse_low_oid),
+                 ('high', 'buy', g.stop_high_price, g.fuse_high_oid)]
+        replaced = 0
+        for key, side, trigger, oid in specs:
+            if oid is not None and oid in on_exchange:
+                continue                                   # 在挂
+            if self._fuse_filled(symbol, oid):
+                ex.close(grid_id, symbol, '保险丝触发')   # 已触发 -> 撑网全拆
+                return {'replaced': replaced, 'fired': True}
+            # 被丢（或迁移空 oid）-> (重)挂，回写新 oid
+            worst = float(g.grid_count) * float(g.order_num)
+            order = ex.adapter.create_stop_order(
+                symbol, side, worst, trigger, reduce_only=True,
+                slippage=ex.stop_slippage, client_oid='%s:fuse:%s' % (grid_id, key))
+            new_oid = getattr(order, 'id', None)
+            ex.grids.set_fuse_oids(grid_id, **{'%s_oid' % key: new_oid})
+            ex._fuses.setdefault(grid_id, {})[key] = new_oid
+            replaced += 1
+        return {'replaced': replaced, 'fired': False}

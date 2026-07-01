@@ -177,6 +177,7 @@ stop_slippage: float = 0.15           # STOP_SLIPPAGE
 
 - 部署前跑一次幂等迁移给存量库加列：`fly machine run <image> python -m gridtrade.runtime.dbadmin migrate`（同 `fee` 列迁移先例）。
 - HL testnet 实测 reduce-only 超额 size 是否封顶到持仓（5.3 假设）。
+- **确认刚挂的保险丝出现在 `fetch_open_orders`（frontendOpenOrders）**——这是 `reconcile_fuses` 判「在挂」的前提；若真 HL 触发单不在该端点返回，会每轮误判「被丢」而重挂、孤儿触发单堆积。cycles.py 已在 `replaced>0` 打日志，testnet 首轮观察该行是否反复出现即可暴露。
 - HL 触发单默认对哪种行情价触发（mark/last）—— `describe()` 里 `triggerPriceType` 默认 None，实跑确认，必要时显式传。
 - 触发市价单的真实成交滑点（注意 testnet 薄盘会放大，区分「机制」vs「流动性」）。
 - 端到端：人为把网格区间设窄，观察价格穿破网价 → 保险丝触发 → 撑网全拆。

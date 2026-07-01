@@ -74,6 +74,8 @@ grids = Table(
     Column('created_at', BigInteger, nullable=False),
     Column('updated_at', BigInteger, nullable=False),
     Column('version', Integer, nullable=False, default=1),
+    Column('fuse_low_oid', String, nullable=True),
+    Column('fuse_high_oid', String, nullable=True),
     UniqueConstraint('exchange', 'active_symbol', name='uq_grids_active'),
 )
 
@@ -217,6 +219,8 @@ class Grid:
     created_at: int = 0
     updated_at: int = 0
     version: int = 1
+    fuse_low_oid: Optional[str] = None
+    fuse_high_oid: Optional[str] = None
 
 
 @dataclass

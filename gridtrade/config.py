@@ -62,6 +62,8 @@ class DeployConfig:
     dashboard_password_hash: str = ''
     dashboard_session_secret: str = ''
     dashboard_port: int = 8080
+    stop_orders_enabled: bool = True
+    stop_slippage: float = 0.15
 
 
 def load_deploy_config(env=None) -> DeployConfig:
@@ -90,6 +92,8 @@ def load_deploy_config(env=None) -> DeployConfig:
         dashboard_session_secret=_s(env, 'DASHBOARD_SESSION_SECRET', ''),
         dashboard_port=_i(env, 'PORT', 8080),
         equity_snapshot_interval_sec=_f(env, 'EQUITY_SNAPSHOT_INTERVAL_SEC', 300.0),
+        stop_orders_enabled=_b(env, 'STOP_ORDERS_ENABLED', True),
+        stop_slippage=_f(env, 'STOP_SLIPPAGE', 0.15),
     )
 
 
