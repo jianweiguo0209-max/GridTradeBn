@@ -16,23 +16,31 @@ def _setup(store, price=100.0):
     return ex, store, ex_
 
 
-def test_open_places_grid_and_neutral_inventory(store):
+def test_open_starts_flat(store):
     ex, store, gx = _setup(store, price=100.0)
     gid = gx.open(ex_exchange_name(), SYM, GP, offset=0, tag='t0')
-    # 网格记录 ACTIVE
     from gridtrade.state.grids import GridRepository
     g = GridRepository(store).get(gid)
     assert g.status == ACTIVE and g.entry_price == 100.0
-    # 中性底仓：入场价上方 4 条线 × order_num
-    on = g.order_num
-    pos = ex.fetch_positions(SYM)
-    assert abs(pos.net_size - on * 4) < 1e-6
-    # 9 条线，entry 不在线上 → 9 个挂单
+    # 真中性：开网即 flat，无初始市价单
+    assert abs(ex.fetch_positions(SYM).net_size) < 1e-9
+    # 9 条线，entry 不在线上 → 9 个挂单（4 sell / 5 buy）
     opens = ex.fetch_open_orders(SYM)
     assert len(opens) == 9
     sells = [o for o in opens if o.side == 'sell']
     buys = [o for o in opens if o.side == 'buy']
     assert len(sells) == 4 and len(buys) == 5
+    # 无 :init: 市价成交
+    assert all(':init:' not in t.client_oid for t in ex.fetch_my_trades(SYM))
+
+
+def test_neutral_net_follows_price_short_above_long_below(store):
+    ex, store, gx = _setup(store, price=100.0)
+    gid = gx.open(ex_exchange_name(), SYM, GP)
+    ex.set_price(SYM, 102.5); gx.sync(gid, SYM)   # 穿所有卖线 → 净空
+    assert ex.fetch_positions(SYM).net_size < 0
+    ex.set_price(SYM, 97.5); gx.sync(gid, SYM)    # 穿所有买线 → 净多
+    assert ex.fetch_positions(SYM).net_size > 0
 
 
 def test_open_persists_orders_with_client_oid(store):
@@ -64,13 +72,13 @@ def test_sync_records_fill_and_replenishes(store):
     assert res['new_fills'] == 1
     # 补单：卖成交后总挂单数不变（撤一卖、补一买）
     assert len(ex.fetch_open_orders(SYM)) == before_open
-    # LiveEquity 记录了该成交，净仓下降一格量
+    # 真中性：开网 flat，一笔卖单成交 → 净空一格量（-on）
     from gridtrade.state.grids import GridRepository
     on = GridRepository(store).get(gid).order_num
-    assert abs(ex.fetch_positions(SYM).net_size - on * 3) < 1e-6
+    assert abs(ex.fetch_positions(SYM).net_size - (-on)) < 1e-6
     # accounting 落了快照
     acc = gx.accounting.get(gid)
-    assert acc is not None and abs(acc.net_position - on * 3) < 1e-6
+    assert acc is not None and abs(acc.net_position - (-on)) < 1e-6
     # LiveEquity snapshot net_position must match the real exchange position
     assert abs(gx.live[gid].snapshot(ex.fetch_price(SYM))['net_position'] - ex.fetch_positions(SYM).net_size) < 1e-6
 
@@ -170,7 +178,7 @@ def test_sync_refetches_late_visible_trade_below_cursor(store):
 def test_sync_wires_real_fee_into_persistence_and_accounting(store):
     ex, store, gx = _setup(store, price=100.0)
     gid = gx.open(ex_exchange_name(), SYM, GP)
-    fee_after_open = gx.live[gid].real_fee_paid       # 仅合成底仓（估算回退）
+    fee_after_open = gx.live[gid].real_fee_paid       # 真中性：开网 flat，无底仓费 → 0
     ex.set_price(SYM, 100.6)                           # 触发 line 5 卖单成交
     res = gx.sync(gid, SYM)
     assert res['new_fills'] == 1

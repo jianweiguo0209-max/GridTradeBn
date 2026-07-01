@@ -28,7 +28,7 @@ def test_monitor_triggers_fixed_stop_and_closes(store):
     from gridtrade.state.grids import GridRepository
     ex, store, gx = _setup(store, 100.0)
     gid = gx.open('fake', SYM, GP)
-    # 价格大跌：中性底仓多头浮亏，pnl_ratio 跌破 -3.4% → 固定止损
+    # 价格大跌：买线成交累出净多、深度浮亏，pnl_ratio 跌破 -3.4% → 固定止损
     ex.set_price(SYM, 96.5)
     out = monitor_grid(gx, gid, SYM, STOP_CFG)
     assert out['closed'] is True and out['reason'] == '固定止损'

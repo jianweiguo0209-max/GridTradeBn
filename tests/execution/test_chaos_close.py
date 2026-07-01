@@ -24,7 +24,8 @@ def build_stack(store, schedule=None, price=100.0):
 
 def test_close_clean_flattens_position_baseline(store):
     fake, faulty, gx = build_stack(store)
-    gid = gx.open('fake', SYM, GP)               # 中性底仓 -> 持有多头净仓
+    gid = gx.open('fake', SYM, GP)               # 真中性：开网 flat
+    fake.set_price(SYM, 98.5); gx.sync(gid, SYM) # 驱动买线成交 → 累出净多
     assert fake.fetch_positions(SYM).net_size > 0
     gx.close(gid, SYM, '测试平仓')
     assert gx.grids.get(gid).status == 'CLOSED'
@@ -35,6 +36,7 @@ def test_close_partial_fill_is_flattened_by_bounded_retry(store):
     # close() reduce 第一次只成交一半 -> close 必须校残仓并补一笔 reduce 直到平掉
     fake, faulty, gx = build_stack(store)
     gid = gx.open('fake', SYM, GP)
+    fake.set_price(SYM, 98.5); gx.sync(gid, SYM) # 驱动买线成交 → 累出净多
     net_before = fake.fetch_positions(SYM).net_size
     assert net_before > 0
     faulty._schedule['create_market_order'] = [Partial(0.5)]   # 仅首笔 reduce 吃一半
@@ -56,6 +58,7 @@ def test_close_reduce_failure_leaves_closing_and_is_resumable(store):
     faulty = FaultyAdapter(fake, {})
     gx = GridExecutor(faulty, store, cap=1000.0, leverage=5.0)
     gid = gx.open('fake', SYM, GP)
+    fake.set_price(SYM, 98.5); gx.sync(gid, SYM) # 驱动买线成交 → 累出净多
     assert fake.fetch_positions(SYM).net_size > 0
     faulty._schedule['create_market_order'] = [ValueError('reduce boom')]   # 首笔 reduce 抛错
     with pytest.raises(ValueError):

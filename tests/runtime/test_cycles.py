@@ -189,6 +189,7 @@ def test_monitor_cycle_resumes_stuck_closing_grid(store):
     from gridtrade.runtime.cycles import run_monitor_cycle
     ex, store, gx, mgr = _setup(store, 100.0)
     gid = mgr.open_proposals([_proposal()])[0]
+    ex.set_price(BTC, 98.5); gx.sync(gid, BTC)   # 真中性：驱动买线成交 → 累出净多
     g = gx.grids.get(gid)
     gx.grids.transition_status(gid, 'CLOSING', expected_version=g.version)  # 卡住
     assert ex.fetch_positions(BTC).net_size > 0
