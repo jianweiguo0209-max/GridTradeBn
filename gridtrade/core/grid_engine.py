@@ -203,7 +203,9 @@ def cal_equity_curve(candle_df, trade_df, fee, cap, c_rate_taker=0.0005, funding
     trade_data.loc[con, 'real_profit'] = trade_data['grid_gap'] * trade_data['order_num']
     del trade_data['grid_gap'], trade_data['last_touch']
 
-    trade_data['hold_num'] = trade_data['net_dir'] * trade_data['order_num']
+    # 净持仓 = 累计带符号成交量 Σ(order_dir×order_num)。均匀 lot（回测）下
+    # 恒等于 net_dir×order_num；实盘逐笔 size 非均匀（部分成交）时后者失效，故用累计量。
+    trade_data['hold_num'] = (trade_data['order_dir'] * trade_data['order_num']).expanding().sum()
     price_df = trade_data[['touch', 'net_dir']].drop_duplicates(subset=['net_dir']).copy()
     pos = price_df[price_df['net_dir'] > 0].sort_values('net_dir', ascending=True)
     neg = price_df[price_df['net_dir'] < 0].sort_values('net_dir', ascending=False)

@@ -116,6 +116,19 @@ def test_snapshot_flip_long_to_short_matches_full_path():
     assert abs(snap['net_value'] - truth) < 1e-9
 
 
+def test_snapshot_net_position_with_variable_fill_sizes():
+    # 实盘部分成交 → 逐笔 size 非均匀。hold_num 必须是累计带符号量
+    # Σ(order_dir×order_num)，而非 net_dir(净手数) × 最后一笔 size。
+    # 后者是回测「均匀 lot」假设，实盘出现一笔非均匀成交即失效
+    # （testnet TIA/gt011 实证：buy 1.6 + buy 36 + sell 36 被算成 hold=36 而非 1.6）。
+    le = _le(entry=100.0)
+    le.record_fill(100.0, 'buy', 2.0, 60_000)     # +2.0
+    le.record_fill(99.0, 'buy', 36.0, 120_000)    # +36.0 → 累计 38.0
+    le.record_fill(100.0, 'sell', 36.0, 180_000)  # -36.0 → 残留 = 首笔 buy 2.0
+    snap = le.snapshot(100.0)
+    assert abs(snap['net_position'] - 2.0) < 1e-9, snap['net_position']
+
+
 def test_snapshot_fee_paid_is_real_sum():
     le = _le(entry=100.0)
     le.record_fill(99.0, 'buy', 0.5, 60_000, fee=0.7)
