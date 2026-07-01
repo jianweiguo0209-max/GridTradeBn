@@ -154,6 +154,9 @@ class FakeExchange(ExchangeAdapter):
 
     def cancel_order(self, symbol, order_id) -> None:
         self._open.pop(order_id, None)
+        # 同时撤止损单（忠实模拟 HL cancel_order 对 trigger/stop 单同样生效）
+        if symbol in self._stops:
+            self._stops[symbol] = [s for s in self._stops[symbol] if s.id != order_id]
 
     def cancel_all(self, symbol) -> None:
         for oid in [k for k, v in self._open.items() if v.symbol == symbol]:
@@ -161,6 +164,7 @@ class FakeExchange(ExchangeAdapter):
         self._stops.pop(symbol, None)
 
     def fetch_open_orders(self, symbol) -> List[Order]:
+        # 忠实镜像 HL 默认的 frontendOpenOrders：同时返回限价单与 trigger/stop 单。
         return ([o for o in self._open.values() if o.symbol == symbol]
                 + list(self._stops.get(symbol, [])))
 

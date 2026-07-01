@@ -73,6 +73,9 @@ def run_monitor_cycle(reconciler, manager, log=print, *,
             d = reconciler.check_position_drift(grid.id, grid.symbol)   # C：净仓对账（只告警）
             if d is not None and not d['ok']:
                 drift[grid.id] = d
+            fuse = reconciler.reconcile_fuses(grid.id, grid.symbol)     # 保险丝三态
+            if fuse.get('fired'):
+                log('[monitor] grid %s fuse fired -> grid closed' % grid.id)
         except Exception as exc:
             degraded[grid.id] = repr(exc)
     for gid, err in degraded.items():         # per-grid 故障打日志（否则隐形）
