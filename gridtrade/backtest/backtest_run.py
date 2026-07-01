@@ -80,7 +80,7 @@ def run_backtest(cache, universe, window_start, window_end, strategy_config, fac
         funding_df = cache.read_all_days('funding', sym)
         sim = simulate_grid_engine(bars_df, gp, cap=1000.0, leverage=lev, fee=fee_rate,
                                    max_rate=max_rate, min_amount=0.0, stop_cfg=stop_cfg,
-                                   funding_df=funding_df, neutral_init=True)
+                                   funding_df=funding_df, neutral_init=False)
         results.append({
             'run_time': rt, 'offset': int(offset), 'symbol': sym,
             'entry': float(row['close']), 'grid_num': int(px['grid_count']),

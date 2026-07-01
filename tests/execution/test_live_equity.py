@@ -73,19 +73,6 @@ def test_open_position_marks_to_mark_price():
     assert abs(snap['net_value'] - truth) < 1e-9
 
 
-def test_neutral_init_base_inventory():
-    # 复刻 OKX 中性网格开网底仓：entry 上方若干格在 entry 价预置多头；随后上涨卖出兑现
-    le = _le(entry=100.0)
-    for i in range(3):                          # 3 笔底仓买入 @ entry
-        le.record_fill(100.0, 'buy', 0.5, (i + 1) * 60_000)
-    le.record_fill(101.0, 'sell', 0.5, 5 * 60_000)   # 上方格卖出
-    snap = le.snapshot(101.0)
-    assert abs(snap['net_position'] - 1.0) < 1e-9   # 1.5 买 - 0.5 卖 = 1.0
-    fills = [(1, 100.0, 'buy'), (2, 100.0, 'buy'), (3, 100.0, 'buy'), (5, 101.0, 'sell')]
-    truth = _truth_net_value(fills, 100.0, 101.0)
-    assert abs(snap['net_value'] - truth) < 1e-9
-
-
 def test_bad_side_raises():
     import pytest
     with pytest.raises(ValueError):

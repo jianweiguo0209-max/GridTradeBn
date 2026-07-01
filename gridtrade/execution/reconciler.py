@@ -28,9 +28,7 @@ class Reconciler:
         ex._seq[grid_id] = itertools.count(10_000_000)  # 高位起，避免与历史 seq 相撞
 
         live = LiveEquity(ex.cap, ex.fee, ex.c_rate_taker, entry_price=g.entry_price)
-        above = [p for p in price_array if p > g.entry_price]
-        for _ in range(len(above)):
-            live.record_fill(g.entry_price, 'buy', order_num, 0)
+        # 真中性：无 init 底仓（与 open 对称）；仅从持久化成交重建，否则重启后模型多出幻影多头。
         for f in ex.fills.list_by_grid(grid_id):   # 已按 ts 升序
             live.record_fill(f.price, f.side, f.size, f.ts, f.fee)
         acc = ex.accounting.get(grid_id)

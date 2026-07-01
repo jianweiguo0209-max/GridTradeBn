@@ -79,13 +79,7 @@ class GridExecutor:
 
         self.grids.transition_status(gid, OPENING, expected_version=grid.version)
 
-        # 中性底仓：入场价上方线数 × 每格量，市价买
-        above = [p for p in price_array if p > entry]
-        if above:
-            self.adapter.create_market_order(symbol, 'buy', order_num * len(above),
-                                             client_oid='%s:init:0' % gid)
-            for _ in range(len(above)):
-                self.live[gid].record_fill(entry, 'buy', order_num, 0)
+        # 真中性：开网不建底仓，净仓从 0 开始（价涨→挂单成交转净空，价跌→转净多）。
 
         # 逐线挂限价单
         for i, p in enumerate(price_array):
