@@ -75,23 +75,26 @@ def test_sync_skip_replenish_no_new_order(store):
 
 
 def test_sync_normal_replenishes(store):
-    """Without skip_replenish (default=False): fill ingested AND opposite order placed."""
+    """Without skip_replenish (default=False): when the opposite slot is free, opposite order IS placed."""
+    from collections import Counter
     ex, gx = _setup(store, price=100.0)
     gid = gx.open('fake', SYM, GP)
 
-    open_before = len(ex.fetch_open_orders(SYM))
-    ex.set_price(SYM, 100.6)
-    open_after_fill_exchange = len(ex.fetch_open_orders(SYM))
-    assert open_after_fill_exchange < open_before
+    # 往返走一格制造「对侧空槽」：先成交并 sync 掉最近卖单(line5，清空该线，其配对 buy@4 在→本轮不补)，
+    # 再成交最近买单(line4)：其对侧 sell@5 现为空 → 补 sell@5（价>现价→挂住）。
+    sell5 = min((o for o in ex.fetch_open_orders(SYM) if o.side == 'sell'), key=lambda o: o.price)
+    ex._fill(sell5, sell5.price); del ex._open[sell5.id]
+    gx.sync(gid, SYM)
+    assert not any(o.line_index == 5 and o.side == 'sell' and o.status == 'open'
+                   for o in gx.orders.list_by_grid(gid))   # line5 已空
 
-    # sync with default skip_replenish=False
+    buy4 = max((o for o in ex.fetch_open_orders(SYM) if o.side == 'buy'), key=lambda o: o.price)
+    ex._fill(buy4, buy4.price); del ex._open[buy4.id]
     res = gx.sync(gid, SYM)  # default: skip_replenish=False
 
     assert res['new_fills'] == 1
-
-    # Opposite order WAS placed: open count should be back to open_before
-    open_after_sync = len(ex.fetch_open_orders(SYM))
-    assert open_after_sync == open_before, (
-        "skip_replenish=False must place opposite order; "
-        f"expected {open_before} open orders, got {open_after_sync}"
-    )
+    # 补对侧落地：sell@5 重新挂出；无 (line,side) 重复；store 与交易所挂单一致
+    opens = [o for o in gx.orders.list_by_grid(gid) if o.status == 'open']
+    assert any(o.line_index == 5 and o.side == 'sell' for o in opens), "must replenish sell@line5"
+    assert not [k for k, v in Counter((o.line_index, o.side) for o in opens).items() if v > 1]
+    assert len(ex.fetch_open_orders(SYM)) == len(opens)

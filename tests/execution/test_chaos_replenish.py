@@ -26,13 +26,24 @@ def build_stack(store, schedule=None, price=100.0):
     return fake, faulty, gx
 
 
+def _arm_pending_replenish(fake, gx, gid):
+    # 走到「下一次 sync 会补一张挂得住的对侧单」的状态：往返走一格。
+    # 先成交并 sync 掉最近卖单(line5，配对 buy@4 在→不补)，再成交最近买单(line4)但不 sync
+    # → 下次 sync 会补 sell@5（价>现价→挂住，触发一次 create_limit_order）。
+    sell5 = min((o for o in fake.fetch_open_orders(SYM) if o.side == 'sell'), key=lambda o: o.price)
+    fake._fill(sell5, sell5.price); del fake._open[sell5.id]
+    gx.sync(gid, SYM)
+    buy4 = max((o for o in fake.fetch_open_orders(SYM) if o.side == 'buy'), key=lambda o: o.price)
+    fake._fill(buy4, buy4.price); del fake._open[buy4.id]
+
+
 def _baseline_after_one_fill():
     # baseline uses its own isolated in-memory store (reference values only; not persisted)
     _store = StateStore.in_memory(); _store.create_all()
     fake, faulty, gx = build_stack(_store)
     gid = gx.open('fake', SYM, GP)
-    fake.set_price(SYM, 100.6)            # 穿越上方一格 -> 成交 -> sync 补对侧
-    res = gx.sync(gid, SYM)
+    _arm_pending_replenish(fake, gx, gid)
+    res = gx.sync(gid, SYM)              # 这次 sync 补 sell@5
     snap = gx.live[gid].snapshot(fake.fetch_price(SYM))
     return res, snap, len(fake.fetch_open_orders(SYM))
 
@@ -44,10 +55,10 @@ def test_replenish_under_timeout_matches_baseline(store):
     # 干净开仓后，仅在补单阶段注入超时（open 不受影响）
     fake, faulty, gx = build_stack(store)
     gid = gx.open('fake', SYM, GP)
+    _arm_pending_replenish(fake, gx, gid)     # 走到「下次 sync 补 sell@5」的状态
     faulty._schedule['create_limit_order'] = [ccxt.RequestTimeout('t'),
                                               ccxt.RequestTimeout('t')]
-    fake.set_price(SYM, 100.6)
-    res = gx.sync(gid, SYM)
+    res = gx.sync(gid, SYM)                    # 补 sell@5 时穿过两次超时
     assert faulty._schedule.get('create_limit_order', []) == []   # both injected timeouts were consumed (retry path exercised)
     snap = gx.live[gid].snapshot(fake.fetch_price(SYM))
 

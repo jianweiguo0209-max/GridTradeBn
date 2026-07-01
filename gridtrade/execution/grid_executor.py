@@ -125,8 +125,11 @@ class GridExecutor:
         trades = self.adapter.fetch_my_trades(symbol, since_ms=cursor)
         # 按 exchange order id 把成交映射回网格线（跨所通用；HL fill 只带 oid，不带 cloid）。
         # 中性底仓/平仓的市价单不在 grid_orders → 其成交 order_id 不在 by_oid，自动排除。
-        by_oid = {o.exchange_order_id: o
-                  for o in self.orders.list_by_grid(grid_id) if o.exchange_order_id}
+        _all = self.orders.list_by_grid(grid_id)
+        by_oid = {o.exchange_order_id: o for o in _all if o.exchange_order_id}
+        # 已 resting 的 (line,side) 集合：补对侧单前查重，防同 line 同向重复挂单
+        # → 双倍建仓（testnet OP/gt00 实证：中性网格价格震荡下重复单持久叠加）。
+        open_lines = {(o.line_index, o.side) for o in _all if o.status == 'open'}
         candidates = [t for t in trades if t.order_id in by_oid]
         candidates.sort(key=lambda t: t.ts)
 
@@ -149,18 +152,22 @@ class GridExecutor:
             self.orders.upsert(GridOrder(client_oid=go.client_oid, grid_id=grid_id,
                                          line_index=line_index, side=t.side, price=t.price,
                                          size=t.size, status='closed'))
+            open_lines.discard((line_index, t.side))   # 成交单离场，其 (line,side) 腾空
             # 补对侧单（halt 时跳过：fills/记账/止损仍正常，但不挂新单）
             if not skip_replenish:
                 opp_line = line_index - 1 if t.side == 'sell' else line_index + 1
                 if 0 <= opp_line < len(price_array):
                     opp_side = 'buy' if t.side == 'sell' else 'sell'
-                    p = price_array[opp_line]
-                    oid = self._next_oid(grid_id, opp_line)
-                    order = self.adapter.create_limit_order(symbol, opp_side, p, order_num,
-                                                            post_only=False, client_oid=oid)
-                    self.orders.upsert(GridOrder(client_oid=oid, grid_id=grid_id, line_index=opp_line,
-                                                 side=opp_side, price=p, size=order_num, status='open',
-                                                 exchange_order_id=getattr(order, 'id', None)))
+                    # opp_line 已有同向 resting 单则不重复挂（防双倍建仓）
+                    if (opp_line, opp_side) not in open_lines:
+                        p = price_array[opp_line]
+                        oid = self._next_oid(grid_id, opp_line)
+                        order = self.adapter.create_limit_order(symbol, opp_side, p, order_num,
+                                                                post_only=False, client_oid=oid)
+                        self.orders.upsert(GridOrder(client_oid=oid, grid_id=grid_id, line_index=opp_line,
+                                                     side=opp_side, price=p, size=order_num, status='open',
+                                                     exchange_order_id=getattr(order, 'id', None)))
+                        open_lines.add((opp_line, opp_side))
 
         # 资金费流水
         fcur = self._funding_cursor.get(grid_id, 0)
