@@ -42,6 +42,7 @@ class Reconciler:
         # 否则首次 sync 会把开仓前的历史 funding 计入本网格。
         ex._funding_cursor[grid_id] = (acc.funding_cursor if acc is not None and acc.funding_cursor
                                        else g.created_at)
+        ex._fuses[grid_id] = {'low': g.fuse_low_oid, 'high': g.fuse_high_oid}
 
     def reconcile_open_orders(self, grid_id, symbol):
         ex = self.ex

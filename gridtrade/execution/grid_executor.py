@@ -20,7 +20,8 @@ _TRADE_REFETCH_OVERLAP_MS = 5 * 60 * 1000
 
 class GridExecutor:
     def __init__(self, adapter, store, *, cap, leverage, fee=0.0002,
-                 c_rate_taker=0.0005, max_rate=0.68, min_amount=0.0):
+                 c_rate_taker=0.0005, max_rate=0.68, min_amount=0.0,
+                 stop_orders_enabled=False, stop_slippage=0.15):
         self.adapter = adapter
         self.grids = GridRepository(store)
         self.orders = OrderRepository(store)
@@ -33,6 +34,9 @@ class GridExecutor:
         self.c_rate_taker = float(c_rate_taker)
         self.max_rate = float(max_rate)
         self.min_amount = float(min_amount)
+        self.stop_orders_enabled = bool(stop_orders_enabled)
+        self.stop_slippage = float(stop_slippage)
+        self._fuses = {}      # grid_id -> {'low': exchange_oid, 'high': exchange_oid}
         self.live = {}        # grid_id -> LiveEquity
         self._geom = {}       # grid_id -> dict(price_array, order_num)
         self._seq = {}        # grid_id -> itertools.count
@@ -97,6 +101,23 @@ class GridExecutor:
             self.orders.upsert(GridOrder(client_oid=oid, grid_id=gid, line_index=i,
                                          side=side, price=p, size=order_num, status='open',
                                          exchange_order_id=getattr(order, 'id', None)))
+
+        # 灾难保险丝：两张 reduce-only 触发市价单，破网价触发（reduce_only 封顶到真实仓）。
+        # exchange order id 持久化到 grids 行，供跨重启对账判定已触发。
+        if self.stop_orders_enabled:
+            worst = order_num * int(grid_params['grid_count'])
+            low = self.adapter.create_stop_order(
+                symbol, 'sell', worst, grid_params['stop_low_price'],
+                reduce_only=True, slippage=self.stop_slippage,
+                client_oid='%s:fuse:low' % gid)
+            high = self.adapter.create_stop_order(
+                symbol, 'buy', worst, grid_params['stop_high_price'],
+                reduce_only=True, slippage=self.stop_slippage,
+                client_oid='%s:fuse:high' % gid)
+            self.grids.set_fuse_oids(gid, low_oid=getattr(low, 'id', None),
+                                     high_oid=getattr(high, 'id', None))
+            self._fuses[gid] = {'low': getattr(low, 'id', None),
+                                'high': getattr(high, 'id', None)}
 
         g2 = self.grids.get(gid)
         self.grids.transition_status(gid, ACTIVE, expected_version=g2.version)
@@ -180,6 +201,13 @@ class GridExecutor:
         # 否则残仓无人认领、状态机卡死（瞬时网络/交易所抖动即触发，mainnet 上很危险）。
         grid = self.grids.get(grid_id)
         self.adapter.cancel_all(symbol)
+        # 撤掉未触发的另一张保险丝（cancel_all 在多数所已覆盖触发单，这里再 best-effort 补刀，跨所稳妥）。
+        for oid in (grid.fuse_low_oid, grid.fuse_high_oid):
+            if oid:
+                try:
+                    self.adapter.cancel_order(symbol, oid)
+                except Exception:
+                    pass
         for o in self.orders.list_open_by_grid(grid_id):
             self.orders.upsert(GridOrder(client_oid=o.client_oid, grid_id=grid_id,
                                          line_index=o.line_index, side=o.side, price=o.price,
