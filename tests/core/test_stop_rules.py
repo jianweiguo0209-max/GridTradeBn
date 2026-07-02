@@ -93,3 +93,27 @@ def test_liquidation_no_stopcfg_equivalence():
     # stop_cfg=None disables fixed/trailing/funding/pv; only 爆仓 (net_value<0.05) can fire,
     # so this is the scenario that actually exercises the 爆仓 equivalence branch.
     _assert_equiv([1.0, 0.8, 0.04], stop_cfg=None)
+
+
+def test_pv_threshold_read_from_stop_cfg():
+    """evaluate_exit 的 pv 阈值改读 stop_cfg['pv_pnl_thr']；缺省回退 -0.015。"""
+    from gridtrade.core.stop_rules import evaluate_exit
+    cfg = {'stop_loss': 0.034, 'pv_pnl_thr': -0.02}
+    # pnl=-0.017 未到 -0.02 → 不触发；-0.025 触发
+    assert evaluate_exit(-0.017, 0.0, net_value=0.983, stop_cfg=cfg, pv_spike=1) is None
+    assert evaluate_exit(-0.025, 0.0, net_value=0.975, stop_cfg=cfg, pv_spike=1) == 'pv主动止损'
+    # 无 pv_pnl_thr → 回退 -0.015（-0.017 即触发）
+    assert evaluate_exit(-0.017, 0.0, net_value=0.983,
+                         stop_cfg={'stop_loss': 0.034}, pv_spike=1) == 'pv主动止损'
+
+
+def test_pv_equiv_with_apply_exit_at_tuned_thr():
+    """阈值设 -0.02 时 evaluate_exit 与 _apply_exit 仍逐位等价（两边同传 -0.02）。"""
+    from gridtrade.core.grid_engine import _apply_exit
+    cfg = {'stop_loss': 0.034, 'pv_pnl_thr': -0.02}
+    net = [1.0, 0.99, 0.982, 0.975]            # 逐步下探破 -0.02
+    pv = [0, 0, 1, 1]
+    df, pv_df = _make_df(net, pv=pv)
+    trunc, reason, _ = _apply_exit(df.copy(), CAP, C_RATE, cfg, MARGIN, pv_df, pv_pnl_thr=-0.02)
+    s_reason, s_idx = _scalar_first(df, pv_df, cfg)
+    assert s_reason == reason and s_idx == len(trunc) - 1

@@ -86,5 +86,10 @@ def test_strategy_defaults_mirror_legacy():
     assert DEFAULT_STRATEGY_CONFIG['price_limit'] == [0.25, 0.25]
     assert DEFAULT_STRATEGY_CONFIG['stop_limit'] == 0.01
     assert DEFAULT_STRATEGY_CONFIG['grid_v2_config']['grid_count_max'] == 149
-    assert DEFAULT_STOP_CFG == {'stop_loss': 0.034, 'trailing_k': 0.3,
-                                'trailing_floor': 0.00618}
+    # legacy 止盈止损 + 已接线的资金费/pv 主动止损参数（pv 由 2026-03~06 回测扫描调优）
+    assert DEFAULT_STOP_CFG['stop_loss'] == 0.034
+    assert DEFAULT_STOP_CFG['trailing_k'] == 0.3
+    assert DEFAULT_STOP_CFG['trailing_floor'] == 0.00618
+    assert DEFAULT_STOP_CFG['fundingRate_stop_loss'] == 0.0015
+    assert DEFAULT_STOP_CFG['pv_pnl_thr'] == -0.02
+    assert DEFAULT_STOP_CFG['pv_period'] == '15min'   # 非 '15m'（pandas 会当成月）

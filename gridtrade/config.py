@@ -127,4 +127,10 @@ DEFAULT_STOP_CFG = {
     'stop_loss': 0.034,
     'trailing_k': 0.3,
     'trailing_floor': 0.00618,
+    'fundingRate_stop_loss': 0.0015,   # 资金费率止损（HL 真实 fundingRate）
+    # pv 主动止损（量能尖峰 + 亏损门槛）；参数由 2026-03~06 回测扫描调优（mult3/thr-0.02 最优）
+    'pv_pnl_thr': -0.02,               # pv 止损的亏损门槛（evaluate_exit 读此值）
+    'pv_mult': 3,                      # 量能尖峰倍数（LiveSignalProvider 算 pv_spike 用）
+    'pv_period': '15min',              # 量能重采样周期（'15min' 非 '15m'——后者被 pandas 当月）
+    'pv_n': 233,                       # 量能基线滚动窗口（持仓窗内实为 expanding，对齐回测）
 }

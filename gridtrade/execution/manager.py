@@ -13,12 +13,13 @@ from gridtrade.execution.monitor import monitor_grid
 
 class GridManager:
     def __init__(self, executor, gate_chain, *, stop_cfg, margin_rate=0.05,
-                 event_bus=None):
+                 event_bus=None, signal_provider=None):
         self.executor = executor
         self.gates = gate_chain
         self.stop_cfg = stop_cfg
         self.margin_rate = float(margin_rate)
         self.bus = event_bus
+        self.signals = signal_provider   # None=不算 pv/funding（退化为仅固定止损/回撤/爆仓）
 
     def _publish(self, event) -> None:
         if self.bus is not None:
@@ -42,9 +43,13 @@ class GridManager:
                   if g.status == ACTIVE]
         for grid in active:
             try:
+                pv_spike, funding_rate = 0, 0.0
+                if self.signals is not None:   # 算 pv_spike/funding（provider 内部已按 grid 节流+失败降级）
+                    pv_spike, funding_rate = self.signals.get(grid.id, grid.symbol, grid.created_at)
                 res = monitor_grid(self.executor, grid.id, grid.symbol,
                                    self.stop_cfg, margin_rate=self.margin_rate,
-                                   skip_replenish=skip_replenish)
+                                   skip_replenish=skip_replenish,
+                                   pv_spike=pv_spike, funding_rate=funding_rate)
             except Exception as exc:   # 单网格 monitor 故障降级，不阻塞其他网格的止损/记账
                 results.append({'grid_id': grid.id, 'error': repr(exc)})
                 continue

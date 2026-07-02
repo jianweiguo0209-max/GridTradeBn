@@ -23,7 +23,7 @@ def evaluate_exit(pnl_ratio: float, pnl_ratio_max: float, *, net_value: float,
         if fr_thr is not None and funding_rate is not None:
             if abs(funding_rate) > fr_thr:
                 return '资金费率止损'
-        if pv_spike == 1 and pnl_ratio < -0.015:
+        if pv_spike == 1 and pnl_ratio < stop_cfg.get('pv_pnl_thr', -0.015):
             return 'pv主动止损'
     if net_value < margin_rate:
         return '爆仓'

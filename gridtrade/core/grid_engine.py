@@ -120,7 +120,7 @@ def get_trade_info(touch_df, open_price, grid_info):
     return trade_df[['candle_begin_time', 'last_touch', 'touch', 'order_dir', 'order_num']]
 
 
-def calc_pv_spike(bars_df, active_period='15m', mult=3, n=233):
+def calc_pv_spike(bars_df, active_period='15min', mult=3, n=233):
     """复刻 calc_active_loss_signal_pv 的量能部分：active_period 重采样后 quote_volume > mult×rolling(n).mean。
     返回 (candle_begin_time, pv_spike) 逐 1m 映射。需 bars 含 quote_volume。
     注：窗口内 1m 数据有限，rolling(n) 用 min_periods 近似，缺 n 根前置历史（fidelity 限制，已知）。"""
@@ -138,14 +138,56 @@ def calc_pv_spike(bars_df, active_period='15m', mult=3, n=233):
     return out[['candle_begin_time', 'pv_spike']]
 
 
-def _apply_exit(df, cap, c_rate_taker, stop_cfg=None, margin_rate=0.05, pv_spike_df=None):
+# ==================== 新型主动止损信号函数 ====================
+# 每个函数接收 bars_df（含 candle_begin_time/OHLCV），返回 (candle_begin_time, signal) 的 1m 映射。
+# signal=1 表示该 bar 触发止损信号（最终是否退出还需结合 pnlRatio 门槛）。
+
+def _compute_atr_breakdown(bars_df, short_period=14, long_period=233, mult=2.0):
+    """S1: ATR 突变止损 —— 短期 ATR 超过长期 ATR 的 mult 倍。
+    捕获场景：市场突然从低波动跳入高波动 regime，网格面临快速亏损风险。"""
+    df = bars_df[['candle_begin_time', 'high', 'low', 'close']].copy()
+    tr = np.maximum(df['high'] - df['low'],
+           np.maximum(abs(df['high'] - df['close'].shift(1)),
+                      abs(df['low'] - df['close'].shift(1))))
+    atr_short = tr.rolling(short_period, min_periods=1).mean()
+    atr_long = tr.rolling(long_period, min_periods=1).mean()
+    df['signal'] = (atr_short > mult * atr_long).astype(int)
+    return df[['candle_begin_time', 'signal']]
+
+
+def _compute_trend_break(bars_df, fast_period=20, slow_period=60):
+    """S2: 趋势破位止损 —— EMA(fast) < EMA(slow) 且 close < EMA(slow)。
+    捕获场景：确认性下跌趋势形成，网格持续承受方向性压力（正是本项目主要亏损源）。"""
+    df = bars_df[['candle_begin_time', 'close']].copy()
+    ema_fast = df['close'].ewm(span=fast_period, adjust=False).mean()
+    ema_slow = df['close'].ewm(span=slow_period, adjust=False).mean()
+    df['signal'] = ((ema_fast < ema_slow) & (df['close'] < ema_slow)).astype(int)
+    return df[['candle_begin_time', 'signal']]
+
+
+def _compute_bb_breakdown(bars_df, period=20, n_std=2.0):
+    """S4: 布林带下轨击穿 —— close < 下轨 且 带宽扩张（当前宽度 > 1.5×均值）。
+    捕获场景：价格跌破统计支撑位 + 波动加剧，网格面临持续下行压力。"""
+    df = bars_df[['candle_begin_time', 'close']].copy()
+    ma = df['close'].rolling(period, min_periods=1).mean()
+    std = df['close'].rolling(period, min_periods=1).std()
+    lower = ma - n_std * std
+    width = 2 * n_std * std / (ma + 1e-8)
+    width_mean = width.rolling(period * 4, min_periods=1).mean()
+    df['signal'] = ((df['close'] < lower) & (width > 1.5 * width_mean)).astype(int)
+    return df[['candle_begin_time', 'signal']]
+
+
+def _apply_exit(df, cap, c_rate_taker, stop_cfg=None, margin_rate=0.05, pv_spike_df=None,
+                active_stop_mode='pv', bars_df=None, pv_pnl_thr=-0.015):
     """
     复刻实盘 calc_loss_or_profit 的退出优先级，对 net_value 序列逐 bar 取最早触发：
       1) 固定止损     pnlRatio < -stop_loss
       2) Chandelier   回撤 >= max(trailing_floor, trailing_k×峰值) 且 峰值 > floor
       3) 资金费率止损 |fundingRate| > fundingRate_stop_loss（需 df 有 fundingRate 列）
-      4) pv 主动止损  量能爆增 且 pnlRatio < -0.015（需 pv_spike_df）
+      4) 主动止损     由 active_stop_mode 指定（pv/atr/trend/time_decay/bb/loss_accel/none）
       5) 爆仓         net_value < margin_rate
+    active_stop_mode='pv' 时门槛用 pv_pnl_thr（默认 -0.015，与历史一致）；新型模式统一 -0.01。
     返回 (截断后的 df, reason, blown)。stop_cfg=None 时仅查爆仓。
     """
     df = df.reset_index(drop=True)
@@ -170,9 +212,39 @@ def _apply_exit(df, cap, c_rate_taker, stop_cfg=None, margin_rate=0.05, pv_spike
         fr_thr = stop_cfg.get('fundingRate_stop_loss')
         if fr_thr is not None and 'fundingRate' in df.columns:
             mark(np.abs(df['fundingRate'].values) > fr_thr, '资金费率止损')
-        if pv_spike_df is not None:
+
+        # ---- 主动止损（按 mode 分派）----
+        pnl_thr = -0.01  # 新型主动止损的统一亏损门槛（1%）
+        if active_stop_mode == 'pv' and pv_spike_df is not None:
             m = pd.merge(df[['candle_begin_time']], pv_spike_df, on='candle_begin_time', how='left')
-            mark((m['pv_spike'].fillna(0).values == 1) & (pr < -0.015), 'pv主动止损')
+            mark((m['pv_spike'].fillna(0).values == 1) & (pr < pv_pnl_thr), 'pv主动止损')
+        elif active_stop_mode == 'atr' and bars_df is not None:
+            sig = _compute_atr_breakdown(bars_df)
+            m = pd.merge(df[['candle_begin_time']], sig, on='candle_begin_time', how='left')
+            mark((m['signal'].fillna(0).values == 1) & (pr < pnl_thr), 'atr主动止损')
+        elif active_stop_mode == 'trend' and bars_df is not None:
+            sig = _compute_trend_break(bars_df)
+            m = pd.merge(df[['candle_begin_time']], sig, on='candle_begin_time', how='left')
+            mark((m['signal'].fillna(0).values == 1) & (pr < pnl_thr), '趋势破位止损')
+        elif active_stop_mode == 'time_decay':
+            t0 = df['candle_begin_time'].iloc[0]
+            hours = (df['candle_begin_time'] - t0).dt.total_seconds() / 3600.0
+            decay = 0.10  # 每过 1 小时阈值收紧 10%
+            dynamic_thr = pnl_thr / (1.0 + decay * hours.values)
+            mark(pr < dynamic_thr, '时间衰减止损')
+        elif active_stop_mode == 'bb' and bars_df is not None:
+            sig = _compute_bb_breakdown(bars_df)
+            m = pd.merge(df[['candle_begin_time']], sig, on='candle_begin_time', how='left')
+            mark((m['signal'].fillna(0).values == 1) & (pr < pnl_thr), '布林击穿止损')
+        elif active_stop_mode == 'loss_accel':
+            pr_series = pd.Series(pr, index=df['candle_begin_time'])
+            pr_delta = pr_series.diff()
+            dt_hours = df['candle_begin_time'].diff().dt.total_seconds() / 3600.0
+            dt_hours.iloc[0] = 1.0
+            rate = pr_delta.values / dt_hours.values
+            mark((rate < -0.005) & (pr < pnl_thr), '亏损加速止损')
+        # active_stop_mode == 'none' → 不启用任何主动止损
+
     # 爆仓（最低优先级，通常被固定止损先触发）
     mark(pr < margin_rate - 1.0, '爆仓')
 
@@ -254,7 +326,9 @@ def cal_equity_curve(candle_df, trade_df, fee, cap, c_rate_taker=0.0005, funding
 def simulate_grid_engine(bars_df, grid_params, cap=10000.0, leverage=5.0, fee=0.0002,
                          min_amount=0.0, max_rate=0.68, margin_rate=0.05,
                          stop_cfg=None, c_rate_taker=0.0005,
-                         funding_df=None, neutral_init=False, pv_spike_df=None):
+                         funding_df=None, neutral_init=False, pv_spike_df=None,
+                         active_stop_mode='pv', pv_pnl_thr=-0.015,
+                         pv_mult=3, pv_n=233, pv_period='15min'):
     """
     端到端封装：bars(本项目 1m df) + 布网参数 → 资金曲线终值。
     grid_params: dict(low_price, high_price, grid_count, stop_high_price, stop_low_price)
@@ -264,6 +338,9 @@ def simulate_grid_engine(bars_df, grid_params, cap=10000.0, leverage=5.0, fee=0.
     stop_cfg: 实盘 stop_loss_config（stop_loss/trailing_k/trailing_floor/fundingRate_stop_loss）；
               None=不套退出(仅破网/爆仓)，跑到窗口末（校准手动停止网格用）。
     funding_df: 列 ts(ms,UTC)/fundingRate，用于资金费 PnL + 资金费率止损。
+    active_stop_mode: 主动止损模式 (pv/atr/trend/time_decay/bb/loss_accel/none)；默认 'pv'（与历史一致）。
+    pv_pnl_thr: pv 主动止损的亏损门槛（默认 -0.015）。
+    pv_mult/pv_n/pv_period: pv 量能尖峰参数（quote_volume>mult×rolling(n).mean，period 重采样）；默认与历史一致。
     返回: dict(pnl_ratio, net_value_final, terminated, exit_reason, blown_up, n_trades, broke)
     """
     cols = ['candle_begin_time', 'open', 'high', 'low', 'close']
@@ -301,10 +378,13 @@ def simulate_grid_engine(bars_df, grid_params, cap=10000.0, leverage=5.0, fee=0.
     eq = cal_equity_curve(bars, trade_df, fee, cap, c_rate_taker, funding_df)
 
     # pv 量能信号：优先用外部传入(基于充分 15m 历史)；否则窗口内近似(缺前置历史，fidelity 限制)
-    if pv_spike_df is None and stop_cfg is not None and 'quote_volume' in bars.columns:
-        pv_spike_df = calc_pv_spike(bars)
+    if active_stop_mode == 'pv' and pv_spike_df is None and stop_cfg is not None \
+            and 'quote_volume' in bars.columns:
+        pv_spike_df = calc_pv_spike(bars, active_period=pv_period, mult=pv_mult, n=pv_n)
 
-    eq, stop_reason, blown = _apply_exit(eq, cap, c_rate_taker, stop_cfg, margin_rate, pv_spike_df)
+    eq, stop_reason, blown = _apply_exit(eq, cap, c_rate_taker, stop_cfg, margin_rate, pv_spike_df,
+                                         active_stop_mode=active_stop_mode, bars_df=bars,
+                                         pv_pnl_thr=pv_pnl_thr)
     nv = float(eq['net_value'].iloc[-1])
     exit_reason = stop_reason or ('破网' if broke else '窗口结束')
     return {'pnl_ratio': nv - 1.0, 'net_value_final': nv,

@@ -14,6 +14,7 @@ from gridtrade.execution.gates import (GateChain, MarginGate, MaxConcurrentGate,
                                        RiskBudgetGate, SymbolLockGate)
 from gridtrade.execution.grid_executor import GridExecutor
 from gridtrade.execution.manager import GridManager
+from gridtrade.execution.signals import LiveSignalProvider
 from gridtrade.execution.reconciler import Reconciler
 from gridtrade.execution.triggers import (ScheduledSelectionTrigger,
                                           TriggerEngine)
@@ -68,8 +69,12 @@ def build_runtime(config) -> Runtime:
         MarginGate(adapter, config.default_cap, log=_flush_log),
     ], log=_flush_log)
     bus = EventBus()
+    # 实盘退出信号：pv_spike（对齐回测 calc_pv_spike）+ funding_rate（HL 真实费率），按 grid 节流
+    signals = LiveSignalProvider(adapter, mult=DEFAULT_STOP_CFG['pv_mult'],
+                                 period=DEFAULT_STOP_CFG['pv_period'], n=DEFAULT_STOP_CFG['pv_n'],
+                                 log=_flush_log)
     manager = GridManager(executor, gates, stop_cfg=DEFAULT_STOP_CFG,
-                          event_bus=bus)
+                          event_bus=bus, signal_provider=signals)
 
     sc = DEFAULT_STRATEGY_CONFIG
     trigger = ScheduledSelectionTrigger(sc, sc['factors'], sc['weight_list'],
