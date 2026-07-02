@@ -254,11 +254,13 @@ def cal_equity_curve(candle_df, trade_df, fee, cap, c_rate_taker=0.0005, funding
 def simulate_grid_engine(bars_df, grid_params, cap=10000.0, leverage=5.0, fee=0.0002,
                          min_amount=0.0, max_rate=0.68, margin_rate=0.05,
                          stop_cfg=None, c_rate_taker=0.0005,
-                         funding_df=None, neutral_init=True, pv_spike_df=None):
+                         funding_df=None, neutral_init=False, pv_spike_df=None):
     """
     端到端封装：bars(本项目 1m df) + 布网参数 → 资金曲线终值。
     grid_params: dict(low_price, high_price, grid_count, stop_high_price, stop_low_price)
-    neutral_init: True 时模拟 OKX 中性网格的初始仓位（开网即按 entry 预置 grids_above×每格量 多头）。
+    neutral_init: 默认 False = 纯中性网格：入场净仓=0，上穿转空、下穿转多，仓位对称于 entry。
+                  True 时模拟 OKX「做多式」底仓（开网即按 entry 预置 grids_above×每格量 多头，
+                  仓位恒 ≥0、只多不空——顶部空仓、底部满多），供对照/校准用。
     stop_cfg: 实盘 stop_loss_config（stop_loss/trailing_k/trailing_floor/fundingRate_stop_loss）；
               None=不套退出(仅破网/爆仓)，跑到窗口末（校准手动停止网格用）。
     funding_df: 列 ts(ms,UTC)/fundingRate，用于资金费 PnL + 资金费率止损。
@@ -281,7 +283,8 @@ def simulate_grid_engine(bars_df, grid_params, cap=10000.0, leverage=5.0, fee=0.
     entry = bars['open'].iloc[0]
     trade_df = get_trade_info(touch_df, entry, gi)
 
-    # OKX 中性网格初始仓位：开网即在 entry 预置 (entry 上方线数) 笔、每笔每格量 的多头。
+    # 做多式底仓（neutral_init=True，非默认）：开网即在 entry 预置 (entry 上方线数) 笔、每笔每格量 的多头，
+    # 使仓位恒 ≥0（只多不空）。默认 False 时不注入 → 纯中性：上穿转空、下穿转多，仓位对称于 entry。
     # 用「逐格 +1 单位」注入（而非单行 bulk），以兼容引擎按净头寸算均价的逻辑（bulk 会污染均价）。
     if neutral_init:
         grids_above = int((gi['价格序列'] > entry).sum())

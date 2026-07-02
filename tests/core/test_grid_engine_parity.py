@@ -32,7 +32,10 @@ def test_simulate_grid_engine_matches_golden():
                    'stop_low_price': 88.0, 'stop_high_price': 112.0}
     stop_cfg = {'stop_loss': 0.034, 'trailing_k': 0.3, 'trailing_floor': 0.00618,
                 'fundingRate_stop_loss': 0.0015}
-    res = simulate_grid_engine(bars, grid_params, cap=1000.0, leverage=5.0, stop_cfg=stop_cfg)
+    # 金标由 legacy 引擎（neutral_init 默认 True）生成；生产默认已改为 False（纯中性），
+    # 故此处显式传 True 以继续校验「做多式底仓」注入路径与 legacy 零漂移。
+    res = simulate_grid_engine(bars, grid_params, cap=1000.0, leverage=5.0, stop_cfg=stop_cfg,
+                               neutral_init=True)
     assert abs(res['pnl_ratio'] - g['pnl_ratio']) < 1e-9
     assert abs(res['net_value_final'] - g['net_value_final']) < 1e-9
     assert res['exit_reason'] == g['exit_reason']
