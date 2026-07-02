@@ -27,6 +27,7 @@ class DataSource:
         return self.adapter.list_instruments()
 
     def _warm(self, namespace, symbol, start_ms, end_ms, fetch_fn, cols, time_col):
+        now_ms = int(pd.Timestamp.utcnow().value // 1_000_000)
         days = _days(start_ms, end_ms)
         missing = [d for d in days if not self.cache.exists(namespace, symbol, d)]
         if missing:
@@ -35,6 +36,8 @@ class DataSource:
             fetched = fetch_fn(symbol, lo, hi)
             for d in missing:
                 d_lo, d_hi = _day_bounds_ms(d)
+                if d_hi >= now_ms:      # 当天(UTC)未过完 → 数据不完整，不缓存，下次重取
+                    continue
                 if fetched.empty:
                     self.cache.write_empty(namespace, symbol, d, cols)
                     continue
