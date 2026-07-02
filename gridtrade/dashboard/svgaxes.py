@@ -1,5 +1,6 @@
 """SVG 图表 chrome 共享纯函数：转义 / 刻度 / 坐标轴 / 图例 / 数值标注。
 文本只用数值+时间+固定词；svg_escape 对字符串标签兜底，守 |safe 边界。"""
+import math
 from datetime import datetime, timezone
 from typing import List, Tuple
 
@@ -16,7 +17,19 @@ def nice_ticks(lo: float, hi: float, n: int = 4) -> List[float]:
     return [round(lo + i * step, 10) for i in range(n + 1)]
 
 
-def y_axis(ticks, sy, x_left, x_right, *, digits: int = 2) -> str:
+def axis_digits(ticks, *, sig: int = 5, lo: int = 2, hi: int = 8) -> int:
+    """按刻度量级自适应小数位（下限 2、上限 8）：低价币轴（0.06/0.001）需更多位
+    才能区分刻度，高价币轴保持 2 位。只会加位不会减，故对高价轴无害。"""
+    vals = [abs(t) for t in ticks if t]
+    if not vals:
+        return lo
+    d = sig - 1 - int(math.floor(math.log10(max(vals))))
+    return max(lo, min(hi, d))
+
+
+def y_axis(ticks, sy, x_left, x_right, *, digits: int = None) -> str:
+    if digits is None:                       # 未显式指定 → 按量级自适应（价格轴关键）
+        digits = axis_digits(ticks)
     out = []
     for t in ticks:
         y = sy(t)

@@ -1,5 +1,23 @@
-from gridtrade.dashboard.svgaxes import (svg_escape, nice_ticks, y_axis,
+from gridtrade.dashboard.svgaxes import (svg_escape, nice_ticks, y_axis, axis_digits,
                                          x_time_axis, x_cat_axis, legend, value_label)
+
+
+def test_axis_digits_adapts_to_magnitude():
+    # 高价币轴：2 位够（下限）
+    assert axis_digits([500.0, 561.84, 600.0]) == 2
+    assert axis_digits([50000.0, 60949.0]) == 2
+    # 低价币轴：加位数使刻度可分辨（fmt_num 2 位会塌成同值）
+    assert axis_digits([1.48, 1.78, 2.11]) >= 4
+    assert axis_digits([0.0625, 0.077, 0.106]) >= 5
+    assert axis_digits([0.001, 0.0012, 0.0015]) >= 7
+    # 空/全零回退到下限 2
+    assert axis_digits([0.0, 0.0]) == 2
+
+
+def test_y_axis_adaptive_digits_for_low_priced():
+    # 未显式给 digits 时按量级自适应：低价币刻度带足够小数、不塌成 2 位
+    svg = y_axis(nice_ticks(0.0625, 0.106, 4), sy=lambda p: 0.0, x_left=0, x_right=100)
+    assert '0.0625' in svg or '0.06251' in svg
 
 
 def test_svg_escape():

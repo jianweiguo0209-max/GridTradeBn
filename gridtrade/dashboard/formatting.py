@@ -1,4 +1,5 @@
 """Jinja2 展示格式化：时间/数字/百分比/盈亏着色。纯函数，无副作用。"""
+import math
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -51,6 +52,21 @@ def fmt_fee(x: Optional[float], digits: int = 8) -> str:
     保留高精度并去掉尾部多余的 0 与小数点（0.001955→0.001955、0→0）。"""
     if x is None:
         return '-'
+    s = f'{x:.{digits}f}'
+    if '.' in s:
+        s = s.rstrip('0').rstrip('.')
+    return s or '0'
+
+
+def fmt_price(x: Optional[float], sig: int = 6) -> str:
+    """价格：币价跨度大（ARB 0.077 ~ BTC 60949），固定 2 位会把低价币塌成
+    0.08/0.00。按有效数字自适应小数位（默认 6 sig figs）并去尾零：
+    0.07768→0.07768、1.78601414→1.78601、561.84→561.84、60949→60949。"""
+    if x is None:
+        return '-'
+    if x == 0:
+        return '0'
+    digits = max(0, sig - 1 - int(math.floor(math.log10(abs(x)))))
     s = f'{x:.{digits}f}'
     if '.' in s:
         s = s.rstrip('0').rstrip('.')
