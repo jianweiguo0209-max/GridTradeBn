@@ -46,6 +46,17 @@ def fmt_size(x: Optional[float], digits: int = 8) -> str:
     return s or '0'
 
 
+def fmt_fee(x: Optional[float], digits: int = 8) -> str:
+    """手续费：maker 单笔费 ~0.002 USDC，不能用 fmt_num(2 位) 否则截成 0.00。
+    保留高精度并去掉尾部多余的 0 与小数点（0.001955→0.001955、0→0）。"""
+    if x is None:
+        return '-'
+    s = f'{x:.{digits}f}'
+    if '.' in s:
+        s = s.rstrip('0').rstrip('.')
+    return s or '0'
+
+
 def pnl_class(x: Optional[float]) -> str:
     if x is None or x == 0:
         return 'zero'

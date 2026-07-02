@@ -14,7 +14,7 @@
   <td>{{ r.open_order_count }}</td>
   <td>{{ r.net_position | fmt_size }}</td>
   <td class="{{ r.realized_pnl | pnl_class }}">{{ r.realized_pnl | fmt_num }}</td>
-  <td>{{ r.fee_paid | fmt_num }}</td>
+  <td>{{ r.fee_paid | fmt_fee }}</td>
   <td class="{{ r.unrealized_pnl | pnl_class }}">{{ r.unrealized_pnl | fmt_num }}</td>
   <td>{{ r.current_price | fmt_num }}{% if r.price_error %} <span class="neg">(stale)</span>{% endif %}</td>
   <td>L {{ r.stop_low_dist_pct | fmt_pct }} / H {{ r.stop_high_dist_pct | fmt_pct }}</td>

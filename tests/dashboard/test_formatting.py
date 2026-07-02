@@ -1,6 +1,16 @@
 # tests/dashboard/test_formatting.py
 from gridtrade.dashboard.formatting import (ms_to_human, age_human, fmt_num,
-                                            fmt_pct, fmt_size, pnl_class)
+                                            fmt_pct, fmt_size, fmt_fee, pnl_class)
+
+
+def test_fmt_fee():
+    assert fmt_fee(None) == '-'
+    # maker 手续费 ~0.002：不能被 2 位精度截成 0.00（Recent Fills fee 列显示 bug）
+    assert fmt_fee(0.001955) == '0.001955'
+    assert fmt_fee(0.00204) == '0.00204'
+    assert fmt_fee(0.015866) == '0.015866'   # 累计 fee_paid
+    assert fmt_fee(0.0) == '0'               # 真 0 仍显示 0（去尾零）
+    assert fmt_fee(1.5) == '1.5'
 
 
 def test_fmt_size():
