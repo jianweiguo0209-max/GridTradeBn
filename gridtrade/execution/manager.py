@@ -58,6 +58,8 @@ class GridManager:
                     grid_id=grid.id, symbol=grid.symbol, line_index=f['line_index'],
                     side=f['side'], price=f['price'], size=f['size'], fee=f['fee']))
             if res['closed']:
+                if self.signals is not None:
+                    self.signals.evict(grid.id)      # 平仓即清信号缓存
                 self._publish(GridClosed(
                     grid_id=grid.id, exchange=grid.exchange, symbol=grid.symbol,
                     reason=res['reason'], pnl_ratio=res['pnl_ratio']))
@@ -70,6 +72,8 @@ class GridManager:
                   if g.status == ACTIVE and g.tag == tag]
         for grid in active:
             res = self.executor.close(grid.id, grid.symbol, reason)
+            if self.signals is not None:
+                self.signals.evict(grid.id)          # 平仓即清信号缓存
             self._publish(GridClosed(
                 grid_id=grid.id, exchange=grid.exchange, symbol=grid.symbol,
                 reason=reason, pnl_ratio=res['pnl_ratio']))

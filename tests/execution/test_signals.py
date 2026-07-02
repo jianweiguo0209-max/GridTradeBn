@@ -77,3 +77,13 @@ def test_empty_data_returns_zero():
     adp = FakeAdapter(bars=pd.DataFrame(), funding=pd.DataFrame())
     prov = LiveSignalProvider(adp, now_fn=lambda: 1.0)
     assert prov.get('g1', 'X', 0) == (0, 0.0)
+
+
+def test_evict_removes_cache_entry():
+    adp = FakeAdapter(bars=_bars_with_spike(), funding=_funding([0.001]))
+    prov = LiveSignalProvider(adp, now_fn=lambda: 1.0)
+    prov.get('g1', 'X', 0)
+    assert 'g1' in prov._cache
+    prov.evict('g1')
+    assert 'g1' not in prov._cache
+    prov.evict('missing')            # 缺失也安全、不抛

@@ -127,3 +127,39 @@ def test_monitor_all_publishes_orderfilled_per_new_fill(store):
     filled.clear()
     mgr.monitor_all()
     assert filled == []
+
+
+class _StubSignals:
+    def __init__(self):
+        self.evicted = []
+
+    def get(self, grid_id, symbol, open_ms):
+        return 0, 0.0
+
+    def evict(self, grid_id):
+        self.evicted.append(grid_id)
+
+
+def _manager_with_signals(gx, sig, bus=None):
+    from gridtrade.execution.manager import GridManager
+    chain = GateChain([SymbolLockGate(gx.grids)])
+    return GridManager(gx, chain, stop_cfg=STOP_CFG, event_bus=bus, signal_provider=sig)
+
+
+def test_monitor_all_evicts_signal_cache_on_close(store):
+    ex, store, gx = _setup(store, 100.0)
+    sig = _StubSignals()
+    mgr = _manager_with_signals(gx, sig)
+    ids = mgr.open_proposals([_proposal()])
+    ex.set_price(SYM, 96.5)                  # 触发固定止损 -> 平仓
+    mgr.monitor_all()
+    assert sig.evicted == ids                # 平仓即清缓存
+
+
+def test_close_by_tag_evicts_signal_cache(store):
+    ex, store, gx = _setup(store, 100.0)
+    sig = _StubSignals()
+    mgr = _manager_with_signals(gx, sig)
+    ids = mgr.open_proposals([_proposal()])
+    mgr.close_by_tag('t0', '周期再平衡')
+    assert sig.evicted == ids

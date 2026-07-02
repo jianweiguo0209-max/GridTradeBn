@@ -38,6 +38,10 @@ class LiveSignalProvider:
         self._cache[grid_id] = (now, pv, fr)
         return pv, fr
 
+    def evict(self, grid_id):
+        """网格平仓后清掉其缓存条目，避免已平网格在缓存里无限累积。缺失也安全。"""
+        self._cache.pop(grid_id, None)
+
     def _pv_spike(self, symbol, open_ms, now_ms):
         try:
             bars = self.adapter.fetch_ohlcv(symbol, '1m', open_ms, now_ms)
