@@ -1,6 +1,21 @@
 # tests/dashboard/test_formatting.py
 from gridtrade.dashboard.formatting import (ms_to_human, age_human, fmt_num,
-                                            fmt_pct, fmt_size, fmt_fee, pnl_class)
+                                            fmt_pct, fmt_size, fmt_fee, fmt_price,
+                                            pnl_class)
+
+
+def test_fmt_price():
+    assert fmt_price(None) == '-'
+    assert fmt_price(0.0) == '0'
+    # 低价币：fmt_num(2 位) 会塌成 0.08/0.37，须保留有效数字
+    assert fmt_price(0.07768) == '0.07768'
+    assert fmt_price(0.06251234) == '0.0625123'      # 6 位有效数字
+    assert fmt_price(0.36948) == '0.36948'
+    assert fmt_price(1.78601414) == '1.78601'
+    assert fmt_price(0.00123456) == '0.00123456'     # sub-cent 不再塌成 0.00
+    # 高价币：够即可、去尾零
+    assert fmt_price(561.84) == '561.84'
+    assert fmt_price(60949.0) == '60949'
 
 
 def test_fmt_fee():
