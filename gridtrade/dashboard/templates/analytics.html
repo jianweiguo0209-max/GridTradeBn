@@ -16,7 +16,7 @@
 <th>胜率</th><th>平均持仓</th><th>最大回撤</th></tr></thead><tbody>
 {% for s in tags %}<tr><td>{{ s.tag }}</td><td>{{ s.count }}</td>
 <td class="{{ s.total_pnl | pnl_class }}">{{ s.total_pnl | fmt_num }}</td>
-<td>{{ s.total_fee | fmt_num }}</td>
+<td>{{ s.total_fee | fmt_fee }}</td>
 <td class="{{ s.net_pnl | pnl_class }}">{{ s.net_pnl | fmt_num }}</td>
 <td>{{ s.win_rate | fmt_pct }}</td>
 <td>{{ (s.avg_hold_ms / 3600000) | fmt_num if s.avg_hold_ms else '-' }}h</td>
