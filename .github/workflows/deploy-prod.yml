@@ -1,0 +1,48 @@
+name: Deploy Mainnet
+
+# CD（mainnet）：push 到 production 分支 → 跑测试 → 通过后自动 flyctl deploy 到 gridtrade-prod。
+# 全自动、无人工审批门（用户决策）；CI 门天然内建（deploy 有 needs: test）。
+# 需 GitHub repo secret FLY_API_TOKEN_PROD（`fly tokens create deploy -a gridtrade-prod` 生成）。
+on:
+  push:
+    branches: [production]
+
+jobs:
+  test:
+    name: pytest (py3.9)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          # TA-Lib 0.6.8 提供 manylinux bundled wheel，含 C 库，无需系统 ta-lib（与 ci.yml 一致）
+          pip install TA-Lib==0.6.8
+          pip install pytest
+
+      - name: Run tests
+        env:
+          TZ: Asia/Shanghai
+        run: python -m pytest -q
+
+  deploy:
+    name: flyctl deploy (mainnet)
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy to Fly (mainnet)
+        run: flyctl deploy --config deploy/fly.prod.toml --dockerfile deploy/Dockerfile --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_PROD }}
