@@ -1,5 +1,3 @@
-import time
-
 import numpy as np
 import pandas as pd
 
@@ -64,10 +62,8 @@ def proceed_calc_symbol_factor(symbol_candle_data, run_time, period, offset):
     all_data_df.sort_values('time', inplace=True)
     all_data_df.reset_index(inplace=True, drop=True)
 
-    # 兼容时区
-    utc_offset = int(time.localtime().tm_gmtoff / 60 / 60)
-    # 时间转化为东八区
-    all_data_df['time'] = pd.to_datetime(all_data_df['time'], unit='ms') + pd.Timedelta(hours=utc_offset)
+    # 时间恒 UTC：candle_begin_time 由 epoch 构造(tz-naive UTC)，不做机器 TZ 平移
+    all_data_df['time'] = pd.to_datetime(all_data_df['time'], unit='ms')
     # 删除runtime那行的数据，如果有的话
     all_data_df = all_data_df[all_data_df['time'] < run_time]
     # 计算截面因子
