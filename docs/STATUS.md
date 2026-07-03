@@ -147,7 +147,11 @@ gridtrade/
 
 - ✅ **开网格**（选币→**真中性、开网即 flat 无底仓**→26 限价挂单→ACTIVE；价涨转净空/价跌转净多）、**关网格**（cancel_all + reduce）、**对账**、**跨进程管理**（scheduler 开 / monitor 接管）、**实时记账**（accounting 实时更新）。
 - ✅ **补单 / 止盈止损平仓** —— **已在 testnet 真实行情有机验证（2026-06-30）**：活跃网格观测到逐笔成交→补对侧（如 NEAR/USDC closed=3 时仍 open=26）；多个网格由 monitor 止盈规则在非整点时刻自动平仓、**已实现正收益**（gt010 NEAR +0.19、gt09 TIA +0.10）。网格随选币按 ~小时级轮换。注：平仓/退出当前**无原因日志**（候选补观测性，同门链拒绝那次）。
-- ⏳ **mainnet 小额**（需求 3 收尾）：testnet 稳定后 `HL_TESTNET=false` + 确认 live 策略参数 + 切主账户凭证。
+- ⏳ **mainnet 小额**（需求 3 收尾）：**独立环境已搭建**（app `gridtrade-prod` + PG `gridtrade-pg-prod`，
+  region nrt；`deploy/fly.prod.toml` `HL_TESTNET=false`/`SCHEDULER_RUN_ON_START=false`/`release_command=create&&migrate`；
+  `deploy-prod.yml` 全自动 CD：push `production` 分支触发 test→deploy）。设计/计划见
+  `docs/superpowers/{specs,plans}/2026-07-03-mainnet-production-environment*`。**待用户完成手动步骤 1/3/4
+  （HL mainnet 钱包/secrets/GH token FLY_API_TOKEN_PROD）并授权后 push `production` 触发首部署**（ops 见 deploy/DEPLOY.md）。
 
 ---
 
