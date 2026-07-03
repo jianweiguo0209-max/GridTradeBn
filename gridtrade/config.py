@@ -61,6 +61,7 @@ class DeployConfig:
     dashboard_password_hash: str = ''
     dashboard_session_secret: str = ''
     dashboard_port: int = 8080
+    display_tz: str = 'UTC'   # IANA 时区名，仅影响面板显示；策略侧永远存/算 UTC
     stop_orders_enabled: bool = True
     stop_slippage: float = 0.15
     cap_equity_frac: float = 0.10   # >0 → 每网格 cap 按当前权益动态定 = clamp(equity×frac, min, max)；0=停用用固定 cap
@@ -100,6 +101,7 @@ def load_deploy_config(env=None) -> DeployConfig:
         dashboard_password_hash=_s(env, 'DASHBOARD_PASSWORD_HASH', ''),
         dashboard_session_secret=_s(env, 'DASHBOARD_SESSION_SECRET', ''),
         dashboard_port=_i(env, 'PORT', 8080),
+        display_tz=_s(env, 'DISPLAY_TZ', 'UTC'),
         equity_snapshot_interval_sec=_f(env, 'EQUITY_SNAPSHOT_INTERVAL_SEC', 300.0),
         stop_orders_enabled=_b(env, 'STOP_ORDERS_ENABLED', True),
         stop_slippage=_f(env, 'STOP_SLIPPAGE', 0.15),

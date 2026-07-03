@@ -81,6 +81,11 @@ def test_whitelist_parsing():
     assert cfg.whitelist == ('BTC/USDT:USDT', 'ETH/USDT:USDT')
 
 
+def test_display_tz_defaults_and_parsing():
+    assert load_deploy_config(env={}).display_tz == 'UTC'
+    assert load_deploy_config(env={'DISPLAY_TZ': 'Asia/Shanghai'}).display_tz == 'Asia/Shanghai'
+
+
 def test_quote_currency_optional_defaults_empty():
     # 未设 -> 空串（用适配器类默认 HL=USDC / OKX=USDT）
     assert load_deploy_config(env={}).quote_currency == ''

@@ -42,6 +42,22 @@ def test_ms_to_human():
     assert ms_to_human(0) == '1970-01-01 00:00:00'
 
 
+def test_to_display_dt_utc_default_and_iana_and_fallback():
+    from gridtrade.dashboard.formatting import to_display_dt
+    ts = 1704067200000  # 2024-01-01 00:00:00 UTC
+    assert to_display_dt(ts).strftime('%Y-%m-%d %H:%M') == '2024-01-01 00:00'
+    assert to_display_dt(ts, 'Asia/Shanghai').strftime('%Y-%m-%d %H:%M') == '2024-01-01 08:00'
+    # 非法时区回退 UTC、不抛
+    assert to_display_dt(ts, 'Nowhere/Nope').strftime('%Y-%m-%d %H:%M') == '2024-01-01 00:00'
+
+
+def test_ms_to_human_respects_tz():
+    from gridtrade.dashboard.formatting import ms_to_human
+    ts = 1704067200000
+    assert ms_to_human(ts) == '2024-01-01 00:00:00'
+    assert ms_to_human(ts, 'Asia/Shanghai') == '2024-01-01 08:00:00'
+
+
 def test_age_human():
     assert age_human(None) == '-'
     assert age_human(5) == '5s'
