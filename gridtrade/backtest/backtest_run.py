@@ -87,6 +87,7 @@ def _simulate_grid_task(payload):
         'hold_bars': int(len(bars_df)), 'n_fills': int(sim['n_trades']),
         'pnl_ratio': float(sim['pnl_ratio']), 'exit_reason': sim['exit_reason'],
         'terminated': bool(sim['terminated']),
+        'unreal_pnl': float(sim.get('unreal_pnl', 0.0)),      # 浮盈拆分（诊断用）
         'funding_missing': bool(_funding_missing(funding_df, bars_df)),
     }
 

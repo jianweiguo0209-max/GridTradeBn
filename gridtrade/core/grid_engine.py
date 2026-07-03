@@ -250,6 +250,11 @@ def _apply_exit(df, cap, c_rate_taker, stop_cfg=None, margin_rate=0.05, pv_spike
 
     first = next((i for i in range(n) if reason_at[i] is not None), None)
     if first is None:
+        # 窗口结束：无退出触发，但持仓也应按最后 close 扣一次平仓 taker 费（诚实持仓成本，
+        # 否则持仓越大漏扣越多、系统性高估——尤其宽带/疏格累积大仓的配置）。
+        row = df.iloc[-1]
+        fee_rate = abs(row['hold_num']) * row['close'] * c_rate_taker / cap
+        df.loc[row.name, 'net_value'] = row['net_value'] - fee_rate
         return df, None, False
     reason = reason_at[first]
     df = df[:first + 1].copy()
@@ -387,6 +392,9 @@ def simulate_grid_engine(bars_df, grid_params, cap=10000.0, leverage=5.0, fee=0.
                                          pv_pnl_thr=pv_pnl_thr)
     nv = float(eq['net_value'].iloc[-1])
     exit_reason = stop_reason or ('破网' if broke else '窗口结束')
+    # 已实现 vs 未实现拆分（诊断/analytics）：unreal_pnl=最后一根浮盈/cap；real_pnl=其余(已实现净费)
+    unreal_pnl = 0.0 if blown else float(eq['unreal_profit'].iloc[-1]) / cap
     return {'pnl_ratio': nv - 1.0, 'net_value_final': nv,
             'terminated': bool(stop_reason or broke or blown),
-            'exit_reason': exit_reason, 'blown_up': blown, 'n_trades': int(len(trade_df)), 'broke': broke}
+            'exit_reason': exit_reason, 'blown_up': blown, 'n_trades': int(len(trade_df)), 'broke': broke,
+            'unreal_pnl': unreal_pnl, 'real_pnl': (nv - 1.0) - unreal_pnl}
