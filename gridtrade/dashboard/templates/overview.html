@@ -3,13 +3,14 @@
 <meta http-equiv="refresh" content="8">
 <h1>Active Grids</h1>
 <table><thead><tr>
-<th>symbol</th><th>status</th><th>dir</th><th>range</th><th>orders</th>
+<th>symbol</th><th>status</th><th>dir</th><th>开盘</th><th>range</th><th>orders</th>
 <th>net</th><th>realized</th><th>fee</th><th>unreal</th><th>price</th><th>stop dist</th><th></th></tr></thead>
 <tbody>
 {% for r in rows %}
 <tr>
   <td><a href="/grid/{{ r.grid_id | urlencode }}">{{ r.symbol }}</a></td>
   <td>{{ r.status }}</td><td>{{ r.direction }}</td>
+  <td>{{ r.created_at | ms_to_human }}</td>
   <td>{{ r.low_price | fmt_price }}–{{ r.high_price | fmt_price }}</td>
   <td>{{ r.open_order_count }}</td>
   <td>{{ r.net_position | fmt_size }}</td>

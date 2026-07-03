@@ -28,6 +28,7 @@
 })();
 </script>
 <p>status={{ d.grid.status }} dir={{ d.grid.direction }}
+   开盘={{ d.grid.created_at | ms_to_human }}
    range={{ d.grid.low_price | fmt_price }}–{{ d.grid.high_price | fmt_price }}
    stop={{ d.grid.stop_low_price | fmt_price }}/{{ d.grid.stop_high_price | fmt_price }}</p>
 {% if d.grid.status not in ['CLOSED', 'FAILED'] %}

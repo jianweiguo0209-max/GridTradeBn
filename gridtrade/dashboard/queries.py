@@ -84,6 +84,7 @@ class GridOverviewRow:
     stop_low_dist_pct: Optional[float]
     stop_high_dist_pct: Optional[float]
     fee_paid: float = 0.0
+    created_at: Optional[int] = None   # 开盘时刻（ms, UTC）
 
 
 def _unrealized(net_position: float, avg_price: float, price: float) -> float:
@@ -126,7 +127,8 @@ def build_overview(store, adapter) -> List[GridOverviewRow]:
             net_position=net, avg_price=avg, realized_pnl=realized,
             current_price=price, unrealized_pnl=unreal, price_error=price_error,
             stop_low_price=g.stop_low_price, stop_high_price=g.stop_high_price,
-            stop_low_dist_pct=low_dist, stop_high_dist_pct=high_dist, fee_paid=fee))
+            stop_low_dist_pct=low_dist, stop_high_dist_pct=high_dist, fee_paid=fee,
+            created_at=g.created_at))
     return rows
 
 
