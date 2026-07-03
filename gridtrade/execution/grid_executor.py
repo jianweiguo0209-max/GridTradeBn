@@ -4,6 +4,7 @@ client_oid='{grid_id}:{line}:{seq}' 确定性映射网格线，供对账。
 """
 import itertools
 
+from gridtrade.config import compute_cap
 from gridtrade.core.grid_engine import grid_order_info
 from gridtrade.execution.live_equity import LiveEquity
 from gridtrade.state.accounting import AccountingRepository
@@ -21,7 +22,8 @@ _TRADE_REFETCH_OVERLAP_MS = 5 * 60 * 1000
 class GridExecutor:
     def __init__(self, adapter, store, *, cap, leverage, fee=0.0002,
                  c_rate_taker=0.0005, max_rate=0.68, min_amount=0.0,
-                 stop_orders_enabled=False, stop_slippage=0.15):
+                 stop_orders_enabled=False, stop_slippage=0.15,
+                 cap_equity_frac=0.0, cap_min=0.0, cap_max=float('inf')):
         self.adapter = adapter
         self.grids = GridRepository(store)
         self.orders = OrderRepository(store)
@@ -36,6 +38,9 @@ class GridExecutor:
         self.min_amount = float(min_amount)
         self.stop_orders_enabled = bool(stop_orders_enabled)
         self.stop_slippage = float(stop_slippage)
+        self.cap_equity_frac = float(cap_equity_frac)
+        self.cap_min = float(cap_min)
+        self.cap_max = float(cap_max)
         self._fuses = {}      # grid_id -> {'low': exchange_oid, 'high': exchange_oid}
         self.live = {}        # grid_id -> LiveEquity
         self._geom = {}       # grid_id -> dict(price_array, order_num)
@@ -50,8 +55,21 @@ class GridExecutor:
         """内存态是否已就绪（同进程 open 或 reconciler.restore 重建后）。"""
         return grid_id in self._geom
 
+    def _resolve_cap(self):
+        """cap_equity_frac>0 时按当前权益动态定 cap = clamp(equity×frac, min, max)；
+        未启用或余额读取失败 → 回退固定 self.cap（不阻塞开网）。"""
+        if not self.cap_equity_frac or self.cap_equity_frac <= 0:
+            return self.cap
+        try:
+            equity = float(self.adapter.fetch_balance().equity)
+        except Exception:
+            return self.cap
+        dyn = compute_cap(equity, self.cap_equity_frac, self.cap_min, self.cap_max)
+        return dyn if dyn is not None else self.cap
+
     def open(self, exchange, symbol, grid_params, *, offset=0, tag='', cap=None):
-        cap = self.cap if cap is None else cap
+        if cap is None:
+            cap = self._resolve_cap()
         gi = grid_order_info(cap, self.leverage, grid_params['low_price'],
                              grid_params['high_price'], int(grid_params['grid_count']),
                              grid_params['stop_low_price'], grid_params['stop_high_price'],

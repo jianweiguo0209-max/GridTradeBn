@@ -1,5 +1,20 @@
-from gridtrade.config import (load_deploy_config, DeployConfig,
+from gridtrade.config import (load_deploy_config, DeployConfig, compute_cap,
                               DEFAULT_STRATEGY_CONFIG, DEFAULT_STOP_CFG)
+
+
+def test_cap_equity_frac_defaults_and_parsing():
+    cfg = load_deploy_config(env={})
+    assert cfg.cap_equity_frac == 0.10          # 默认按权益 10% 动态定 cap
+    assert cfg.cap_min == 20.0 and cfg.cap_max == 100000.0
+    cfg2 = load_deploy_config(env={'CAP_EQUITY_FRAC': '0.065', 'CAP_MIN': '30', 'CAP_MAX': '500'})
+    assert cfg2.cap_equity_frac == 0.065 and cfg2.cap_min == 30.0 and cfg2.cap_max == 500.0
+
+
+def test_compute_cap_clamps():
+    assert compute_cap(1000.0, 0.10, 20.0, 100000.0) == 100.0
+    assert compute_cap(150.0, 0.10, 20.0, 100000.0) == 20.0        # clamp 下限
+    assert compute_cap(1e9, 0.10, 20.0, 500.0) == 500.0            # clamp 上限
+    assert compute_cap(1000.0, 0.0, 20.0, 100000.0) is None        # frac<=0 → 停用(返回 None)
 
 
 def test_defaults_when_env_empty():
