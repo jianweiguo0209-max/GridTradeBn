@@ -142,3 +142,56 @@ unset TEST_DATABASE_URL                               # 回到默认 SQLite
 - /grid/{id}/chart 返回 SVG 片段；明细页内联 JS 每 5s fetch 局部刷新（document.hidden 暂停）。
 - 走势 fetch_ohlcv 按需拉（timeframe 按窗口自适应 1m/5m/15m/1h）；网格挂点由 grid_order_info 纯函数重算；挂单/成交读 DB；当前价 fetch_price。
 - web 零写；fetch_ohlcv/fetch_price 失败 try/except 降级（画 DB 层 + 「行情暂不可用」），端点永不 500。
+
+---
+
+## Mainnet 生产环境（app `gridtrade-prod` / PG `gridtrade-pg-prod`）
+
+> 独立 app + 独立 PG，与 testnet 完全隔离。设计见
+> `docs/superpowers/specs/2026-07-03-mainnet-production-environment-design.md`。
+> **全自动 CD：push `production` 分支即触发真钱部署——手动准备未就位前不要 push。**
+
+### 已就位（前置步骤 2，2026-07-03 建好）
+- `fly apps create gridtrade-prod --org personal`
+- `fly postgres create --name gridtrade-pg-prod --org personal --region nrt --vm-size shared-cpu-1x --volume-size 1 --initial-cluster-size 1`
+- `fly postgres attach gridtrade-pg-prod --app gridtrade-prod`（已设 `DATABASE_URL` secret）
+
+### 手动步骤 1 — HL mainnet 钱包（真钱）
+- 给 HL **mainnet** 主账户注资小额测试 USDC；创建并批准 **mainnet agent/API 钱包**（testnet agent 不通用）。
+- 记下 `HL_WALLET_ADDRESS`=有钱主账户地址、`HL_PRIVATE_KEY`=agent 私钥（66 字符 `0x`+64hex）。
+
+### 手动步骤 3 — secrets（面板凭证全新生成，勿复用 testnet）
+```bash
+fly secrets set --app gridtrade-prod HL_WALLET_ADDRESS=0x... HL_PRIVATE_KEY=0x...
+HASH=$(.venv/bin/python -c "from gridtrade.dashboard.auth import hash_password; print(hash_password('<强密码>'))")
+fly secrets set --app gridtrade-prod DASHBOARD_USER=admin \
+  DASHBOARD_PASSWORD_HASH="$HASH" DASHBOARD_SESSION_SECRET="$(openssl rand -hex 32)"
+# 镜像 testnet 的币池（确认这些币在 mainnet 有效；testnet 值可能含 testnet 专属币）：
+fly secrets set --app gridtrade-prod UNIVERSE_WHITELIST="<与 testnet 同口径的 mainnet 币池>"
+```
+> 注意：`SCHEDULER_RUN_ON_START` **不要**设成 secret（会盖过 fly.prod.toml 的 `[env]=false`）；prod 靠 [env] 保持 false。
+> DATABASE_URL 已由 attach 设置，勿手动改。
+
+### 手动步骤 4 — GitHub 部署 token（app 级、与 testnet 隔离）
+```bash
+fly tokens create deploy -a gridtrade-prod        # 复制输出
+gh secret set FLY_API_TOKEN_PROD --repo rockingchang/GridTradeGP   # 粘贴 token
+```
+
+### 手动步骤 5 — 首次上线（全部就位后）
+```bash
+# 可选：本地干跑一次验证（不经 CI）
+fly deploy --config deploy/fly.prod.toml --dockerfile deploy/Dockerfile --remote-only
+# 正式：把 main 合进 production 再 push → 自动 test→deploy
+git checkout production && git merge --no-ff main && git push origin production
+```
+
+### 上线验收
+```bash
+fly logs -a gridtrade-prod                 # monitor/scheduler 心跳更新
+fly pg connect -a gridtrade-pg-prod        # SELECT * FROM heartbeats; SELECT id,symbol,status,tag FROM grids;
+fly open -a gridtrade-prod                 # 面板可登录；实测 panic/halt 熔断可用
+```
+
+### 后续上线（改动 mainnet）
+`main` 验证 → merge 进 `production` → `git push origin production`（自动 test→deploy）。**不要直接往 production 提交。**
