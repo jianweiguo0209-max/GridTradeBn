@@ -48,6 +48,17 @@ def test_overview_computes_unrealized_and_stop_distance(store):
     assert round(r.stop_low_dist_pct, 4) == round((105.0 - 80.0) / 105.0, 4)
 
 
+def test_overview_row_exposes_open_time(store):
+    grids = GridRepository(store)
+    grids.create(Grid(id='g1', exchange='hyperliquid', symbol='BTC/USDT:USDT',
+                      status=ACTIVE, direction='neutral'))
+    AccountingRepository(store).init('g1')
+    rows = build_overview(store, _PriceAdapter({'BTC/USDT:USDT': 100.0}))
+    # 开盘时间（created_at, ms）暴露给列表用于显示
+    assert rows[0].created_at == grids.get('g1').created_at
+    assert isinstance(rows[0].created_at, int) and rows[0].created_at > 0
+
+
 def test_overview_degrades_when_price_unavailable(store):
     grids = GridRepository(store)
     grids.create(Grid(id='g1', exchange='hyperliquid', symbol='ETH/USDT:USDT',
