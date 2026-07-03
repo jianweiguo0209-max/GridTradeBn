@@ -1,0 +1,48 @@
+# Fly.io 部署配置 —— GridTradeGP Mainnet 生产环境（Hyperliquid mainnet）。
+# 与 testnet deploy/fly.toml 共用同一镜像与全部业务代码；差异见
+# docs/superpowers/specs/2026-07-03-mainnet-production-environment-design.md。
+# 独立 app（gridtrade-prod）+ 独立 Postgres（gridtrade-pg-prod），与 testnet 完全隔离。
+
+app = "gridtrade-prod"
+primary_region = "nrt"
+
+[build]
+  dockerfile = "Dockerfile"
+
+# 发布前一次性钩子：先 create（空库按当前模型建全表，幂等）再 migrate（增量加列，幂等）。
+# mainnet 首次部署面对全新空库，裸 migrate 会因表不存在（NoSuchTableError）失败 abort 发布，
+# 故用 create && migrate：空库时 create 建全表、migrate no-op；后续 create no-op、migrate 负责加列。
+[deploy]
+  release_command = "sh -c 'python -m gridtrade.runtime.dbadmin create && python -m gridtrade.runtime.dbadmin migrate'"
+
+# 非敏感默认配置（敏感项走 `fly secrets set`：HL_WALLET_ADDRESS / HL_PRIVATE_KEY /
+# DATABASE_URL（attach 已设）/ DASHBOARD_* / UNIVERSE_WHITELIST）。
+[env]
+  EXCHANGE = "hyperliquid"
+  HL_TESTNET = "false"              # ← mainnet，真金白银
+  MONITOR_INTERVAL_SEC = "5"
+  SCHEDULER_PERIOD = "12H"
+  UTC_OFFSET = "8"
+  MAX_CONCURRENT = "20"
+  SCHEDULER_RUN_ON_START = "false"  # ← 生产：避免每次自动部署把网格中途关开、烧真手续费
+  # 风控项（CAP / CAP_EQUITY_FRAC / CAP_MIN / CAP_MAX / LEVERAGE）沿用 config.py 默认或按需
+  # fly secrets set 覆盖；单网格 cap = clamp(equity×0.10, CAP_MIN, CAP_MAX)，小额注资即小 cap。
+
+[processes]
+  monitor = "python -m gridtrade.runtime.monitor"
+  scheduler = "python -m gridtrade.runtime.scheduler"
+  web = "python -m gridtrade.runtime.web"
+
+# web dashboard：常驻 ≥1 台（min_machines_running=1，与 testnet 同理，见 deploy/DEPLOY.md）。
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["web"]
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+  processes = ["monitor", "scheduler", "web"]
