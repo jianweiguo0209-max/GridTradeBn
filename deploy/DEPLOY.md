@@ -166,11 +166,12 @@ fly secrets set --app gridtrade-prod HL_WALLET_ADDRESS=0x... HL_PRIVATE_KEY=0x..
 HASH=$(.venv/bin/python -c "from gridtrade.dashboard.auth import hash_password; print(hash_password('<强密码>'))")
 fly secrets set --app gridtrade-prod DASHBOARD_USER=admin \
   DASHBOARD_PASSWORD_HASH="$HASH" DASHBOARD_SESSION_SECRET="$(openssl rand -hex 32)"
-# 镜像 testnet 的币池（确认这些币在 mainnet 有效；testnet 值可能含 testnet 专属币）：
-fly secrets set --app gridtrade-prod UNIVERSE_WHITELIST="<与 testnet 同口径的 mainnet 币池>"
 ```
-> 注意：`SCHEDULER_RUN_ON_START` **不要**设成 secret（会盖过 fly.prod.toml 的 `[env]=false`）；prod 靠 [env] 保持 false。
-> DATABASE_URL 已由 attach 设置，勿手动改。
+> 注意：
+> - `UNIVERSE_WHITELIST` **已写死在 `deploy/fly.prod.toml` [env]**（HL mainnet 24h 成交额 Top26），
+>   不用设 secret；要放开到全池就清空该项重部署。
+> - `SCHEDULER_RUN_ON_START` **不要**设成 secret（会盖过 fly.prod.toml 的 `[env]=false`）；prod 靠 [env] 保持 false。
+> - `DATABASE_URL` 已由 attach 设置，勿手动改。
 
 ### 手动步骤 4 — GitHub 部署 token（app 级、与 testnet 隔离）
 ```bash

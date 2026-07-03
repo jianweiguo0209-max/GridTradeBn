@@ -16,7 +16,7 @@ primary_region = "nrt"
   release_command = "sh -c 'python -m gridtrade.runtime.dbadmin create && python -m gridtrade.runtime.dbadmin migrate'"
 
 # 非敏感默认配置（敏感项走 `fly secrets set`：HL_WALLET_ADDRESS / HL_PRIVATE_KEY /
-# DATABASE_URL（attach 已设）/ DASHBOARD_* / UNIVERSE_WHITELIST）。
+# DATABASE_URL（attach 已设）/ DASHBOARD_*）。
 [env]
   EXCHANGE = "hyperliquid"
   HL_TESTNET = "false"              # ← mainnet，真金白银
@@ -25,6 +25,10 @@ primary_region = "nrt"
   UTC_OFFSET = "8"
   MAX_CONCURRENT = "20"
   SCHEDULER_RUN_ON_START = "false"  # ← 生产：避免每次自动部署把网格中途关开、烧真手续费
+  # 币池：HL mainnet 按 24h 成交额排名的流动性 Top26（2026-07-03 快照，经 list_instruments 校准为
+  # 真实 live canonical 符号）。resolve_live_universe 仅在此名单内选币（收窄首测风险面）；放开到全池
+  # 时清空此项即可（见 universe.py：whitelist 空 -> 全 live 减黑名单）。
+  UNIVERSE_WHITELIST = "BTC/USDC:USDC,ETH/USDC:USDC,HYPE/USDC:USDC,SOL/USDC:USDC,ZEC/USDC:USDC,LIT/USDC:USDC,WLD/USDC:USDC,FARTCOIN/USDC:USDC,XRP/USDC:USDC,NEAR/USDC:USDC,PUMP/USDC:USDC,GRAM/USDC:USDC,SUI/USDC:USDC,XPL/USDC:USDC,UNI/USDC:USDC,AAVE/USDC:USDC,DOGE/USDC:USDC,ENA/USDC:USDC,VVV/USDC:USDC,LINK/USDC:USDC,BCH/USDC:USDC,TAO/USDC:USDC,ADA/USDC:USDC,JTO/USDC:USDC,AVAX/USDC:USDC,PENGU/USDC:USDC"
   # 风控项（CAP / CAP_EQUITY_FRAC / CAP_MIN / CAP_MAX / LEVERAGE）沿用 config.py 默认或按需
   # fly secrets set 覆盖；单网格 cap = clamp(equity×0.10, CAP_MIN, CAP_MAX)，小额注资即小 cap。
 

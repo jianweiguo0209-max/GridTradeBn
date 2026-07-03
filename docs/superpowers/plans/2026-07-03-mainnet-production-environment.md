@@ -455,7 +455,7 @@ Expected: 出现 `production`（本地，无上游追踪）；`main` 领先 `ori
 - [ ] **Step 2: 只读核验就位**
 
 ```bash
-fly secrets list -a gridtrade-prod          # 期望含 DATABASE_URL/HL_WALLET_ADDRESS/HL_PRIVATE_KEY/DASHBOARD_*/UNIVERSE_WHITELIST
+fly secrets list -a gridtrade-prod          # 期望含 DATABASE_URL/HL_WALLET_ADDRESS/HL_PRIVATE_KEY/DASHBOARD_*（UNIVERSE_WHITELIST 已写死在 fly.prod.toml，不在此）
 gh secret list --repo rockingchang/GridTradeGP   # 期望含 FLY_API_TOKEN_PROD
 ```
 
