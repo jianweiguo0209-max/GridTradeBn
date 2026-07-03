@@ -164,6 +164,7 @@ gridtrade/
 - **DB 重置**：`fly console -a gridtrade-hl -C "python -m gridtrade.runtime.dbadmin reset"`（drop+create，仅 testnet/无价值数据时）。
 - **观察状态**：`fly logs -a gridtrade-hl`；或 console 查 `grids/grid_orders/grid_fills/grid_accounting/order_records/heartbeats`。一键只读快照：`bash scripts/testnet_status.sh`（fly 机器状态 + 心跳/标志/活跃网格/指令/余额）。
 - **「该开未开」诊断（app v40+）**：scheduler 选币提案后 0 开仓时，先看 `fly logs` 的 `[gate] rejected <symbol> by <gate>: <reason>`——多数是 `SymbolLockGate: active grid already exists`（选中币已活跃，正确拒绝、稳态 1~N 网格随选币轮换，**非 bug**）。`MarginGate fail-closed: balance fetch failed: ...` 才是余额读取异常需关注。2026-06-30 巡检曾因门链拒绝静默无日志误判一次假警报，已加结构化日志根治（见记忆 `margin-gate-silent-fail-closed`）。
+- **时区**：内部全 UTC（无机器 TZ 依赖，已铲平 `utc_offset`/`tm_gmtoff`）；换仓 offset 相位现为纯 UTC（与回测 `utc_offset=0` 同口径）；显示时区由 `DISPLAY_TZ`（IANA，默认 UTC）控制，仅面板层。**注**：本次上线令 live 换仓 12H 边界相位相较旧 +8 平移 8h（有意变更，与回测一致）。
 
 ---
 

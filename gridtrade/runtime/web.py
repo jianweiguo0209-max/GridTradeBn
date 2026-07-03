@@ -19,7 +19,8 @@ def build_web_app(config=None, runtime=None):
                       session_secret=secret,
                       flags=rt.flags, commands=rt.commands, audit=rt.audit,
                       compute_fn=lambda s: control_compute.defaults_for_symbol(rt, s),
-                      universe_fn=lambda: control_compute.compute_proposals(rt))
+                      universe_fn=lambda: control_compute.compute_proposals(rt),
+                      display_tz=config.display_tz)
 
 
 def main() -> None:   # composition root（不单测）

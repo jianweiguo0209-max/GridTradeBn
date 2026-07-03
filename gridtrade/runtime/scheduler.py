@@ -53,7 +53,7 @@ def run_scheduler_once(runtime, *, now_fn=time.time,
             return {'skipped': 'paused'}
     run_time = pd.Timestamp(now_fn(), unit='s').floor('H')
     period = rt.config.scheduler_period
-    offset = compute_offset(run_time, period, rt.config.utc_offset)
+    offset = compute_offset(run_time, period)
     tag = '%s%d' % (DEFAULT_STRATEGY_CONFIG['strategy_tag'], offset)
     universe = resolve_live_universe(rt.adapter, rt.config.blacklist,
                                      rt.config.whitelist)

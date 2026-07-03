@@ -1,5 +1,3 @@
-import time
-
 import numpy as np
 import pandas as pd
 
@@ -64,10 +62,8 @@ def proceed_calc_symbol_factor(symbol_candle_data, run_time, period, offset):
     all_data_df.sort_values('time', inplace=True)
     all_data_df.reset_index(inplace=True, drop=True)
 
-    # 兼容时区
-    utc_offset = int(time.localtime().tm_gmtoff / 60 / 60)
-    # 时间转化为东八区
-    all_data_df['time'] = pd.to_datetime(all_data_df['time'], unit='ms') + pd.Timedelta(hours=utc_offset)
+    # 时间恒 UTC：candle_begin_time 由 epoch 构造(tz-naive UTC)，不做机器 TZ 平移
+    all_data_df['time'] = pd.to_datetime(all_data_df['time'], unit='ms')
     # 删除runtime那行的数据，如果有的话
     all_data_df = all_data_df[all_data_df['time'] < run_time]
     # 计算截面因子
@@ -151,7 +147,6 @@ def select_grid_coin(data, factor_info, weight_list, choose_symbols, run_time):
     return data
 
 
-def compute_offset(run_time, period, utc_offset):
-    """复刻 functions.get_order_offset_tag 的 offset 计算。"""
-    utc_run_time = run_time - pd.Timedelta(hours=utc_offset)
-    return int(((utc_run_time - pd.to_datetime('2017-01-01')).total_seconds() / 3600) % int(period[:-1]))
+def compute_offset(run_time, period):
+    """换仓 offset 相位（纯 UTC）。run_time 恒为 UTC 墙钟（由 epoch 构造）。"""
+    return int(((run_time - pd.to_datetime('2017-01-01')).total_seconds() / 3600) % int(period[:-1]))

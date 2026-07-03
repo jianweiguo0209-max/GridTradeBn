@@ -17,7 +17,7 @@ class _RT:
         self.trigger_engine = _TriggerEngine(props)
         self.adapter = object()
         self.config = type('C', (), {'exchange': 'fake', 'blacklist': (), 'whitelist': (),
-                                     'utc_offset': 8, 'scheduler_period': '12H'})()
+                                     'scheduler_period': '12H'})()
 
 
 def _fake_fetch(adapter, universe, run_time, **kw): return {}

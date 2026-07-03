@@ -20,7 +20,8 @@ def _frame(width, height):
 
 
 def line_chart(series, *, width: int = 720, height: int = 240,
-               x_is_time: bool = False, series_labels=None, value_labels: bool = False) -> str:
+               x_is_time: bool = False, series_labels=None, value_labels: bool = False,
+               tz_name: str = 'UTC') -> str:
     pts = [p for s in series for p in s]
     if not pts:
         return _placeholder(width, height)
@@ -36,7 +37,7 @@ def line_chart(series, *, width: int = 720, height: int = 240,
 
     parts = [ax.y_axis(ax.nice_ticks(ymin, ymax), sy, pl, pr)]
     if x_is_time:
-        parts.append(ax.x_time_axis(xmin, xmax, sx, pb))
+        parts.append(ax.x_time_axis(xmin, xmax, sx, pb, tz_name))
     else:
         cs = [sx(v) for v in (xmin, (xmin + xmax) / 2, xmax)]
         parts.append(ax.x_cat_axis(['%.0f' % v for v in (xmin, (xmin + xmax) / 2, xmax)], cs, pb))

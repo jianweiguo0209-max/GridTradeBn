@@ -49,7 +49,7 @@ def test_replay_selection_emits_picks(tmp_path):
     cache = _seed_cache(tmp_path, syms)
     run_times = [pd.Timestamp('2024-01-10 00:00:00'), pd.Timestamp('2024-01-10 12:00:00')]
     picks = []
-    n = replay_selection(cache, syms, run_times, STRAT, FACTORS, 8,
+    n = replay_selection(cache, syms, run_times, STRAT, FACTORS,
                          lambda rt, off, row: picks.append((rt, off, row['symbol'])),
                          timeframe='1h')
     assert n == 2

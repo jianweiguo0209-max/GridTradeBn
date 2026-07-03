@@ -63,12 +63,10 @@ class ScheduledSelectionTrigger(TriggerCondition):
     """
 
     def __init__(self, strategy_config, factors, weight_list, *,
-                 utc_offset=8, select_fn=None,
-                 source='ScheduledSelectionTrigger'):
+                 select_fn=None, source='ScheduledSelectionTrigger'):
         self.strategy_config = strategy_config
         self.factors = factors
         self.weight_list = weight_list
-        self.utc_offset = int(utc_offset)
         self.source = source
         self.select_fn = select_fn or _default_select_fn(
             strategy_config, factors, weight_list)
@@ -76,7 +74,7 @@ class ScheduledSelectionTrigger(TriggerCondition):
     def propose(self, ctx: TriggerContext) -> List[GridProposal]:
         cfg = self.strategy_config
         period = cfg['period']
-        offset = compute_offset(ctx.run_time, period, self.utc_offset)
+        offset = compute_offset(ctx.run_time, period)
         factor_data = self.select_fn(ctx.symbol_candle_data, ctx.run_time, offset)
         if factor_data is None or factor_data.empty:
             return []

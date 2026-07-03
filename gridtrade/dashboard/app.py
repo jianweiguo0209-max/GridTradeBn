@@ -1,4 +1,5 @@
 """FastAPI 应用工厂：登录鉴权 + 四个只读视图。web 进程绝不写库/写交易所。"""
+import functools
 import json
 from pathlib import Path
 from typing import Optional
@@ -22,7 +23,7 @@ def create_app(store, adapter, *, username: str, password_hash: str,
                session_secret: str, throttle: Optional[LoginThrottle] = None,
                stale_threshold_sec: float = 30.0,
                flags=None, commands=None, audit=None,
-               compute_fn=None, universe_fn=None) -> FastAPI:
+               compute_fn=None, universe_fn=None, display_tz: str = 'UTC') -> FastAPI:
     from gridtrade.state.control import (ControlFlagRepository, CommandRepository,
                                          AuditRepository)
     flags = flags or ControlFlagRepository(store)
@@ -31,7 +32,8 @@ def create_app(store, adapter, *, username: str, password_hash: str,
     app = FastAPI()
     throttle = throttle or LoginThrottle()
     templates = Jinja2Templates(directory=str(_DIR / 'templates'))
-    for name, func in (('ms_to_human', fmt.ms_to_human), ('age_human', fmt.age_human),
+    for name, func in (('ms_to_human', functools.partial(fmt.ms_to_human, tz_name=display_tz)),
+                       ('age_human', fmt.age_human),
                        ('fmt_num', fmt.fmt_num), ('fmt_pct', fmt.fmt_pct),
                        ('fmt_size', fmt.fmt_size), ('fmt_fee', fmt.fmt_fee),
                        ('fmt_price', fmt.fmt_price), ('pnl_class', fmt.pnl_class)):
@@ -94,7 +96,7 @@ def create_app(store, adapter, *, username: str, password_hash: str,
         dto = gc.build_grid_chart(store, adapter, grid_id, window)
         if dto is None:
             return HTMLResponse('grid not found', status_code=404)
-        return HTMLResponse(gc.render(dto))
+        return HTMLResponse(gc.render(dto, tz_name=display_tz))
 
     @app.get('/history', response_class=HTMLResponse)
     def history(request: Request):
@@ -207,7 +209,7 @@ def create_app(store, adapter, *, username: str, password_hash: str,
             'range': range,
             'equity_svg': ch.line_chart([realized, equity], x_is_time=True,
                                         series_labels=[('#6cf', '已实现'), ('#fb0', '真权益')],
-                                        value_labels=True),
+                                        value_labels=True, tz_name=display_tz),
             'tags': an.tag_attribution(store, start_ms=start_ms),
             'by_hour_svg': ch.bar_chart([(str(h), n) for h, n in dist.by_hour], value_labels=True),
             'by_side_svg': (ch.stacked_bar([('成交', dist.by_side)],
@@ -215,7 +217,8 @@ def create_app(store, adapter, *, username: str, password_hash: str,
                             if dist.by_side else ch.bar_chart([])),
             'by_line_svg': ch.bar_chart([(str(li), n) for li, n in dist.by_line], value_labels=True),
             'fee_cum_svg': ch.line_chart([dist.fee_cum], x_is_time=True,
-                                         series_labels=[('#6cf', '累计手续费')], value_labels=True),
+                                         series_labels=[('#6cf', '累计手续费')], value_labels=True,
+                                         tz_name=display_tz),
             'exits': an.exit_reason_stats(store, start_ms=start_ms),
         }
         return templates.TemplateResponse(request, 'analytics.html', ctx)

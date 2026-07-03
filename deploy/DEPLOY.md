@@ -84,7 +84,7 @@ fly deploy --config deploy/fly.toml --dockerfile deploy/Dockerfile --remote-only
 ---
 ### 注意
 - **mainnet 上线前确认 live 策略参数**：factors / weight_list / cap / leverage / choose_symbols（`gridtrade/config.py` 的 `DEFAULT_STRATEGY_CONFIG` 是 legacy 默认 + env 覆盖）。
-- 全程 UTC 存储；offset 由 `UTC_OFFSET` 驱动（默认 8）。
+- 全程 UTC 存储与计算；换仓 offset 相位纯 UTC（已移除 UTC_OFFSET）；显示时区由 `DISPLAY_TZ`（IANA，默认 UTC）控制。
 - 健壮性：交易所调用已自带退避重试 + 熔断，失败降级续跑不退出；monitor 崩溃 fly 自动重启 + 重启对账自愈。
 
 ---

@@ -1,7 +1,7 @@
 import os
 import time
 
-# 因子/选币函数内部读机器时区；测试统一钉到东八区，保证金标确定性。
+# 统一钉死 TZ=东八区，保证测试确定性（选币代码本身已不再依赖机器 TZ）。
 os.environ['TZ'] = 'Asia/Shanghai'
 time.tzset()
 

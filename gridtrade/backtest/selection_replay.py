@@ -1,5 +1,5 @@
 """选币回放（Live/Backtest parity + point-in-time）。复用 gridtrade.core.selection 的实盘选币纯函数。
-构造每个 run_time 的 symbol_candle_data 时严格只用 (candle_begin_time + utc_offset) < run_time 的 bar、
+构造每个 run_time 的 symbol_candle_data 时严格只用 candle_begin_time < run_time 的 bar（纯 UTC）、
 取最近 max_candle_num 根，与实盘截断口径一致。
 """
 import contextlib
@@ -27,8 +27,8 @@ def load_full_series(cache, symbols, timeframe='1h'):
     return series
 
 
-def replay_selection(cache, symbols, run_times, strategy_config, factors,
-                     utc_offset, on_select, *, timeframe='1h', log=print):
+def replay_selection(cache, symbols, run_times, strategy_config, factors, on_select, *,
+                     timeframe='1h', log=print):
     period = strategy_config['period']
     weight_list = strategy_config['weight_list']
     choose_symbols = strategy_config['choose_symbols']
@@ -43,10 +43,10 @@ def replay_selection(cache, symbols, run_times, strategy_config, factors,
     try:
         for run_time in run_times:
             run_time = pd.Timestamp(run_time)
-            offset = compute_offset(run_time, period, utc_offset)
+            offset = compute_offset(run_time, period)
             symbol_candle_data = {}
             for s, df in series.items():
-                mask = (df['candle_begin_time'] + pd.Timedelta(hours=utc_offset)) < run_time
+                mask = df['candle_begin_time'] < run_time
                 sub = df[mask]
                 if len(sub) < 24:
                     continue

@@ -30,10 +30,10 @@ HL_STRATEGY = {**DEFAULT_STRATEGY_CONFIG,
 HL_FACTORS = dict(DEFAULT_STRATEGY_CONFIG['factors'])
 
 
-def holding_bars(series_df, run_time, period, utc_offset):
+def holding_bars(series_df, run_time, period):
     td = pd.to_timedelta(period)
-    local_t = series_df['candle_begin_time'] + pd.Timedelta(hours=utc_offset)
-    sub = series_df[(local_t >= run_time) & (local_t < run_time + td)]
+    cbt = series_df['candle_begin_time']
+    sub = series_df[(cbt >= run_time) & (cbt < run_time + td)]
     return sub.sort_values('candle_begin_time')
 
 
@@ -93,7 +93,7 @@ def _simulate_grid_task(payload):
 
 
 def build_grid_tasks(cache, universe, window_start, window_end, strategy_config, factors,
-                     utc_offset, *, timeframe='1h', sim_timeframe=None, log=print):
+                     *, timeframe='1h', sim_timeframe=None, log=print):
     """选币回放 + 组装每格数据 payload（**不含仿真配置**，故可跨多组参数复用）。
     返回 data_task 列表：(rt, offset, sym, entry, gp, bars_df, funding_df)。
     选币是回测里最贵的一步——扫参时 build 一次、simulate_tasks 多次，可省 N-1 次选币。"""
@@ -108,7 +108,7 @@ def build_grid_tasks(cache, universe, window_start, window_end, strategy_config,
     series = SR.load_full_series(cache, universe, sim_tf)
     grids = []
     run_times = [pd.Timestamp(t) for t in pd.date_range(window_start, window_end, freq='1H')]
-    SR.replay_selection(cache, universe, run_times, strategy_config, factors, utc_offset,
+    SR.replay_selection(cache, universe, run_times, strategy_config, factors,
                         lambda rt, off, row: grids.append((rt, off, row.copy())),
                         timeframe=timeframe, log=log)
     log('[BT] picks=%d' % len(grids))
@@ -119,7 +119,7 @@ def build_grid_tasks(cache, universe, window_start, window_end, strategy_config,
         sym = row['symbol']
         if sym not in series:
             continue
-        bars_df = holding_bars(series[sym], rt, period, utc_offset)
+        bars_df = holding_bars(series[sym], rt, period)
         if len(bars_df) == 0:
             continue
         px = calc_fn(row=row, price_limit=price_limit, stop_limit=stop_limit, v2_config=v2cfg)
@@ -154,7 +154,7 @@ def simulate_tasks(data_tasks, *, leverage, fee_rate=0.0005, max_rate=0.5, stop_
 
 
 def run_backtest(cache, universe, window_start, window_end, strategy_config, factors,
-                 utc_offset, *, timeframe='1h', sim_timeframe=None, fee_rate=0.0005,
+                 *, timeframe='1h', sim_timeframe=None, fee_rate=0.0005,
                  max_rate=0.5, leverage=None, workers=1, log=print):
     """timeframe: 选币因子所用 K 线周期（换仓周期粒度，默认 1h）。
     sim_timeframe: 持仓成交仿真所用 K 线周期（None=沿用 timeframe）。传 '1m' 可解耦——
@@ -163,7 +163,7 @@ def run_backtest(cache, universe, window_start, window_end, strategy_config, fac
     扫参请直接用 build_grid_tasks（一次）+ simulate_tasks（多次），避免重复选币。"""
     lev = leverage if leverage is not None else strategy_config['leverage']
     tasks = build_grid_tasks(cache, universe, window_start, window_end, strategy_config,
-                             factors, utc_offset, timeframe=timeframe,
+                             factors, timeframe=timeframe,
                              sim_timeframe=sim_timeframe, log=log)
     return simulate_tasks(tasks, leverage=lev, fee_rate=fee_rate, max_rate=max_rate,
                           stop_cfg=strategy_config['stop_loss_config'],
@@ -272,7 +272,7 @@ def main(argv=None):
 
     workers = int(os.environ.get('BT_WORKERS', '1'))    # 并行进程数：BT_WORKERS=4 提速
     t0 = time.time()
-    df = run_backtest(cache, HL_UNIVERSE, win_start, win_end, HL_STRATEGY, HL_FACTORS, utc_offset=0,
+    df = run_backtest(cache, HL_UNIVERSE, win_start, win_end, HL_STRATEGY, HL_FACTORS,
                       timeframe='1h', sim_timeframe=(None if sim_tf == '1h' else sim_tf),
                       workers=workers)
     print('[BT] backtest %.1fs (workers=%d)' % (time.time() - t0, workers))

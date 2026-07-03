@@ -2,13 +2,23 @@
 import math
 from datetime import datetime, timezone
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 
-def ms_to_human(ts: Optional[int]) -> str:
+def to_display_dt(ts_ms, tz_name: str = 'UTC') -> datetime:
+    dt = datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc)
+    if not tz_name or tz_name == 'UTC':
+        return dt
+    try:
+        return dt.astimezone(ZoneInfo(tz_name))
+    except Exception:        # 非法/缺 tzdata → 回退 UTC，绝不崩
+        return dt
+
+
+def ms_to_human(ts: Optional[int], tz_name: str = 'UTC') -> str:
     if ts is None:
         return '-'
-    return datetime.fromtimestamp(ts / 1000.0, tz=timezone.utc).strftime(
-        '%Y-%m-%d %H:%M:%S')
+    return to_display_dt(ts, tz_name).strftime('%Y-%m-%d %H:%M:%S')
 
 
 def age_human(sec: Optional[float]) -> str:

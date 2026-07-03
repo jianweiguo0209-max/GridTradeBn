@@ -1,8 +1,9 @@
 """SVG 图表 chrome 共享纯函数：转义 / 刻度 / 坐标轴 / 图例 / 数值标注。
 文本只用数值+时间+固定词；svg_escape 对字符串标签兜底，守 |safe 边界。"""
 import math
-from datetime import datetime, timezone
 from typing import List, Tuple
+
+from gridtrade.dashboard.formatting import to_display_dt
 
 
 def svg_escape(s) -> str:
@@ -40,16 +41,16 @@ def y_axis(ticks, sy, x_left, x_right, *, digits: int = None) -> str:
     return ''.join(out)
 
 
-def _hhmm(ms) -> str:
-    return datetime.fromtimestamp(int(ms) / 1000.0, tz=timezone.utc).strftime('%H:%M')
+def _hhmm(ms, tz_name: str = 'UTC') -> str:
+    return to_display_dt(int(ms), tz_name).strftime('%H:%M')
 
 
-def x_time_axis(xmin, xmax, sx, y_base) -> str:
+def x_time_axis(xmin, xmax, sx, y_base, tz_name: str = 'UTC') -> str:
     mid = (int(xmin) + int(xmax)) // 2
     out = []
     for t in (xmin, mid, xmax):
         out.append('<text x="%.1f" y="%.1f" text-anchor="middle" font-size="9" '
-                   'fill="#999">%s</text>' % (sx(t), y_base + 10, _hhmm(t)))
+                   'fill="#999">%s</text>' % (sx(t), y_base + 10, _hhmm(t, tz_name)))
     return ''.join(out)
 
 

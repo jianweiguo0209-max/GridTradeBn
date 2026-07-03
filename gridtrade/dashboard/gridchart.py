@@ -114,7 +114,7 @@ def _yvals(dto) -> List[float]:
     return vs
 
 
-def render(dto, *, width: int = 720, height: int = 320) -> str:
+def render(dto, *, width: int = 720, height: int = 320, tz_name: str = 'UTC') -> str:
     yvals = _yvals(dto)
     if not yvals:
         return ('<svg viewBox="0 0 %d %d" class="chart"><text x="%d" y="%d" '
@@ -134,7 +134,7 @@ def render(dto, *, width: int = 720, height: int = 320) -> str:
     sell = {round(pr_p, 8) for pr_p, sd in dto.open_orders if sd == 'sell'}
     parts = []
     parts.append(ax.y_axis(ax.nice_ticks(ymin, ymax), sy, pl, pr))
-    parts.append(ax.x_time_axis(xmin, xmax, sx, pb))
+    parts.append(ax.x_time_axis(xmin, xmax, sx, pb, tz_name))
     # 网格挂点线（买绿/卖红/其余灰）
     for gl in dto.grid_lines:
         key = round(gl, 8)
