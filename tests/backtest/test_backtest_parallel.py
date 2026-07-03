@@ -8,7 +8,7 @@ from tests.backtest.test_backtest_run import _strategy
 def _run(cache, syms, workers):
     from gridtrade.backtest.backtest_run import run_backtest
     return run_backtest(cache, syms, pd.Timestamp('2024-01-10 00:00:00'),
-                        pd.Timestamp('2024-01-11 00:00:00'), _strategy(), FACTORS, 8,
+                        pd.Timestamp('2024-01-11 00:00:00'), _strategy(), FACTORS,
                         timeframe='1h', workers=workers)
 
 

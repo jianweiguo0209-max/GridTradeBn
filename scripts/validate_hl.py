@@ -72,7 +72,7 @@ def main():
     print('[HL] prewarm ohlcv:', stat, '%.1fs' % (time.time() - t0))
 
     df = run_backtest(cache, UNIVERSE, pd.to_datetime(win_start, unit='ms'),
-                      pd.to_datetime(end_ms, unit='ms'), STRATEGY, FACTORS, utc_offset=0,
+                      pd.to_datetime(end_ms, unit='ms'), STRATEGY, FACTORS,
                       timeframe='1h')
     print('\n===== HL 回测汇总 =====')
     for k, v in summarize(df).items():

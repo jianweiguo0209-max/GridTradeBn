@@ -21,8 +21,8 @@ def test_holding_bars_window(tmp_path):
     syms = ['AAA/USDT:USDT']
     cache = _seed_cache(tmp_path, syms)
     series = load_full_series(cache, syms, '1h')
-    sub = holding_bars(series['AAA/USDT:USDT'], pd.Timestamp('2024-01-05 00:00:00'), '12H', 8)
-    # 12H 窗口（UTC+8 对齐）应有约 12 根 1h bar
+    sub = holding_bars(series['AAA/USDT:USDT'], pd.Timestamp('2024-01-05 00:00:00'), '12H')
+    # 12H 窗口（纯 UTC 对齐）应有约 12 根 1h bar
     assert 1 <= len(sub) <= 13
 
 
@@ -46,7 +46,7 @@ def test_run_backtest_end_to_end(tmp_path):
     syms = ['AAA/USDT:USDT', 'BBB/USDT:USDT', 'CCC/USDT:USDT', 'DDD/USDT:USDT']
     cache = _seed_cache(tmp_path, syms)
     df = run_backtest(cache, syms, pd.Timestamp('2024-01-10 00:00:00'),
-                      pd.Timestamp('2024-01-11 00:00:00'), _strategy(), FACTORS, 8,
+                      pd.Timestamp('2024-01-11 00:00:00'), _strategy(), FACTORS,
                       timeframe='1h')
     assert set(['run_time', 'offset', 'symbol', 'pnl_ratio', 'exit_reason',
                 'grid_num', 'hold_bars']).issubset(df.columns)

@@ -72,7 +72,7 @@ def test_scheduled_trigger_maps_selection_rows_to_proposals_v1():
     rows = pd.DataFrame([_factor_row('BTC/USDT:USDT', 1, run_time),
                          _factor_row('ETH/USDT:USDT', 2, run_time, close=200.0)])
     trig = ScheduledSelectionTrigger(_strategy_config(), {'Reg_v2_2': True, 'Sgcz_2': True},
-                                     [1, 1], utc_offset=8,
+                                     [1, 1],
                                      select_fn=lambda scd, rt, off: rows)
     out = trig.propose(TriggerContext(exchange='okx', run_time=run_time,
                                       symbol_candle_data={'BTC/USDT:USDT': None}))
@@ -87,9 +87,8 @@ def test_scheduled_trigger_maps_selection_rows_to_proposals_v1():
     # 提议元数据：source / tag / exchange / offset
     assert out[0].source == 'ScheduledSelectionTrigger'
     assert out[0].exchange == 'okx'
-    # offset = compute_offset(run_time, '12H', 8); tag = 'acc1at%d' % offset
     from gridtrade.core.selection import compute_offset
-    off = compute_offset(run_time, '12H', 8)
+    off = compute_offset(run_time, '12H')
     assert out[0].offset == off and out[0].tag == 'acc1at%d' % off
 
 

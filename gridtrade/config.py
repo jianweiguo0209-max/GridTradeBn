@@ -53,7 +53,6 @@ class DeployConfig:
     max_concurrent: int
     total_budget: float
     default_cap: float
-    utc_offset: int
     blacklist: tuple = ()
     whitelist: tuple = ()
     scheduler_run_on_start: bool = False
@@ -94,7 +93,6 @@ def load_deploy_config(env=None) -> DeployConfig:
         max_concurrent=_i(env, 'MAX_CONCURRENT', 20),
         total_budget=_f(env, 'TOTAL_BUDGET', 1_000_000.0),
         default_cap=_f(env, 'DEFAULT_CAP', cap),   # 未设 -> 用 cap
-        utc_offset=_i(env, 'UTC_OFFSET', 8),
         blacklist=_csv(env, 'BLACKLIST_SYMBOLS'),
         whitelist=_csv(env, 'UNIVERSE_WHITELIST'),
         scheduler_run_on_start=_b(env, 'SCHEDULER_RUN_ON_START', False),

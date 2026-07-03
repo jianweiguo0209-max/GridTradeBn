@@ -22,7 +22,6 @@ primary_region = "nrt"
   HL_TESTNET = "false"              # ← mainnet，真金白银
   MONITOR_INTERVAL_SEC = "5"
   SCHEDULER_PERIOD = "12H"
-  UTC_OFFSET = "8"
   MAX_CONCURRENT = "20"
   SCHEDULER_RUN_ON_START = "false"  # ← 生产：避免每次自动部署把网格中途关开、烧真手续费
   # 币池：HL mainnet 按 24h 成交额排名的【非 meme 且交易所 maxLeverage≥5】流动性 Top26

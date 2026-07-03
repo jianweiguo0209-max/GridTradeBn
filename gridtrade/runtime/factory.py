@@ -79,8 +79,7 @@ def build_runtime(config) -> Runtime:
                           event_bus=bus, signal_provider=signals)
 
     sc = DEFAULT_STRATEGY_CONFIG
-    trigger = ScheduledSelectionTrigger(sc, sc['factors'], sc['weight_list'],
-                                        utc_offset=config.utc_offset)
+    trigger = ScheduledSelectionTrigger(sc, sc['factors'], sc['weight_list'])
     trigger_engine = TriggerEngine([trigger])
 
     from gridtrade.state.control import (ControlFlagRepository, CommandRepository,

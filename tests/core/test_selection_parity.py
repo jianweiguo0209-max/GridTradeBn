@@ -37,9 +37,9 @@ def test_selection_matches_golden():
             rtol=1e-9, atol=1e-12, equal_nan=True, err_msg=f'{col} drifted')
 
 
-def test_compute_offset_matches_legacy_formula():
+def test_compute_offset_is_pure_utc():
     from gridtrade.core.selection import compute_offset
     run_time = pd.Timestamp('2024-01-09 05:00:00')
-    utc_run = run_time - pd.Timedelta(hours=8)
-    expected = int(((utc_run - pd.to_datetime('2017-01-01')).total_seconds() / 3600) % 12)
-    assert compute_offset(run_time, '12H', 8) == expected
+    # 纯 UTC：utc_run_time == run_time（不再 −8）
+    expected = int(((run_time - pd.to_datetime('2017-01-01')).total_seconds() / 3600) % 12)
+    assert compute_offset(run_time, '12H') == expected
