@@ -61,7 +61,9 @@ def build_runtime(config) -> Runtime:
     executor = GridExecutor(adapter, store, cap=config.cap,
                             leverage=config.leverage,
                             stop_orders_enabled=config.stop_orders_enabled,
-                            stop_slippage=config.stop_slippage)
+                            stop_slippage=config.stop_slippage,
+                            cap_equity_frac=config.cap_equity_frac,
+                            cap_min=config.cap_min, cap_max=config.cap_max)
     gates = GateChain([
         SymbolLockGate(executor.grids),
         MaxConcurrentGate(executor.grids, config.max_concurrent),

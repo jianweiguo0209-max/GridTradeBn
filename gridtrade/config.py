@@ -64,6 +64,17 @@ class DeployConfig:
     dashboard_port: int = 8080
     stop_orders_enabled: bool = True
     stop_slippage: float = 0.15
+    cap_equity_frac: float = 0.10   # >0 → 每网格 cap 按当前权益动态定 = clamp(equity×frac, min, max)；0=停用用固定 cap
+    cap_min: float = 20.0
+    cap_max: float = 100000.0
+
+
+def compute_cap(equity, frac, cap_min, cap_max):
+    """按权益动态定单网格 cap = clamp(equity×frac, cap_min, cap_max)。
+    frac<=0 视为停用，返回 None（调用方回退固定 cap）。"""
+    if frac is None or frac <= 0:
+        return None
+    return max(float(cap_min), min(float(cap_max), float(equity) * float(frac)))
 
 
 def load_deploy_config(env=None) -> DeployConfig:
@@ -94,6 +105,9 @@ def load_deploy_config(env=None) -> DeployConfig:
         equity_snapshot_interval_sec=_f(env, 'EQUITY_SNAPSHOT_INTERVAL_SEC', 300.0),
         stop_orders_enabled=_b(env, 'STOP_ORDERS_ENABLED', True),
         stop_slippage=_f(env, 'STOP_SLIPPAGE', 0.15),
+        cap_equity_frac=_f(env, 'CAP_EQUITY_FRAC', 0.10),
+        cap_min=_f(env, 'CAP_MIN', 20.0),
+        cap_max=_f(env, 'CAP_MAX', 100000.0),
     )
 
 

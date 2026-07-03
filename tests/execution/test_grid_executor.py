@@ -63,6 +63,30 @@ def test_open_undercapitalized_raises(store):
         gx.open(ex_exchange_name(), SYM, GP)
 
 
+def test_open_uses_dynamic_cap_from_equity(store):
+    from gridtrade.exchanges.base import Balance
+    from gridtrade.execution.grid_executor import GridExecutor
+    from gridtrade.state.grids import GridRepository
+    ex, store, _ = _setup(store, price=100.0)
+    ex.fetch_balance = lambda: Balance(equity=500.0, cash=500.0)
+    # cap_equity_frac 启用 → cap 按当前权益动态定：500 × 0.10 = 50（非固定 100）
+    gx = GridExecutor(ex, store, cap=100.0, leverage=5.0,
+                      cap_equity_frac=0.10, cap_min=20.0, cap_max=100000.0)
+    gid = gx.open(ex_exchange_name(), SYM, GP)
+    assert abs(GridRepository(store).get(gid).cap - 50.0) < 1e-9
+
+
+def test_open_dynamic_cap_off_by_default_uses_fixed_cap(store):
+    from gridtrade.exchanges.base import Balance
+    from gridtrade.execution.grid_executor import GridExecutor
+    from gridtrade.state.grids import GridRepository
+    ex, store, _ = _setup(store, price=100.0)
+    ex.fetch_balance = lambda: Balance(equity=500.0, cash=500.0)
+    gx = GridExecutor(ex, store, cap=100.0, leverage=5.0)   # 未启用 → 固定 cap
+    gid = gx.open(ex_exchange_name(), SYM, GP)
+    assert abs(GridRepository(store).get(gid).cap - 100.0) < 1e-9
+
+
 def test_sync_records_fill_partner_present_no_over_replenish(store):
     from collections import Counter
     ex, store, gx = _setup(store, price=100.0)
