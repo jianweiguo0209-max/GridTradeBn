@@ -153,6 +153,7 @@ gridtrade/
   币池写死在 fly.prod.toml `[env] UNIVERSE_WHITELIST`=HL mainnet 24h 成交额【非 meme 且 maxLeverage≥5】流动性 Top26（逐个核过 live 永续 swap/active）。
   首部署核验：三进程 healthy(testnet=False)、面板登录可用、无报错；`run_on_start=false` 故首网格待下一个 12H 边界开。设计/计划见 `docs/superpowers/{specs,plans}/2026-07-03-mainnet-production-environment*`，ops 见 deploy/DEPLOY.md。
   上线姿势：`main` 验证 → merge 进 `production` → `git push origin production`（勿直接改 production）。
+  - 🔧 **上线次日巡检发现并修（2026-07-03，CAP_EQUITY_FRAC 0.10→0.50）**：本金 $219.91 下默认 frac=0.10 → 单网格 cap≈$22 → 每笔挂单 notional ≈$3，**低于 HL mainnet 全市场 $10 最小下单额（ccxt cost.min=10）→ 首批网格挂单会被全数拒（`InvalidOrder`，fatal 不重试/不计熔断、安全失败）、建不起来**。testnet 未暴露因其账户已涨到 ~$983（cap≈$98、单笔 $9.7–$18.9 天然≥$10）。标定：testnet 实测最差 单笔/cap≈0.099，取 frac=0.50 → cap≈$110、最差单笔 ~$10.9；MarginGate(default_cap=$100) 仍放行 ~2 网格。⚠ 小账户 band-aid：equity 回撤或高档数币可能再跌破 $10（该网格安全失败）；鲁棒解=加本金后回调 frac=0.10，或给 `grid_order_info` 接入 cost.min 自适应降档（`min_amount` 当前从未接线、默认 0.0）。见记忆 `mainnet-order-min-notional`。
 
 ---
 

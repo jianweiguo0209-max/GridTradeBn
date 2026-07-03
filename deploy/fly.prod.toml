@@ -32,8 +32,18 @@ primary_region = "nrt"
   # 全部逐个核过 swap=True/active=True。resolve_live_universe 仅在此名单内选币；放开到全池时
   # 清空此项即可（见 universe.py：whitelist 空 -> 全 live 减黑名单）。
   UNIVERSE_WHITELIST = "BTC/USDC:USDC,ETH/USDC:USDC,HYPE/USDC:USDC,SOL/USDC:USDC,ZEC/USDC:USDC,LIT/USDC:USDC,WLD/USDC:USDC,XRP/USDC:USDC,NEAR/USDC:USDC,GRAM/USDC:USDC,SUI/USDC:USDC,XPL/USDC:USDC,UNI/USDC:USDC,AAVE/USDC:USDC,ENA/USDC:USDC,LINK/USDC:USDC,BCH/USDC:USDC,ADA/USDC:USDC,TAO/USDC:USDC,JTO/USDC:USDC,AVAX/USDC:USDC,ZRO/USDC:USDC,BNB/USDC:USDC,DYDX/USDC:USDC,XMR/USDC:USDC,PAXG/USDC:USDC"
-  # 风控项（CAP / CAP_EQUITY_FRAC / CAP_MIN / CAP_MAX / LEVERAGE）沿用 config.py 默认或按需
-  # fly secrets set 覆盖；单网格 cap = clamp(equity×0.10, CAP_MIN, CAP_MAX)，小额注资即小 cap。
+  # 风控项（CAP / CAP_MIN / CAP_MAX / LEVERAGE）沿用 config.py 默认或按需 fly secrets 覆盖。
+  # 单网格 cap = clamp(equity×CAP_EQUITY_FRAC, CAP_MIN, CAP_MAX)；每笔挂单 notional ≈
+  #   cap×LEVERAGE×max_rate/(档数+1)。
+  # CAP_EQUITY_FRAC=0.50（非默认 0.10 覆写）：本金 ~$220 小额下，0.10 会让 cap≈$22 →
+  #   每笔挂单 ≈$3，低于 HL mainnet 全市场 $10 最小下单额（cost.min=10）→ 首批网格挂单被全数
+  #   拒单、建不起来。经 testnet 实测标定：cap≈$98 时最差单笔 $9.71（SOL/22 档），最差
+  #   单笔/cap≈0.099；取 frac=0.50 → cap≈$110 → 最差单笔 ~$10.9（$10 上留缓冲），MarginGate
+  #   (default_cap=$100) 仍放行 ~2 个并发网格、实际保证金 ~$75/格。
+  # ⚠ 小账户 band-aid，非鲁棒：equity 回撤 或 某币档数偏高（比值<0.099）时单笔可能再跌破 $10
+  #   （该网格开仓安全失败、不损资金）。长期鲁棒解=加本金到 cap 天然≥$10，或给 grid_order_info
+  #   接入 cost.min 自适应降档（见巡检结论）。放大本金后应把此项调回 0.10。
+  CAP_EQUITY_FRAC = "0.50"
 
 [processes]
   monitor = "python -m gridtrade.runtime.monitor"
