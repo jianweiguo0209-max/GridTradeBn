@@ -25,11 +25,13 @@ primary_region = "nrt"
   UTC_OFFSET = "8"
   MAX_CONCURRENT = "20"
   SCHEDULER_RUN_ON_START = "false"  # ← 生产：避免每次自动部署把网格中途关开、烧真手续费
-  # 币池：HL mainnet 按 24h 成交额排名的【非 meme】流动性 Top26（2026-07-03 快照，经 list_instruments
-  # 校准为真实 live canonical 符号；已剔除 meme/degen：FARTCOIN/PUMP/kPEPE/DOGE/PENGU/SPX 等）。
-  # resolve_live_universe 仅在此名单内选币（收窄首测风险面）；放开到全池时清空此项即可
-  # （见 universe.py：whitelist 空 -> 全 live 减黑名单）。
-  UNIVERSE_WHITELIST = "BTC/USDC:USDC,ETH/USDC:USDC,HYPE/USDC:USDC,SOL/USDC:USDC,ZEC/USDC:USDC,LIT/USDC:USDC,WLD/USDC:USDC,XRP/USDC:USDC,NEAR/USDC:USDC,GRAM/USDC:USDC,SUI/USDC:USDC,XPL/USDC:USDC,UNI/USDC:USDC,AAVE/USDC:USDC,ENA/USDC:USDC,VVV/USDC:USDC,LINK/USDC:USDC,BCH/USDC:USDC,ADA/USDC:USDC,TAO/USDC:USDC,JTO/USDC:USDC,AVAX/USDC:USDC,ZRO/USDC:USDC,BNB/USDC:USDC,DYDX/USDC:USDC,XMR/USDC:USDC"
+  # 币池：HL mainnet 按 24h 成交额排名的【非 meme 且交易所 maxLeverage≥5】流动性 Top26
+  # （2026-07-03 快照，经 list_instruments 校准为真实 live 永续 canonical 符号）。筛选：
+  #   1) 剔除 meme/degen（FARTCOIN/PUMP/kPEPE/DOGE/PENGU/SPX 等）；
+  #   2) 剔除 maxLeverage<5 的币（如 VVV=3），避免其对策略 5x sizing 的名义仓位保证金不足被拒。
+  # 全部逐个核过 swap=True/active=True。resolve_live_universe 仅在此名单内选币；放开到全池时
+  # 清空此项即可（见 universe.py：whitelist 空 -> 全 live 减黑名单）。
+  UNIVERSE_WHITELIST = "BTC/USDC:USDC,ETH/USDC:USDC,HYPE/USDC:USDC,SOL/USDC:USDC,ZEC/USDC:USDC,LIT/USDC:USDC,WLD/USDC:USDC,XRP/USDC:USDC,NEAR/USDC:USDC,GRAM/USDC:USDC,SUI/USDC:USDC,XPL/USDC:USDC,UNI/USDC:USDC,AAVE/USDC:USDC,ENA/USDC:USDC,LINK/USDC:USDC,BCH/USDC:USDC,ADA/USDC:USDC,TAO/USDC:USDC,JTO/USDC:USDC,AVAX/USDC:USDC,ZRO/USDC:USDC,BNB/USDC:USDC,DYDX/USDC:USDC,XMR/USDC:USDC,PAXG/USDC:USDC"
   # 风控项（CAP / CAP_EQUITY_FRAC / CAP_MIN / CAP_MAX / LEVERAGE）沿用 config.py 默认或按需
   # fly secrets set 覆盖；单网格 cap = clamp(equity×0.10, CAP_MIN, CAP_MAX)，小额注资即小 cap。
 
