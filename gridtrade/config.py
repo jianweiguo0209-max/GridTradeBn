@@ -111,13 +111,15 @@ DEFAULT_STRATEGY_CONFIG = {
     'choose_symbols': 1,
     'grid_version': 2,
     'grid_v2_config': {
-        'atr_range_multiplier': 3,
+        # 网格调优（2026-03~06 in-sample + 2025-12 OOS 双验证）：疏格+宽带的方向跨行情稳
+        # （gcm 25→10 / mult 3→5：默认亏损 regime 里 −7.2%→+3.5% OOS）。见 docs 回测记录。
+        'atr_range_multiplier': 5,     # ←3：带宽乘数，宽带少破网、已实现vs存货浮亏平衡更好
         'range_pct_min': 0.05,
-        'range_pct_max': 0.25,
+        'range_pct_max': 0.50,         # ←0.25：放宽上限（in-sample +2.2pp；OOS 持平不 hurt）
         'grid_spacing_atr_ratio': 0.5,
         'grid_spacing_min': 0.003,
         'grid_spacing_max': 0.02,
-        'grid_count_min': 25,
+        'grid_count_min': 10,          # ←25：疏格（核心 edge，跨行情稳）；动态格数由此松开接管
         'grid_count_max': 149,
         'stop_buffer_ratio': 0.01,
     },
