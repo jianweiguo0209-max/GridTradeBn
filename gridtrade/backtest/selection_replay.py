@@ -27,8 +27,27 @@ def load_full_series(cache, symbols, timeframe='1h'):
     return series
 
 
+def build_pit_candidates(series, run_time, *, max_candle_num,
+                         min_quote_volume=0.0, blacklist=()):
+    """逐 run_time 构造候选 K 线字典：PIT 截断(<run_time) + ≥24 根 + 绝对成交额地板 + 黑名单。
+    绝对地板 = 前置 24 根 1h bar 的 quote_volume 之和（live dayNtlVlm 的缓存重建近似）。"""
+    bl = set(blacklist)
+    out = {}
+    for s, df in series.items():
+        if s in bl:                                   # 档0：无条件硬禁
+            continue
+        sub = df[df['candle_begin_time'] < run_time]  # PIT，无未来函数
+        if len(sub) < 24:
+            continue
+        if min_quote_volume and min_quote_volume > 0:  # PIT 绝对成交额地板
+            if float(sub.tail(24)['quote_volume'].sum()) < min_quote_volume:
+                continue
+        out[s] = sub.tail(max_candle_num).copy()
+    return out
+
+
 def replay_selection(cache, symbols, run_times, strategy_config, factors, on_select, *,
-                     timeframe='1h', log=print):
+                     timeframe='1h', min_quote_volume=0.0, blacklist=(), log=print):
     period = strategy_config['period']
     weight_list = strategy_config['weight_list']
     choose_symbols = strategy_config['choose_symbols']
@@ -44,13 +63,9 @@ def replay_selection(cache, symbols, run_times, strategy_config, factors, on_sel
         for run_time in run_times:
             run_time = pd.Timestamp(run_time)
             offset = compute_offset(run_time, period)
-            symbol_candle_data = {}
-            for s, df in series.items():
-                mask = df['candle_begin_time'] < run_time
-                sub = df[mask]
-                if len(sub) < 24:
-                    continue
-                symbol_candle_data[s] = sub.tail(max_candle_num).copy()
+            symbol_candle_data = build_pit_candidates(
+                series, run_time, max_candle_num=max_candle_num,
+                min_quote_volume=min_quote_volume, blacklist=blacklist)
             if not symbol_candle_data:
                 processed += 1
                 continue
