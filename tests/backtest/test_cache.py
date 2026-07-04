@@ -41,3 +41,14 @@ def test_read_all_days_merges(tmp_path):
 
 def test_read_all_days_none_when_absent(tmp_path):
     assert _cache(tmp_path).read_all_days('1h', 'NOPE') is None
+
+
+def test_list_days(tmp_path):
+    import pandas as pd
+    from gridtrade.backtest.cache import ParquetCache
+    c = ParquetCache(str(tmp_path))
+    assert c.list_days('1h', 'AAA/USDT:USDT') == []                      # 无目录 → 空
+    for day in ['2024-01-03', '2024-01-01', '2024-01-02']:
+        c.write('1h', 'AAA/USDT:USDT', day, pd.DataFrame({'a': [1]}))
+    assert c.list_days('1h', 'AAA/USDT:USDT') == \
+        ['2024-01-01', '2024-01-02', '2024-01-03']                       # 去 .parquet + 排序

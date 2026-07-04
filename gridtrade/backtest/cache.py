@@ -57,23 +57,25 @@ class ParquetCache:
         """落空哨兵：这天确认没数据，写一个 schema-only 空 parquet。"""
         self.write(namespace, symbol, day, pd.DataFrame(columns=columns))
 
-    def read_all_days(self, namespace, symbol):
-        """读取某 symbol 在该 namespace 下所有已缓存天的数据，合并返回（按时间排序）。"""
+    def list_days(self, namespace, symbol):
+        """廉价列举某 symbol 在该 namespace 下已缓存的天（不读 parquet 内容）。
+        返回排序后的 'YYYY-MM-DD' 列表；目录不存在则空列表。"""
         d = self._dir(namespace, symbol)
         if not os.path.isdir(d):
-            return None
+            return []
+        return sorted(fn[:-len('.parquet')] for fn in os.listdir(d) if fn.endswith('.parquet'))
+
+    def read_all_days(self, namespace, symbol):
+        """读取某 symbol 在该 namespace 下所有已缓存天的数据，合并返回（按天排序）。"""
         frames = []
-        for fn in sorted(os.listdir(d)):
-            if not fn.endswith('.parquet'):
-                continue
-            fp = os.path.join(d, fn)
-            if os.path.getsize(fp) == 0:
+        for day in self.list_days(namespace, symbol):
+            p = self._path(namespace, symbol, day)
+            if os.path.getsize(p) == 0:
                 continue
             try:
-                frames.append(pd.read_parquet(fp))
+                frames.append(pd.read_parquet(p))
             except BaseException:
                 continue
         if not frames:
             return None
-        out = pd.concat(frames, ignore_index=True)
-        return out
+        return pd.concat(frames, ignore_index=True)
