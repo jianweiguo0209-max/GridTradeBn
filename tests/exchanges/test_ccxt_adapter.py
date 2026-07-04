@@ -148,3 +148,25 @@ def test_fetch_24h_quote_volumes_maps_quotevolume():
     a = _adapter()
     vols = a.fetch_24h_quote_volumes()
     assert vols == {'BTC/USDT:USDT': 1000.0, 'ETH/USDT:USDT': 500.0}   # None 被跳过
+
+
+def test_fetch_24h_quote_volumes_takes_max_per_canonical():
+    # HL spot+swap 折叠成同一 canonical 时，取较大者（不得被后遍历的较小值覆盖，也不得误取先来者）。
+    from gridtrade.exchanges.ccxt_adapter import CcxtAdapter
+
+    class _FoldVolClient:
+        def fetch_tickers(self, symbols=None, params=None):
+            # 较大值先遍历、较小值后遍历：若实现退化成"无条件覆盖"（而非取 max），
+            # 后者会把 900 覆盖成 500，本测试即可抓到（纯粹按遍历顺序取值无法通过）。
+            return {
+                'BTC/USDC:USDC': {'quoteVolume': 900.0},   # swap，先遍历，较大 → 应保留
+                'BTC/USDC':      {'quoteVolume': 500.0},   # spot，同 canonical，较小 → 不应覆盖
+            }
+
+    class _FoldAdapter(CcxtAdapter):
+        def to_canonical(self, native):
+            return native.split('/')[0] + '/USDC:USDC'
+
+    a = _FoldAdapter(_FoldVolClient(), name='fold')
+    vols = a.fetch_24h_quote_volumes()
+    assert vols == {'BTC/USDC:USDC': 900.0}   # 取两者中的较大值，而非遍历顺序中的先/后者
