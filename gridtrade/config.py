@@ -67,6 +67,7 @@ class DeployConfig:
     cap_equity_frac: float = 0.10   # >0 → 每网格 cap 按当前权益动态定 = clamp(equity×frac, min, max)；0=停用用固定 cap
     cap_min: float = 20.0
     cap_max: float = 100000.0
+    min_quote_volume_24h: float = 0.0   # >0 → 24h 成交额绝对地板（0=停用）；生产由 fly.prod.toml 设 $1M
 
 
 def compute_cap(equity, frac, cap_min, cap_max):
@@ -108,6 +109,7 @@ def load_deploy_config(env=None) -> DeployConfig:
         cap_equity_frac=_f(env, 'CAP_EQUITY_FRAC', 0.10),
         cap_min=_f(env, 'CAP_MIN', 20.0),
         cap_max=_f(env, 'CAP_MAX', 100000.0),
+        min_quote_volume_24h=_f(env, 'MIN_QUOTE_VOLUME_24H', 0.0),
     )
 
 

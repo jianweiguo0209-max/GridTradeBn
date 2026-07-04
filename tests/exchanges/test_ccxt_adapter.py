@@ -17,6 +17,12 @@ class FakeCcxtClient:
                 {'timestamp': 1704070800000, 'fundingRate': -0.0002}]
     def fetch_ticker(self, symbol):
         return {'last': 2.0}
+    def fetch_tickers(self, symbols=None, params=None):
+        return {
+            'BTC/USDT:USDT': {'quoteVolume': 1000.0},
+            'ETH/USDT:USDT': {'quoteVolume': 500.0},
+            'NOVOL/USDT:USDT': {'quoteVolume': None},   # 无量 → 跳过
+        }
     def fetch_balance(self, params=None):
         return {'USDT': {'total': 1000.0, 'free': 800.0}}
     def fetch_positions(self, symbols=None, params=None):
@@ -43,7 +49,7 @@ class FakeCcxtClient:
         self._lev = (leverage, symbol)
     def load_markets(self):
         return {'BTC/USDT:USDT': {}}
-    markets = {'BTC/USDT:USDT': {'precision': {'price': 0.1, 'amount': 0.001},
+    markets = {'BTC/USDT:USDT': {'swap': True, 'precision': {'price': 0.1, 'amount': 0.001},
                                  'limits': {'amount': {'min': 0.001}},
                                  'active': True, 'info': {'listTime': '0'}}}
 
@@ -109,3 +115,58 @@ def test_instruments_mapping():
     a = _adapter()
     insts = a.list_instruments()
     assert insts[0].symbol == 'BTC/USDT:USDT' and insts[0].state == 'live'
+
+
+def test_list_instruments_swap_only_and_deduped():
+    from gridtrade.exchanges.ccxt_adapter import CcxtAdapter
+
+    class _FoldClient:
+        def load_markets(self):
+            return self.markets
+        markets = {
+            'BTC/USDC:USDC':   {'swap': True,  'precision': {'price': 0.1, 'amount': 0.001},
+                                'limits': {'amount': {'min': 0.001}}, 'active': True, 'info': {}},
+            'BTC/USDC':        {'swap': False, 'spot': True, 'precision': {}, 'limits': {},
+                                'active': True, 'info': {}},                       # spot → 丢
+            'ETH/USDC:USDC':   {'swap': True,  'precision': {}, 'limits': {}, 'active': True, 'info': {}},
+            'ETH/USDC:USDC-2': {'swap': True,  'precision': {}, 'limits': {}, 'active': True, 'info': {}},  # 折叠成 ETH → 去重
+            'SOL/USDC':        {'swap': False, 'spot': True, 'precision': {}, 'limits': {},
+                                'active': True, 'info': {}},                       # spot-only、无 swap 对应 → 丢（隔离 swap 过滤 vs 去重）
+        }
+
+    class _FoldAdapter(CcxtAdapter):
+        def to_canonical(self, native):
+            return native.split('/')[0] + '/USDC:USDC'
+
+    a = _FoldAdapter(_FoldClient(), name='fold')
+    syms = [i.symbol for i in a.list_instruments()]
+    assert syms == ['BTC/USDC:USDC', 'ETH/USDC:USDC']   # spot 丢、重复 canonical 去重
+    assert 'SOL/USDC:USDC' not in syms                  # SOL 无 swap 对应，若 swap 过滤被删也不会因去重被吸收
+
+
+def test_fetch_24h_quote_volumes_maps_quotevolume():
+    a = _adapter()
+    vols = a.fetch_24h_quote_volumes()
+    assert vols == {'BTC/USDT:USDT': 1000.0, 'ETH/USDT:USDT': 500.0}   # None 被跳过
+
+
+def test_fetch_24h_quote_volumes_takes_max_per_canonical():
+    # HL spot+swap 折叠成同一 canonical 时，取较大者（不得被后遍历的较小值覆盖，也不得误取先来者）。
+    from gridtrade.exchanges.ccxt_adapter import CcxtAdapter
+
+    class _FoldVolClient:
+        def fetch_tickers(self, symbols=None, params=None):
+            # 较大值先遍历、较小值后遍历：若实现退化成"无条件覆盖"（而非取 max），
+            # 后者会把 900 覆盖成 500，本测试即可抓到（纯粹按遍历顺序取值无法通过）。
+            return {
+                'BTC/USDC:USDC': {'quoteVolume': 900.0},   # swap，先遍历，较大 → 应保留
+                'BTC/USDC':      {'quoteVolume': 500.0},   # spot，同 canonical，较小 → 不应覆盖
+            }
+
+    class _FoldAdapter(CcxtAdapter):
+        def to_canonical(self, native):
+            return native.split('/')[0] + '/USDC:USDC'
+
+    a = _FoldAdapter(_FoldVolClient(), name='fold')
+    vols = a.fetch_24h_quote_volumes()
+    assert vols == {'BTC/USDC:USDC': 900.0}   # 取两者中的较大值，而非遍历顺序中的先/后者

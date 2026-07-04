@@ -28,6 +28,7 @@ class FakeExchange(ExchangeAdapter):
         self._fee_rate = 0.0005
         self._default_price = price
         self._stops = {}
+        self._quote_volumes = {}
 
     # ---- 测试钩子 ----
     def set_price(self, symbol: str, price: float) -> None:
@@ -43,6 +44,9 @@ class FakeExchange(ExchangeAdapter):
 
     def seed_funding_payments(self, symbol, payments):
         self._funding_payments[symbol] = [tuple(p) for p in payments]
+
+    def seed_quote_volumes(self, vols: dict) -> None:
+        self._quote_volumes = dict(vols)
 
     def _price_of(self, symbol: str) -> float:
         return self._price.get(symbol, self._default_price)
@@ -119,6 +123,9 @@ class FakeExchange(ExchangeAdapter):
 
     def fetch_price(self, symbol) -> float:
         return self._price_of(symbol)
+
+    def fetch_24h_quote_volumes(self) -> dict:
+        return dict(self._quote_volumes)
 
     # ---- 账户/交易 ----
     def fetch_balance(self) -> Balance:

@@ -13,7 +13,8 @@ def compute_proposals(runtime, *, now_fn=time.time, fetch_candles=None):
     rt = runtime
     fetch = fetch_candles or fetch_universe_candles
     run_time = pd.Timestamp(now_fn(), unit='s').floor('H')
-    universe = resolve_live_universe(rt.adapter, rt.config.blacklist, rt.config.whitelist)
+    universe = resolve_live_universe(rt.adapter, rt.config.blacklist,
+                                     rt.config.whitelist, rt.config.min_quote_volume_24h)
     candles = fetch(rt.adapter, universe, run_time,
                     max_candle_num=DEFAULT_STRATEGY_CONFIG['max_candle_num'])
     ctx = TriggerContext(rt.config.exchange, run_time, candles)

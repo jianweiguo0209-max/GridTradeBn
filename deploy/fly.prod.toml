@@ -24,13 +24,13 @@ primary_region = "nrt"
   SCHEDULER_PERIOD = "12H"
   MAX_CONCURRENT = "20"
   SCHEDULER_RUN_ON_START = "false"  # ← 生产：避免每次自动部署把网格中途关开、烧真手续费
-  # 币池：HL mainnet 按 24h 成交额排名的【非 meme 且交易所 maxLeverage≥5】流动性 Top26
-  # （2026-07-03 快照，经 list_instruments 校准为真实 live 永续 canonical 符号）。筛选：
-  #   1) 剔除 meme/degen（FARTCOIN/PUMP/kPEPE/DOGE/PENGU/SPX 等）；
-  #   2) 剔除 maxLeverage<5 的币（如 VVV=3），避免其对策略 5x sizing 的名义仓位保证金不足被拒。
-  # 全部逐个核过 swap=True/active=True。resolve_live_universe 仅在此名单内选币；放开到全池时
-  # 清空此项即可（见 universe.py：whitelist 空 -> 全 live 减黑名单）。
-  UNIVERSE_WHITELIST = "BTC/USDC:USDC,ETH/USDC:USDC,HYPE/USDC:USDC,SOL/USDC:USDC,ZEC/USDC:USDC,LIT/USDC:USDC,WLD/USDC:USDC,XRP/USDC:USDC,NEAR/USDC:USDC,GRAM/USDC:USDC,SUI/USDC:USDC,XPL/USDC:USDC,UNI/USDC:USDC,AAVE/USDC:USDC,ENA/USDC:USDC,LINK/USDC:USDC,BCH/USDC:USDC,ADA/USDC:USDC,TAO/USDC:USDC,JTO/USDC:USDC,AVAX/USDC:USDC,ZRO/USDC:USDC,BNB/USDC:USDC,DYDX/USDC:USDC,XMR/USDC:USDC,PAXG/USDC:USDC"
+  # 币池：全市场动态（2026-07-04 起已去 UNIVERSE_WHITELIST，无该项即走此模式）。
+  # resolve_live_universe = 全部 live 永续 swap（list_instruments 只留 swap + canonical
+  # 去重）−黑名单(BLACKLIST_SYMBOLS，无条件生效)−24h 成交额地板(MIN_QUOTE_VOLUME_24H)，
+  # 再由 select_grid_coin 做 55% 相对成交额过滤 + 因子排名选出当轮开仓币种。设计见
+  # docs/superpowers/specs/2026-07-04-candidate-universe-port-design.md。
+  MIN_QUOTE_VOLUME_24H = "1000000"  # 全市场动态币池 $1M 绝对 24h 成交额地板（代码默认 0.0，仅 prod 生效）
+  BLACKLIST_SYMBOLS = ""            # 档0 硬禁名单，留空=不禁；上线前由用户填 HL coin 符号，如 "XXX/USDC:USDC,YYY/USDC:USDC"
   # 风控项（CAP / CAP_MIN / CAP_MAX / LEVERAGE）沿用 config.py 默认或按需 fly secrets 覆盖。
   # 单网格 cap = clamp(equity×CAP_EQUITY_FRAC, CAP_MIN, CAP_MAX)；每笔挂单 notional ≈
   #   cap×LEVERAGE×max_rate/(档数+1)。
