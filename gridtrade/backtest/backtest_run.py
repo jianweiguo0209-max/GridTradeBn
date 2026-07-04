@@ -2,12 +2,13 @@
 全部复用 gridtrade.core 纯函数；数据从 ParquetCache 读（预热后离线）。
 
 本模块是**唯一预热+回测入口**：
-  - run_backtest(...)  纯离线核心（只读 cache，无网络）——测试/复用都走它。
-  - prewarm_all(...)   单一预热：1h 选币(HL API) + 持仓(1m 走 Reservoir S3 / 其它走 HL API) + funding。
-                       幂等，按天缓存复用；1m 用 Reservoir 需 AWS 凭证（requester-pays）。
-  - main()             CLI：prewarm_all → run_backtest → summarize → CSV。
-                       跑：TZ=Asia/Shanghai .venv/bin/python -m gridtrade.backtest.backtest_run [days] [sim_tf]
-网络依赖（ccxt/adapter/reservoir）全部在 prewarm_all/main 内**惰性导入**，保持核心离线可测。
+  - run_backtest(...)         纯离线核心（只读 cache，无网络）——测试/复用都走它。
+  - prewarm_1h(...)           phase1：全市场(−黑名单) 1h 选币 OHLCV(HL API，含暖机)，幂等按天缓存复用。
+  - prewarm_sim_and_funding() phase2：仅选中币 持仓(1m 走 Reservoir S3 / 其它走 HL API) + funding。
+                              1m 用 Reservoir 需 AWS 凭证（requester-pays）。
+  - main()                    CLI：全市场解析+1h预热 → select_grids(一次) → 仅选中币预热 → 回测 → summarize → CSV。
+                              跑：TZ=Asia/Shanghai .venv/bin/python -m gridtrade.backtest.backtest_run [days] [sim_tf]
+网络依赖（ccxt/adapter/reservoir）全部在 prewarm_1h/prewarm_sim_and_funding/main 内**惰性导入**，保持核心离线可测。
 """
 import os
 
@@ -19,15 +20,18 @@ from gridtrade.config import DEFAULT_STOP_CFG, DEFAULT_STRATEGY_CONFIG
 from gridtrade.core.grid_engine import simulate_grid_engine
 from gridtrade.core.grid_params import calc_grid_params_v1, calc_grid_params_v2
 
-# HL 回测默认票池/策略（镜像 gridtrade.config 已验证参数；stop_loss_config 补 funding 止损）
-HL_UNIVERSE = ['BTC/USDC:USDC', 'ETH/USDC:USDC', 'SOL/USDC:USDC', 'AVAX/USDC:USDC',
-               'ARB/USDC:USDC', 'OP/USDC:USDC', 'LINK/USDC:USDC', 'DOGE/USDC:USDC']
+# HL 回测默认策略（镜像 gridtrade.config 已验证参数；stop_loss_config 补 funding 止损）
 HL_STRATEGY = {**DEFAULT_STRATEGY_CONFIG,
                'stop_loss_config': dict(DEFAULT_STOP_CFG),
                'active_stop_mode': 'pv',   # 主动止损默认 pv（回测扫描最优）
                'pv_config': {'mult': DEFAULT_STOP_CFG['pv_mult'], 'pnl_thr': DEFAULT_STOP_CFG['pv_pnl_thr'],
                              'period': DEFAULT_STOP_CFG['pv_period'], 'n': DEFAULT_STOP_CFG['pv_n']}}
 HL_FACTORS = dict(DEFAULT_STRATEGY_CONFIG['factors'])
+
+# 回测票池口径对齐 prod：全市场动态 −黑名单 −逐 run_time PIT $1M 成交额地板。
+# 票池在 main() 里由 resolve_universe 解析全市场（见 main）；此处只放阈值/黑名单常量（可 env 覆写）。
+BT_MIN_QUOTE_VOLUME_24H = float(os.environ.get('BT_MIN_QUOTE_VOLUME_24H', '1000000'))
+BT_BLACKLIST = tuple(s.strip() for s in os.environ.get('BT_BLACKLIST', '').split(',') if s.strip())
 
 
 def holding_bars(series_df, run_time, period):
@@ -67,6 +71,13 @@ def summarize(df):
     }
 
 
+# 仿真明细列（顺序须与 _simulate_grid_task 返回 dict 的 key 顺序一致）——
+# 零任务时给空 DataFrame 带上 schema，避免下游 df['symbol'] 触 KeyError。
+_RESULT_COLS = ['run_time', 'offset', 'symbol', 'entry', 'grid_num', 'low', 'high',
+                'hold_bars', 'n_fills', 'pnl_ratio', 'exit_reason', 'terminated',
+                'unreal_pnl', 'funding_missing']
+
+
 def _simulate_grid_task(payload):
     """单个网格仿真（顶层函数，可 pickle → 供进程池并行）。
     payload=(data_task, cfg)：data_task 是选币/数据（可跨参数组合复用），cfg 是仿真配置。
@@ -92,11 +103,22 @@ def _simulate_grid_task(payload):
     }
 
 
-def build_grid_tasks(cache, universe, window_start, window_end, strategy_config, factors,
-                     *, timeframe='1h', sim_timeframe=None, log=print):
-    """选币回放 + 组装每格数据 payload（**不含仿真配置**，故可跨多组参数复用）。
-    返回 data_task 列表：(rt, offset, sym, entry, gp, bars_df, funding_df)。
-    选币是回测里最贵的一步——扫参时 build 一次、simulate_tasks 多次，可省 N-1 次选币。"""
+def select_grids(cache, universe, window_start, window_end, strategy_config, factors,
+                 *, timeframe='1h', min_quote_volume=0.0, blacklist=(), log=print):
+    """只跑选币回放（1h + PIT 地板 + 黑名单），返回 [(rt, offset, row)]。offline。"""
+    grids = []
+    run_times = [pd.Timestamp(t) for t in pd.date_range(window_start, window_end, freq='1H')]
+    SR.replay_selection(cache, universe, run_times, strategy_config, factors,
+                        lambda rt, off, row: grids.append((rt, off, row.copy())),
+                        timeframe=timeframe, min_quote_volume=min_quote_volume,
+                        blacklist=blacklist, log=log)
+    log('[BT] picks=%d' % len(grids))
+    return grids
+
+
+def assemble_grid_tasks(cache, grids, strategy_config, *, sim_timeframe=None,
+                        timeframe='1h', log=print):
+    """由选中 grids 组装每格 data_task（载选中币 sim 序列 + holding_bars + funding 切片）。offline。"""
     sim_tf = sim_timeframe or timeframe
     period = strategy_config['period']
     price_limit = strategy_config['price_limit']
@@ -105,14 +127,8 @@ def build_grid_tasks(cache, universe, window_start, window_end, strategy_config,
     v2cfg = strategy_config.get('grid_v2_config', {})
     calc_fn = calc_grid_params_v2 if grid_version == 2 else calc_grid_params_v1
 
-    series = SR.load_full_series(cache, universe, sim_tf)
-    grids = []
-    run_times = [pd.Timestamp(t) for t in pd.date_range(window_start, window_end, freq='1H')]
-    SR.replay_selection(cache, universe, run_times, strategy_config, factors,
-                        lambda rt, off, row: grids.append((rt, off, row.copy())),
-                        timeframe=timeframe, log=log)
-    log('[BT] picks=%d' % len(grids))
-
+    selected = sorted({row['symbol'] for _, _, row in grids})
+    series = SR.load_full_series(cache, selected, sim_tf)   # 仅选中币
     funding_by_sym = {}
     data_tasks = []
     for rt, offset, row in grids:
@@ -137,6 +153,17 @@ def build_grid_tasks(cache, universe, window_start, window_end, strategy_config,
     return data_tasks
 
 
+def build_grid_tasks(cache, universe, window_start, window_end, strategy_config, factors,
+                     *, timeframe='1h', sim_timeframe=None, min_quote_volume=0.0,
+                     blacklist=(), log=print):
+    """选币 + 组装（offline 便捷组合，run_backtest/测试用）。两段式预热见 main()。"""
+    grids = select_grids(cache, universe, window_start, window_end, strategy_config, factors,
+                         timeframe=timeframe, min_quote_volume=min_quote_volume,
+                         blacklist=blacklist, log=log)
+    return assemble_grid_tasks(cache, grids, strategy_config,
+                               sim_timeframe=sim_timeframe, timeframe=timeframe, log=log)
+
+
 def simulate_tasks(data_tasks, *, leverage, fee_rate=0.0005, max_rate=0.5, stop_cfg=None,
                    active_stop_mode='pv', pv_cfg=None, workers=1):
     """对已组装的 data_tasks 跑仿真（可并行）→ 明细 DataFrame。仿真配置在此传入，故同一批
@@ -150,12 +177,13 @@ def simulate_tasks(data_tasks, *, leverage, fee_rate=0.0005, max_rate=0.5, stop_
             results = list(ex.map(_simulate_grid_task, payloads, chunksize=8))
     else:
         results = [_simulate_grid_task(p) for p in payloads]
-    return pd.DataFrame(results)
+    return pd.DataFrame(results) if results else pd.DataFrame(columns=_RESULT_COLS)
 
 
 def run_backtest(cache, universe, window_start, window_end, strategy_config, factors,
                  *, timeframe='1h', sim_timeframe=None, fee_rate=0.0005,
-                 max_rate=0.5, leverage=None, workers=1, log=print):
+                 max_rate=0.5, leverage=None, min_quote_volume=0.0, blacklist=(),
+                 workers=1, log=print):
     """timeframe: 选币因子所用 K 线周期（换仓周期粒度，默认 1h）。
     sim_timeframe: 持仓成交仿真所用 K 线周期（None=沿用 timeframe）。传 '1m' 可解耦——
     选币仍在 1h 上（因子行为不变），持仓在 1m 上跑高保真触网/成交。
@@ -164,27 +192,19 @@ def run_backtest(cache, universe, window_start, window_end, strategy_config, fac
     lev = leverage if leverage is not None else strategy_config['leverage']
     tasks = build_grid_tasks(cache, universe, window_start, window_end, strategy_config,
                              factors, timeframe=timeframe,
-                             sim_timeframe=sim_timeframe, log=log)
+                             sim_timeframe=sim_timeframe, min_quote_volume=min_quote_volume,
+                             blacklist=blacklist, log=log)
     return simulate_tasks(tasks, leverage=lev, fee_rate=fee_rate, max_rate=max_rate,
                           stop_cfg=strategy_config['stop_loss_config'],
                           active_stop_mode=strategy_config.get('active_stop_mode', 'pv'),
                           pv_cfg=strategy_config.get('pv_config', {}), workers=workers)
 
 
-def prewarm_all(cache, universe, warm_start_ms, win_start_ms, end_ms, *,
-                sim_timeframe='1m', log=print):
-    """单一预热（幂等，按天缓存复用）：
-      - 1h 选币 OHLCV（HL API，从 warm_start 起含暖机）
-      - 持仓 OHLCV：sim_timeframe=='1m' 走 Reservoir S3(download-or-reuse)，其它走 HL API
-      - funding（HL API）
-    sim_timeframe=='1m' 时 Reservoir 是 requester-pays，需已配 AWS 凭证。网络依赖惰性导入。"""
+def _hl_datasource_1h(cache):
+    """构造带退避的 HL 适配器 + 1h DataSource（网络；惰性导入）。返回 (adapter, ds_1h)。"""
     import time
-
     import ccxt
-
-    from gridtrade.backtest import prewarm as PW
     from gridtrade.backtest.datasource import DataSource
-    from gridtrade.backtest.reservoir import warm_reservoir_1m
     from gridtrade.exchanges.hyperliquid import HyperliquidAdapter
 
     class _RetryHL(HyperliquidAdapter):
@@ -206,22 +226,39 @@ def prewarm_all(cache, universe, warm_start_ms, win_start_ms, end_ms, *,
             return self._retry(super().fetch_funding_history, symbol, start_ms, end_ms)
 
     adapter = _RetryHL(ccxt.hyperliquid({'enableRateLimit': True, 'timeout': 30000}))
-    ds_1h = DataSource(adapter, cache, timeframe='1h')
+    return adapter, DataSource(adapter, cache, timeframe='1h')
 
-    log('[prewarm] 1h 选币: %s' % PW.prewarm_ohlcv(ds_1h, universe, warm_start_ms, end_ms))
 
+def prewarm_1h(cache, universe, warm_start_ms, end_ms, *, log=print):
+    """phase1：全市场 1h 选币 OHLCV(含暖机)。返回 adapter（复用于 phase2）。"""
+    from gridtrade.backtest import prewarm as PW
+    adapter, ds_1h = _hl_datasource_1h(cache)
+    log('[prewarm] 1h 选币(全市场 %d): %s'
+        % (len(universe), PW.prewarm_ohlcv(ds_1h, universe, warm_start_ms, end_ms)))
+    return adapter
+
+
+def prewarm_sim_and_funding(cache, adapter, selected, win_start_ms, end_ms, *,
+                            sim_timeframe='1m', log=print):
+    """phase2：仅选中币的持仓 OHLCV(1m 走 Reservoir / 其它走 HL) + funding。
+    sim_timeframe=='1m' 时 Reservoir 是 requester-pays，需已配 AWS 凭证。网络依赖惰性导入。"""
+    from gridtrade.backtest import prewarm as PW
+    from gridtrade.backtest.datasource import DataSource
+    from gridtrade.backtest.reservoir import warm_reservoir_1m
     sim_tf = sim_timeframe or '1h'
     if sim_tf == '1m':
-        sr = warm_reservoir_1m(cache, universe, win_start_ms, end_ms, log=log)
-        log('[prewarm] 1m@Reservoir: %s' % sr)
+        sr = warm_reservoir_1m(cache, selected, win_start_ms, end_ms, log=log)
+        log('[prewarm] 1m@Reservoir(选中 %d): %s' % (len(selected), sr))
         if sr['rows'] == 0 and sr['skipped_cached'] == 0:
-            raise RuntimeError('Reservoir 未拉到任何 1m 数据——检查 AWS 凭证 / 桶权限 / 币种，'
-                               '或窗口内数据在 S3 尚未发布（retry_later=%d）' % sr['retry_later'])
+            raise RuntimeError('Reservoir 未拉到任何 1m 数据——检查 AWS 凭证/桶权限/币种 '
+                               '(retry_later=%d)' % sr['retry_later'])
     elif sim_tf != '1h':
         ds = DataSource(adapter, cache, timeframe=sim_tf)
-        log('[prewarm] %s 持仓: %s' % (sim_tf, PW.prewarm_ohlcv(ds, universe, win_start_ms, end_ms)))
-
-    log('[prewarm] funding: %s' % PW.prewarm_funding(ds_1h, universe, win_start_ms, end_ms))
+        log('[prewarm] %s 持仓(选中 %d): %s'
+            % (sim_tf, len(selected), PW.prewarm_ohlcv(ds, selected, win_start_ms, end_ms)))
+    ds_1h = DataSource(adapter, cache, timeframe='1h')
+    log('[prewarm] funding(选中 %d): %s'
+        % (len(selected), PW.prewarm_funding(ds_1h, selected, win_start_ms, end_ms)))
 
 
 _WARMUP_DAYS = 14   # 选币 1h 暖机（窗口前多取的天数）
@@ -266,15 +303,36 @@ def main(argv=None):
     cache = ParquetCache(root)
     print('[BT] window %s -> %s | sim_tf=%s' % (win_start, win_end, sim_tf))
 
+    from gridtrade.backtest.prewarm import resolve_universe
+
     t0 = time.time()
-    prewarm_all(cache, HL_UNIVERSE, _ms(warm_start), _ms(win_start), _ms(win_end), sim_timeframe=sim_tf)
+    # phase1: 解析全市场票池(−黑名单) + 预热全市场 1h
+    _adapter, _ds1h = _hl_datasource_1h(cache)
+    universe = resolve_universe(_ds1h, blacklist=BT_BLACKLIST)
+    print('[BT] 全市场票池 %d 币(−黑名单 %d)' % (len(universe), len(BT_BLACKLIST)))
+    from gridtrade.backtest import prewarm as PW
+    print('[BT] 1h 预热: %s' % PW.prewarm_ohlcv(_ds1h, universe, _ms(warm_start), _ms(win_end)))
+
+    # 选币(1h + PIT $1M 地板 + 黑名单)——一次
+    grids = select_grids(cache, universe, win_start, win_end, HL_STRATEGY, HL_FACTORS,
+                         timeframe='1h', min_quote_volume=BT_MIN_QUOTE_VOLUME_24H,
+                         blacklist=BT_BLACKLIST)
+    selected = sorted({row['symbol'] for _, _, row in grids})
+    print('[BT] 选中 %d 币' % len(selected))
+
+    # phase2: 仅选中币预热 1m/funding
+    prewarm_sim_and_funding(cache, _adapter, selected, _ms(win_start), _ms(win_end),
+                            sim_timeframe=sim_tf)
     print('[BT] prewarm done %.1fs' % (time.time() - t0))
 
-    workers = int(os.environ.get('BT_WORKERS', '1'))    # 并行进程数：BT_WORKERS=4 提速
+    workers = int(os.environ.get('BT_WORKERS', '1'))
     t0 = time.time()
-    df = run_backtest(cache, HL_UNIVERSE, win_start, win_end, HL_STRATEGY, HL_FACTORS,
-                      timeframe='1h', sim_timeframe=(None if sim_tf == '1h' else sim_tf),
-                      workers=workers)
+    tasks = assemble_grid_tasks(cache, grids, HL_STRATEGY,
+                                sim_timeframe=(None if sim_tf == '1h' else sim_tf), timeframe='1h')
+    df = simulate_tasks(tasks, leverage=HL_STRATEGY['leverage'],
+                        stop_cfg=HL_STRATEGY['stop_loss_config'],
+                        active_stop_mode=HL_STRATEGY.get('active_stop_mode', 'pv'),
+                        pv_cfg=HL_STRATEGY.get('pv_config', {}), workers=workers)
     print('[BT] backtest %.1fs (workers=%d)' % (time.time() - t0, workers))
 
     tag = '@Reservoir+funding' if sim_tf == '1m' else ''

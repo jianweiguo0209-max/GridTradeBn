@@ -56,3 +56,47 @@ def test_replay_selection_emits_picks(tmp_path):
     assert len(picks) >= 1                     # 至少选出一个币
     # 每个 pick 的 row 含布网所需列
     assert all(isinstance(p[2], str) for p in picks)
+
+
+def _series_with_vol(symbol, n=60, vol_per_bar=1.0, start='2024-01-01'):
+    import pandas as pd, numpy as np
+    t = pd.date_range(start, periods=n, freq='1H')
+    close = np.full(n, 100.0)
+    return pd.DataFrame({
+        'symbol': symbol, 'candle_begin_time': t,
+        'open': close, 'high': close * 1.001, 'low': close * 0.999, 'close': close,
+        'vol': 1.0, 'volCcy': 1.0, 'quote_volume': float(vol_per_bar),
+    })
+
+
+def test_build_pit_candidates_floor_and_blacklist_and_pit():
+    import pandas as pd
+    from gridtrade.backtest.selection_replay import build_pit_candidates
+    # HIGH: 每根 100 → 前置24根和=2400；LOW: 每根 10 → 24根和=240
+    series = {'HIGH/USDC:USDC': _series_with_vol('HIGH/USDC:USDC', vol_per_bar=100.0),
+              'LOW/USDC:USDC':  _series_with_vol('LOW/USDC:USDC',  vol_per_bar=10.0),
+              'BAN/USDC:USDC':  _series_with_vol('BAN/USDC:USDC',  vol_per_bar=100.0)}
+    rt = pd.Timestamp('2024-01-03 00:00:00')   # 有 >24 根 < rt
+    # 门槛 1000：HIGH(2400)过、LOW(240)剔；BAN 被黑名单剔
+    out = build_pit_candidates(series, rt, max_candle_num=160,
+                               min_quote_volume=1000.0, blacklist=('BAN/USDC:USDC',))
+    assert set(out) == {'HIGH/USDC:USDC'}
+    # 门槛 0=停用：HIGH+LOW 都在（BAN 仍被黑名单剔）
+    out0 = build_pit_candidates(series, rt, max_candle_num=160,
+                                min_quote_volume=0.0, blacklist=('BAN/USDC:USDC',))
+    assert set(out0) == {'HIGH/USDC:USDC', 'LOW/USDC:USDC'}
+
+
+def test_build_pit_candidates_no_lookahead():
+    import pandas as pd
+    from gridtrade.backtest.selection_replay import build_pit_candidates
+    # 前 30 根量=10（和=240<1000），第 30 根后量飙到 1000。run_time 卡在飙升前 → 仍按低量剔。
+    import numpy as np
+    t = pd.date_range('2024-01-01', periods=60, freq='1H')
+    qv = np.concatenate([np.full(30, 10.0), np.full(30, 1000.0)])
+    df = pd.DataFrame({'symbol': 'X/USDC:USDC', 'candle_begin_time': t,
+                       'open': 100.0, 'high': 100.1, 'low': 99.9, 'close': 100.0,
+                       'vol': 1.0, 'volCcy': 1.0, 'quote_volume': qv})
+    rt = t[28]   # 只看得到前 28 根（都是 10）
+    out = build_pit_candidates({'X/USDC:USDC': df}, rt, max_candle_num=160, min_quote_volume=1000.0)
+    assert out == {}          # 未来的高量不算进来（无未来函数）
