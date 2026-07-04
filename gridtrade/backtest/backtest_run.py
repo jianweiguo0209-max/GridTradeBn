@@ -99,12 +99,22 @@ def _simulate_grid_task(payload):
     }
 
 
-def build_grid_tasks(cache, universe, window_start, window_end, strategy_config, factors,
-                     *, timeframe='1h', sim_timeframe=None, min_quote_volume=0.0,
-                     blacklist=(), log=print):
-    """选币回放 + 组装每格数据 payload（**不含仿真配置**，故可跨多组参数复用）。
-    返回 data_task 列表：(rt, offset, sym, entry, gp, bars_df, funding_df)。
-    选币是回测里最贵的一步——扫参时 build 一次、simulate_tasks 多次，可省 N-1 次选币。"""
+def select_grids(cache, universe, window_start, window_end, strategy_config, factors,
+                 *, timeframe='1h', min_quote_volume=0.0, blacklist=(), log=print):
+    """只跑选币回放（1h + PIT 地板 + 黑名单），返回 [(rt, offset, row)]。offline。"""
+    grids = []
+    run_times = [pd.Timestamp(t) for t in pd.date_range(window_start, window_end, freq='1H')]
+    SR.replay_selection(cache, universe, run_times, strategy_config, factors,
+                        lambda rt, off, row: grids.append((rt, off, row.copy())),
+                        timeframe=timeframe, min_quote_volume=min_quote_volume,
+                        blacklist=blacklist, log=log)
+    log('[BT] picks=%d' % len(grids))
+    return grids
+
+
+def assemble_grid_tasks(cache, grids, strategy_config, *, sim_timeframe=None,
+                        timeframe='1h', log=print):
+    """由选中 grids 组装每格 data_task（载选中币 sim 序列 + holding_bars + funding 切片）。offline。"""
     sim_tf = sim_timeframe or timeframe
     period = strategy_config['period']
     price_limit = strategy_config['price_limit']
@@ -113,15 +123,8 @@ def build_grid_tasks(cache, universe, window_start, window_end, strategy_config,
     v2cfg = strategy_config.get('grid_v2_config', {})
     calc_fn = calc_grid_params_v2 if grid_version == 2 else calc_grid_params_v1
 
-    series = SR.load_full_series(cache, universe, sim_tf)
-    grids = []
-    run_times = [pd.Timestamp(t) for t in pd.date_range(window_start, window_end, freq='1H')]
-    SR.replay_selection(cache, universe, run_times, strategy_config, factors,
-                        lambda rt, off, row: grids.append((rt, off, row.copy())),
-                        timeframe=timeframe, min_quote_volume=min_quote_volume,
-                        blacklist=blacklist, log=log)
-    log('[BT] picks=%d' % len(grids))
-
+    selected = sorted({row['symbol'] for _, _, row in grids})
+    series = SR.load_full_series(cache, selected, sim_tf)   # 仅选中币
     funding_by_sym = {}
     data_tasks = []
     for rt, offset, row in grids:
@@ -144,6 +147,17 @@ def build_grid_tasks(cache, universe, window_start, window_end, strategy_config,
             fd = fd[(fd['ts'] >= lo) & (fd['ts'] <= hi)]
         data_tasks.append((rt, int(offset), sym, float(row['close']), gp, bars_df, fd))
     return data_tasks
+
+
+def build_grid_tasks(cache, universe, window_start, window_end, strategy_config, factors,
+                     *, timeframe='1h', sim_timeframe=None, min_quote_volume=0.0,
+                     blacklist=(), log=print):
+    """选币 + 组装（offline 便捷组合，run_backtest/测试用）。两段式预热见 main()。"""
+    grids = select_grids(cache, universe, window_start, window_end, strategy_config, factors,
+                         timeframe=timeframe, min_quote_volume=min_quote_volume,
+                         blacklist=blacklist, log=log)
+    return assemble_grid_tasks(cache, grids, strategy_config,
+                               sim_timeframe=sim_timeframe, timeframe=timeframe, log=log)
 
 
 def simulate_tasks(data_tasks, *, leverage, fee_rate=0.0005, max_rate=0.5, stop_cfg=None,

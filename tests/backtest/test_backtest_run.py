@@ -70,3 +70,19 @@ def test_run_backtest_floor_and_blacklist_gate_selection(tmp_path):
     # 黑名单全禁 → 空（同理证明 blacklist 已穿线）
     dfbl = run_backtest(cache, syms, ws, we, _strategy(), FACTORS, blacklist=tuple(syms), **base)
     assert len(dfbl) == 0
+
+
+def test_select_grids_then_assemble_equals_build_grid_tasks(tmp_path):
+    # _seed_cache 已在本文件顶部 import（from tests.backtest.test_selection_replay import _seed_cache, STRAT, FACTORS）
+    from gridtrade.backtest.backtest_run import (build_grid_tasks, select_grids,
+                                                 assemble_grid_tasks)
+    syms = ['AAA/USDT:USDT', 'BBB/USDT:USDT', 'CCC/USDT:USDT', 'DDD/USDT:USDT']
+    cache = _seed_cache(tmp_path, syms)
+    ws, we = pd.Timestamp('2024-01-10 00:00:00'), pd.Timestamp('2024-01-11 00:00:00')
+    strat = _strategy()
+    a = build_grid_tasks(cache, syms, ws, we, strat, FACTORS, timeframe='1h')
+    grids = select_grids(cache, syms, ws, we, strat, FACTORS, timeframe='1h')
+    b = assemble_grid_tasks(cache, grids, strat, timeframe='1h')
+    # 选中集 == build 的组装集（按 (rt,sym) 比对）
+    key = lambda tasks: sorted((str(t[0]), t[2]) for t in tasks)
+    assert key(a) == key(b)
