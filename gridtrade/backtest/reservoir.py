@@ -20,6 +20,7 @@ from gridtrade.exchanges.base import CANDLE_COLS
 S3_BUCKET = 's3://hydromancer-reservoir'
 S3_KEY_FMT = 'by_dex/hyperliquid/candles/1s/date=%s/candles.parquet'
 NAMESPACE = '1m'
+_RULES = {'1m': '1min', '1h': '1H'}   # cache 命名空间 → pandas resample 规则
 
 # Reservoir candles 列（见 docs.hydromancer.xyz schema）：
 #   coin, dex, asset_class, base_symbol, quote_symbol, timestamp(ms,UTC),
@@ -32,10 +33,10 @@ def _days(start_ms, end_ms):
     return [d.strftime('%Y-%m-%d') for d in pd.date_range(s, e, freq='D')]
 
 
-def candles_1s_to_1m(df, symbol_map):
-    """纯函数：Reservoir 1s candles(df) → {symbol: 1m CANDLE_COLS df}。
-    symbol_map: {reservoir_coin: canonical_symbol}，如 {'BTC': 'BTC/USDC:USDC'}。
-    只处理 symbol_map 里的币；1s→1m 用 bar-begin 口径（label/closed=left）。"""
+def candles_1s_resample(df, symbol_map, rule):
+    """纯函数：Reservoir 1s candles(df) → {symbol: rule 周期 CANDLE_COLS df}。
+    rule: pandas resample 规则（'1min'/'1H'）。symbol_map: {reservoir_coin: canonical_symbol}。
+    只处理 symbol_map 里的币；bar-begin 口径（label/closed=left）。"""
     out = {}
     if df is None or df.empty:
         return out
@@ -50,7 +51,7 @@ def candles_1s_to_1m(df, symbol_map):
         if sub.empty:
             continue
         g = (sub.set_index('candle_begin_time').sort_index()
-             .resample('1min', label='left', closed='left')
+             .resample(rule, label='left', closed='left')
              .agg({'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last',
                    'volume': 'sum', 'volume_quote': 'sum'}))
         g = g.dropna(subset=['open']).reset_index()
@@ -64,6 +65,11 @@ def candles_1s_to_1m(df, symbol_map):
             g[c] = g[c].astype(float)
         out[sym] = g[CANDLE_COLS].reset_index(drop=True)
     return out
+
+
+def candles_1s_to_1m(df, symbol_map):
+    """向后兼容薄包装：1s→1m。"""
+    return candles_1s_resample(df, symbol_map, '1min')
 
 
 def _s3_cp(day, dest, *, log=print):

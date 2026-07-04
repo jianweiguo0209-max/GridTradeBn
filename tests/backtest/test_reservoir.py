@@ -110,3 +110,39 @@ def test_warm_success_writes_and_reuses(tmp_path, monkeypatch):
     monkeypatch.setattr(R, '_s3_cp', lambda day, dest, log=print: calls.append(day) or True)
     stat2 = warm_reservoir_1m(cache, UNI, _ms(_PAST_DAY), _ms(_PAST_DAY) + _DAY_MS - 1)
     assert stat2['skipped_cached'] == 1 and stat2['days'] == 0 and calls == []
+
+
+def test_1s_to_1h_matches_manual_agg():
+    # 2 小时整（7200 秒）：1s→1H 直采，逐列对手工聚合期望
+    raw = _raw_1s('BTC', '2026-03-22 00:00:00', 7200, base=100.0)
+    out = R.candles_1s_resample(raw, {'BTC': 'BTC/USDC:USDC'}, '1H')
+    df = out['BTC/USDC:USDC']
+    assert list(df.columns) == CANDLE_COLS and len(df) == 2
+    assert df['candle_begin_time'].iloc[0] == pd.Timestamp('2026-03-22 00:00:00')
+    assert df['candle_begin_time'].iloc[1] == pd.Timestamp('2026-03-22 01:00:00')
+    # 第一根：open=第0秒 open、close=第3599秒 close、high=第3599秒 high、low=第0秒 low
+    assert abs(df['open'].iloc[0] - 100.0) < 1e-9
+    assert abs(df['close'].iloc[0] - (100.0 + 3599 * 0.01 + 0.1)) < 1e-9
+    assert abs(df['high'].iloc[0] - (100.0 + 3599 * 0.01 + 0.5)) < 1e-9
+    assert abs(df['low'].iloc[0] - 99.5) < 1e-9
+    assert abs(df['vol'].iloc[0] - 3600.0) < 1e-9
+    # quote_volume = Σ volume_quote = Σ px（等差 100.00..135.99）
+    assert abs(df['quote_volume'].iloc[0] - sum(100.0 + i * 0.01 for i in range(3600))) < 1e-6
+    assert df['candle_begin_time'].dt.tz is None
+
+
+def test_1h_equals_1m_reaggregated():
+    # 一致性：1s→1H 直采 == 1s→1min 再聚 1H（agg 同构 ⇒ 恒等；防重采样口径漂移）
+    raw = _raw_1s('BTC', '2026-03-22 00:00:00', 7200, base=100.0)
+    smap = {'BTC': 'BTC/USDC:USDC'}
+    direct = R.candles_1s_resample(raw, smap, '1H')['BTC/USDC:USDC']
+    m = R.candles_1s_resample(raw, smap, '1min')['BTC/USDC:USDC']
+    re = (m.set_index('candle_begin_time')
+            .resample('1H', label='left', closed='left')
+            .agg({'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last',
+                  'vol': 'sum', 'volCcy': 'sum', 'quote_volume': 'sum'})
+            .reset_index())
+    for col in ('open', 'high', 'low', 'close', 'vol', 'quote_volume'):
+        np.testing.assert_allclose(direct[col].to_numpy('float64'),
+                                   re[col].to_numpy('float64'), rtol=1e-12,
+                                   err_msg='%s 口径漂移' % col)
