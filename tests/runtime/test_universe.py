@@ -43,3 +43,13 @@ def test_universe_whitelist_drops_nonlive_and_unknown():
     out = resolve_live_universe(ex, whitelist=('BTC/USDC:USDC', 'OLD/USDC:USDC',
                                                'GHOST/USDC:USDC'))
     assert out == ['BTC/USDC:USDC']
+
+
+def test_blacklist_applies_even_in_whitelist_mode():
+    from gridtrade.runtime.universe import resolve_live_universe
+    ex = _ex(('BTC/USDC:USDC', 'live'), ('ETH/USDC:USDC', 'live'),
+             ('SOL/USDC:USDC', 'live'))
+    # 档0：ETH 被硬禁，即使它在白名单里也必须剔除
+    out = resolve_live_universe(ex, blacklist=('ETH/USDC:USDC',),
+                                whitelist=('BTC/USDC:USDC', 'ETH/USDC:USDC'))
+    assert out == ['BTC/USDC:USDC']

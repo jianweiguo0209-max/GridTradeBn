@@ -7,8 +7,7 @@ from typing import List
 
 def resolve_live_universe(adapter, blacklist=(), whitelist=()) -> List[str]:
     live = [i.symbol for i in adapter.list_instruments() if i.state == 'live']
+    live = [s for s in live if s not in set(blacklist)]     # 档0：无条件硬禁（含 whitelist 模式）
     if whitelist:
-        wl = set(whitelist)
-        return [s for s in live if s in wl]
-    bl = set(blacklist)
-    return [s for s in live if s not in bl]
+        return [s for s in live if s in set(whitelist)]
+    return live
