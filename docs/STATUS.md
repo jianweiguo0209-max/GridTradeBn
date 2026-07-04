@@ -167,6 +167,8 @@ gridtrade/
 - **时区**：内部全 UTC（无机器 TZ 依赖，已铲平 `utc_offset`/`tm_gmtoff`）；换仓 offset 相位现为纯 UTC（与回测 `utc_offset=0` 同口径）；显示时区由 `DISPLAY_TZ`（IANA，默认 UTC）控制，仅面板层。**注**：本次上线令 live 换仓 12H 边界相位相较旧 +8 平移 8h（有意变更，与回测一致）。
 - **候选票池**：`list_instruments` 只留 swap 永续 + canonical 去重；`resolve_live_universe` 黑名单无条件生效（含白名单模式）；可配 `MIN_QUOTE_VOLUME_24H` 绝对成交额地板（ccxt `quoteVolume`，code 默认 0=停用，prod 设 $1M）。**prod 已去 `UNIVERSE_WHITELIST` 走全市场动态**（全部永续 −黑名单 −24h成交额<$1M → 选币再 55%相对过滤）。档1/档2 由 SymbolLockGate 覆盖不实现。
 - **回测票池与 prod 同步**：回测候选池从写死 8 币 → 全市场动态（`list_instruments` swap+去重 −黑名单 −逐 run_time PIT `$1M` 成交额地板，地板从缓存 1h `quote_volume` 前置 24h 重建、无未来函数）；`selection_replay.build_pit_candidates` 承载；两段式预热（1h 全市场→选币→仅选中币 1m/funding）。选币数学不动。`BT_MIN_QUOTE_VOLUME_24H`/`BT_BLACKLIST` env 可调。忠实度：candle-vol≈dayNtlVlm 近似 + 存活者偏差。
+- **回测选币性能（并行 + 磁盘缓存，纯离线工具）**：`BT_WORKERS>1` 现**同时并行选币回放（按 run_time 连续切块多进程）与网格仿真**（原先只并行仿真）——选币是长跑瓶颈、CPU-bound、各 run_time 独立，多核近似线性加速；连续切块 + `map` 保序 ⇒ 与串行逐位一致。`BT_SELECT_CACHE`（默认开）把选币结果按「选币参数 + 每币缓存天范围指纹」pickle 落盘 `data/hl_validate/_select_cache/`，同窗口+同参数+同数据重跑秒回；重新预热改变缓存天自动换 key、不返回过期（已知盲区：同窗口跨 200 天边界重跑 api→reservoir 换源、天集合不变时不换 key，靠删缓存/off 兜底，差异仅 bar 级微差）；`off` 旁路 / `rm -rf` 该目录强制重算。`core/selection.py` 顺带修 2 warning（`resample base=`→`offset=` + 删遗留 debug-print，金标 parity 不破、live 日志同步去噪）。命令详见 [docs/回测使用文档.md](回测使用文档.md) §3。
+- **回测可回溯拓展（Reservoir 1h，纯离线工具）**：窗口早于 HL API 1h 滚动(~200 天)时 main() 自动把 phase1 切到 Reservoir 归档（`warm_reservoir_ohlcv` 1s→1h+1m 全币种一次下载同写，phase2 1m 秒命中）；归档起点 2025-07-31 → 最早窗口起点 **2025-08-14**（更早响亮报错）。近窗口 api 路径字节不变。fidelity：两源 bar 微差、单 run 单源；老窗口票池仍今日上市表（存活者偏差随窗口变早加重）。
 
 ---
 

@@ -20,6 +20,7 @@ from gridtrade.exchanges.base import CANDLE_COLS
 S3_BUCKET = 's3://hydromancer-reservoir'
 S3_KEY_FMT = 'by_dex/hyperliquid/candles/1s/date=%s/candles.parquet'
 NAMESPACE = '1m'
+_RULES = {'1m': '1min', '1h': '1H'}   # cache 命名空间 → pandas resample 规则
 
 # Reservoir candles 列（见 docs.hydromancer.xyz schema）：
 #   coin, dex, asset_class, base_symbol, quote_symbol, timestamp(ms,UTC),
@@ -32,10 +33,10 @@ def _days(start_ms, end_ms):
     return [d.strftime('%Y-%m-%d') for d in pd.date_range(s, e, freq='D')]
 
 
-def candles_1s_to_1m(df, symbol_map):
-    """纯函数：Reservoir 1s candles(df) → {symbol: 1m CANDLE_COLS df}。
-    symbol_map: {reservoir_coin: canonical_symbol}，如 {'BTC': 'BTC/USDC:USDC'}。
-    只处理 symbol_map 里的币；1s→1m 用 bar-begin 口径（label/closed=left）。"""
+def candles_1s_resample(df, symbol_map, rule):
+    """纯函数：Reservoir 1s candles(df) → {symbol: rule 周期 CANDLE_COLS df}。
+    rule: pandas resample 规则（'1min'/'1H'）。symbol_map: {reservoir_coin: canonical_symbol}。
+    只处理 symbol_map 里的币；bar-begin 口径（label/closed=left）。"""
     out = {}
     if df is None or df.empty:
         return out
@@ -50,7 +51,7 @@ def candles_1s_to_1m(df, symbol_map):
         if sub.empty:
             continue
         g = (sub.set_index('candle_begin_time').sort_index()
-             .resample('1min', label='left', closed='left')
+             .resample(rule, label='left', closed='left')
              .agg({'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last',
                    'volume': 'sum', 'volume_quote': 'sum'}))
         g = g.dropna(subset=['open']).reset_index()
@@ -66,6 +67,11 @@ def candles_1s_to_1m(df, symbol_map):
     return out
 
 
+def candles_1s_to_1m(df, symbol_map):
+    """向后兼容薄包装：1s→1m。"""
+    return candles_1s_resample(df, symbol_map, '1min')
+
+
 def _s3_cp(day, dest, *, log=print):
     """aws s3 cp（requester-pays）。返回 True=成功；文件不存在/失败=False。"""
     src = '%s/%s' % (S3_BUCKET, S3_KEY_FMT % day)
@@ -77,9 +83,11 @@ def _s3_cp(day, dest, *, log=print):
     return True
 
 
-def warm_reservoir_1m(cache, universe, start_ms, end_ms, *, workdir=None, log=print):
-    """把 [start,end] 每个 UTC 天的 1s 拉下→1m→写 cache '1m' 命名空间。幂等：整天全命中即跳过。
+def warm_reservoir_ohlcv(cache, universe, start_ms, end_ms, *, timeframes=('1h', '1m'),
+                         workdir=None, log=print):
+    """把 [start,end] 每个 UTC 天的 1s 拉下→按 timeframes 重采样→写各命名空间（一次下载多周期同写）。
 
+    幂等：**所有** timeframe 的整天全命中才跳过；只差其一也重下 day 文件补齐（覆盖写同值无害）。
     只缓存**完整**的天：当天(UTC)未过完、或该天在 S3 尚未发布/拉取报错 → 不写任何文件（含空哨兵），
     计入 retry_later，下次重取。只有「日文件已成功下载、但某币当天确无成交」才落该币空哨兵（真空）。"""
     symbol_map = {s.split('/')[0]: s for s in universe}
@@ -87,14 +95,16 @@ def warm_reservoir_1m(cache, universe, start_ms, end_ms, *, workdir=None, log=pr
     days = _days(start_ms, end_ms)
     tmpdir = workdir or tempfile.mkdtemp(prefix='reservoir_')
     os.makedirs(tmpdir, exist_ok=True)
-    stat = {'days': 0, 'rows': 0, 'skipped_cached': 0, 'retry_later': 0}
+    stat = {tf: {'days': 0, 'rows': 0} for tf in timeframes}
+    stat['skipped_cached'] = 0
+    stat['retry_later'] = 0
     for day in days:
         # 当天(UTC)未过完 → 无完整日文件；不缓存、不落哨兵，下次重取
         day_end_ms = int((pd.Timestamp(day) + pd.Timedelta(days=1)).value // 1_000_000)
         if day_end_ms > now_ms:
             stat['retry_later'] += 1
             continue
-        if all(cache.exists(NAMESPACE, s, day) for s in universe):
+        if all(cache.exists(tf, s, day) for tf in timeframes for s in universe):
             stat['skipped_cached'] += 1
             continue
         dest = os.path.join(tmpdir, '%s.parquet' % day)
@@ -104,15 +114,26 @@ def warm_reservoir_1m(cache, universe, start_ms, end_ms, *, workdir=None, log=pr
             continue
         raw = pd.read_parquet(dest)
         os.remove(dest)
-        per_sym = candles_1s_to_1m(raw, symbol_map)
-        for s in universe:
-            df = per_sym.get(s)
-            if df is None or df.empty:
-                cache.write_empty(NAMESPACE, s, day, CANDLE_COLS)  # 日文件已下、该币确无成交 → 真空哨兵
-            else:
-                cache.write(NAMESPACE, s, day, df)
-                stat['rows'] += int(len(df))
-        stat['days'] += 1
-        if stat['days'] % 10 == 0:
-            log('[reservoir] %d days done, rows=%d' % (stat['days'], stat['rows']))
+        for tf in timeframes:
+            per_sym = candles_1s_resample(raw, symbol_map, _RULES[tf])
+            for s in universe:
+                df = per_sym.get(s)
+                if df is None or df.empty:
+                    cache.write_empty(tf, s, day, CANDLE_COLS)  # 日文件已下、该币确无成交 → 真空哨兵
+                else:
+                    cache.write(tf, s, day, df)
+                    stat[tf]['rows'] += int(len(df))
+            stat[tf]['days'] += 1
+        done = stat[timeframes[0]]['days']
+        if done % 10 == 0:
+            log('[reservoir] %d days done (%s)' % (
+                done, ', '.join('%s rows=%d' % (tf, stat[tf]['rows']) for tf in timeframes)))
     return stat
+
+
+def warm_reservoir_1m(cache, universe, start_ms, end_ms, *, workdir=None, log=print):
+    """向后兼容薄包装：只做 1m，返回旧格式 {'days','rows','skipped_cached','retry_later'}。"""
+    st = warm_reservoir_ohlcv(cache, universe, start_ms, end_ms,
+                              timeframes=('1m',), workdir=workdir, log=log)
+    return {'days': st['1m']['days'], 'rows': st['1m']['rows'],
+            'skipped_cached': st['skipped_cached'], 'retry_later': st['retry_later']}

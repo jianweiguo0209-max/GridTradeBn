@@ -100,3 +100,23 @@ def test_build_pit_candidates_no_lookahead():
     rt = t[28]   # 只看得到前 28 根（都是 10）
     out = build_pit_candidates({'X/USDC:USDC': df}, rt, max_candle_num=160, min_quote_volume=1000.0)
     assert out == {}          # 未来的高量不算进来（无未来函数）
+
+
+def test_replay_selection_parallel_matches_serial(tmp_path):
+    from gridtrade.backtest.selection_replay import replay_selection
+    syms = ['AAA/USDT:USDT', 'BBB/USDT:USDT', 'CCC/USDT:USDT', 'DDD/USDT:USDT']
+    cache = _seed_cache(tmp_path, syms)
+    run_times = list(pd.date_range('2024-01-09', '2024-01-12', freq='12H'))   # 7 个 → 多 chunk
+
+    def collect(w):
+        picks = []
+        replay_selection(cache, syms, run_times, STRAT, FACTORS,
+                         lambda rt, off, row: picks.append(
+                             (str(rt), int(off), row['symbol'], round(float(row['close']), 8))),
+                         timeframe='1h', workers=w)
+        return picks
+
+    serial = collect(1)
+    par = collect(3)
+    assert len(serial) > 0
+    assert serial == par                 # 逐条完全一致

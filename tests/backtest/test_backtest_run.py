@@ -86,3 +86,25 @@ def test_select_grids_then_assemble_equals_build_grid_tasks(tmp_path):
     # 选中集 == build 的组装集（按 (rt,sym) 比对）
     key = lambda tasks: sorted((str(t[0]), t[2]) for t in tasks)
     assert key(a) == key(b)
+
+
+def test_pick_1h_source_boundaries():
+    import pandas as pd
+    from gridtrade.backtest.backtest_run import _pick_1h_source
+    now = pd.Timestamp('2026-07-05 00:00:00')
+    assert _pick_1h_source(now - pd.Timedelta(days=199), now) == 'api'        # API 可达 → 现路径
+    assert _pick_1h_source(now - pd.Timedelta(days=201), now) == 'reservoir'  # 超滚动范围 → 归档
+
+
+def test_main_reservoir_guard_before_network(monkeypatch):
+    # warm_start < RESERVOIR_START → SystemExit，且守卫先于任何网络调用（_hl_datasource_1h 不被触发）
+    import pytest
+    import gridtrade.backtest.backtest_run as B
+
+    def _no_network(cache):
+        raise AssertionError('守卫应在触网之前生效')
+    monkeypatch.setattr(B, '_hl_datasource_1h', _no_network)
+    with pytest.raises(SystemExit) as ei:
+        B.main(['2025-07-01', '2025-07-20', '1m'])   # warm_start=2025-06-17 < 2025-07-31
+    msg = str(ei.value)
+    assert 'Reservoir' in msg and '2025-08-14' in msg   # 报错含归档起点换算出的最早窗口起点

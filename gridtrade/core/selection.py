@@ -29,7 +29,7 @@ def trans_period_for_grid(data, period, exg_dict=None, offset=0):
     }
     if exg_dict:
         agg_dict = dict(agg_dict, **exg_dict)
-    period_df = data.resample(rule=period, base=offset).agg(agg_dict)
+    period_df = data.resample(rule=period, offset=pd.Timedelta(hours=offset)).agg(agg_dict)
 
     return period_df
 
@@ -125,14 +125,6 @@ def select_grid_coin(data, factor_info, weight_list, choose_symbols, run_time):
 
     # 交易额分位排序
     # data['rank'] = data.groupby('time')['交易额分位占比'].rank(method='first',ascending=True)  # 注意这里设置为升序
-
-    # 测试用：打印当前周期的全集排序
-    pdata = data[(data['time'] + pd.to_timedelta('12H')) >= run_time]
-    pdata.sort_values(by='rank', inplace=True)
-    pdata["time"] = pdata["time"].dt.strftime("%Y-%m-%d %H:%M:%S")
-    print("当前周期的全集选币排序")
-    print(pdata.head(10))
-    # exit()
 
     # 选币
     data = data[data['rank'] <= choose_symbols]

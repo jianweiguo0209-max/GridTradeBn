@@ -120,10 +120,12 @@ def get_trade_info(touch_df, open_price, grid_info):
     return trade_df[['candle_begin_time', 'last_touch', 'touch', 'order_dir', 'order_num']]
 
 
-def calc_pv_spike(bars_df, active_period='15min', mult=3, n=233):
+def calc_pv_spike(bars_df, active_period='15min', mult=3, n=233, body_ratio_min=0.0):
     """复刻 calc_active_loss_signal_pv 的量能部分：active_period 重采样后 quote_volume > mult×rolling(n).mean。
     返回 (candle_begin_time, pv_spike) 逐 1m 映射。需 bars 含 quote_volume。
-    注：窗口内 1m 数据有限，rolling(n) 用 min_periods 近似，缺 n 根前置历史（fidelity 限制，已知）。"""
+    注：窗口内 1m 数据有限，rolling(n) 用 min_periods 近似，缺 n 根前置历史（fidelity 限制，已知）。
+    body_ratio_min>0 时叠加 con2（1m 实体占比 |close-open|/(high-low)>阈值）：pv_spike = con1 & con2；
+    默认 0=关（与历史一致，金标不变）。"""
     if 'quote_volume' not in bars_df.columns:
         return None
     b = bars_df[['candle_begin_time', 'quote_volume']].copy()
@@ -135,6 +137,12 @@ def calc_pv_spike(bars_df, active_period='15min', mult=3, n=233):
     out = bars_df[['candle_begin_time']].copy().sort_values('candle_begin_time')
     out = pd.merge_asof(out, b.sort_values('candle_begin_time'), on='candle_begin_time', direction='backward')
     out['pv_spike'].fillna(value=0, inplace=True)
+    if body_ratio_min and body_ratio_min > 0:      # con2：1m 实体占比过滤（默认关=金标不变）
+        src = bars_df[['candle_begin_time', 'open', 'high', 'low', 'close']].copy()
+        src['con2'] = ((src['close'] - src['open']).abs()
+                       / (src['high'] - src['low'] + 1e-8) > body_ratio_min).astype(int)
+        out = out.merge(src[['candle_begin_time', 'con2']], on='candle_begin_time', how='left')
+        out['pv_spike'] = (out['pv_spike'] * out['con2'].fillna(0)).astype(int)
     return out[['candle_begin_time', 'pv_spike']]
 
 
@@ -333,7 +341,7 @@ def simulate_grid_engine(bars_df, grid_params, cap=10000.0, leverage=5.0, fee=0.
                          stop_cfg=None, c_rate_taker=0.0005,
                          funding_df=None, neutral_init=False, pv_spike_df=None,
                          active_stop_mode='pv', pv_pnl_thr=-0.015,
-                         pv_mult=3, pv_n=233, pv_period='15min'):
+                         pv_mult=3, pv_n=233, pv_period='15min', pv_body_ratio=0.0):
     """
     端到端封装：bars(本项目 1m df) + 布网参数 → 资金曲线终值。
     grid_params: dict(low_price, high_price, grid_count, stop_high_price, stop_low_price)
@@ -385,7 +393,8 @@ def simulate_grid_engine(bars_df, grid_params, cap=10000.0, leverage=5.0, fee=0.
     # pv 量能信号：优先用外部传入(基于充分 15m 历史)；否则窗口内近似(缺前置历史，fidelity 限制)
     if active_stop_mode == 'pv' and pv_spike_df is None and stop_cfg is not None \
             and 'quote_volume' in bars.columns:
-        pv_spike_df = calc_pv_spike(bars, active_period=pv_period, mult=pv_mult, n=pv_n)
+        pv_spike_df = calc_pv_spike(bars, active_period=pv_period, mult=pv_mult, n=pv_n,
+                                    body_ratio_min=pv_body_ratio)
 
     eq, stop_reason, blown = _apply_exit(eq, cap, c_rate_taker, stop_cfg, margin_rate, pv_spike_df,
                                          active_stop_mode=active_stop_mode, bars_df=bars,
