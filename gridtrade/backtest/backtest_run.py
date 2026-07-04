@@ -90,7 +90,8 @@ def _simulate_grid_task(payload):
                                active_stop_mode=cfg['active_stop_mode'],
                                pv_pnl_thr=pv_cfg.get('pnl_thr', -0.015),
                                pv_mult=pv_cfg.get('mult', 3), pv_n=pv_cfg.get('n', 233),
-                               pv_period=pv_cfg.get('period', '15min'))
+                               pv_period=pv_cfg.get('period', '15min'),
+                               pv_body_ratio=pv_cfg.get('con2', 0.0))
     return {
         'run_time': rt, 'offset': int(offset), 'symbol': sym,
         'entry': entry, 'grid_num': int(gp['grid_count']),
