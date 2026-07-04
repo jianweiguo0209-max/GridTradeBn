@@ -33,6 +33,15 @@ HL_FACTORS = dict(DEFAULT_STRATEGY_CONFIG['factors'])
 BT_MIN_QUOTE_VOLUME_24H = float(os.environ.get('BT_MIN_QUOTE_VOLUME_24H', '1000000'))
 BT_BLACKLIST = tuple(s.strip() for s in os.environ.get('BT_BLACKLIST', '').split(',') if s.strip())
 
+# 1h 选币数据源自动切换：HL API 1h 滚动 ~5000 根≈208 天；更早窗口自动改走 Reservoir 归档。
+RESERVOIR_START = pd.Timestamp('2025-07-31')   # Reservoir 1s 归档起点（实测列桶）
+_API_1H_MAX_DAYS = 200                          # API 滚动可达阈值（208 天留余量）
+
+
+def _pick_1h_source(warm_start, now):
+    """纯函数：暖机起点早于 API 滚动可达范围 → 'reservoir'，否则 'api'（现路径字节不变）。"""
+    return 'reservoir' if warm_start < now - pd.Timedelta(days=_API_1H_MAX_DAYS) else 'api'
+
 
 def holding_bars(series_df, run_time, period):
     td = pd.to_timedelta(period)
@@ -322,12 +331,25 @@ def main(argv=None):
     from gridtrade.backtest.prewarm import resolve_universe
 
     t0 = time.time()
+    # 1h 数据源按窗口自动切换（单 run 单源无拼缝）；守卫先于任何网络调用
+    source = _pick_1h_source(warm_start, pd.Timestamp.utcnow().tz_localize(None))
+    print('[BT] 1h 数据源: %s' % source)
+    if source == 'reservoir' and warm_start < RESERVOIR_START:
+        raise SystemExit('[BT] 窗口过早：Reservoir 归档起点 %s，含 %d 天暖机最早窗口起点 %s'
+                         % (RESERVOIR_START.date(), _WARMUP_DAYS,
+                            (RESERVOIR_START + pd.Timedelta(days=_WARMUP_DAYS)).date()))
     # phase1: 解析全市场票池(−黑名单) + 预热全市场 1h
     _adapter, _ds1h = _hl_datasource_1h(cache)
     universe = resolve_universe(_ds1h, blacklist=BT_BLACKLIST)
     print('[BT] 全市场票池 %d 币(−黑名单 %d)' % (len(universe), len(BT_BLACKLIST)))
-    from gridtrade.backtest import prewarm as PW
-    print('[BT] 1h 预热: %s' % PW.prewarm_ohlcv(_ds1h, universe, _ms(warm_start), _ms(win_end)))
+    if source == 'reservoir':
+        from gridtrade.backtest import reservoir as RV
+        print('[BT] 1h+1m 预热@Reservoir: %s'
+              % RV.warm_reservoir_ohlcv(cache, universe, _ms(warm_start), _ms(win_end),
+                                        timeframes=('1h', '1m')))
+    else:
+        from gridtrade.backtest import prewarm as PW
+        print('[BT] 1h 预热: %s' % PW.prewarm_ohlcv(_ds1h, universe, _ms(warm_start), _ms(win_end)))
 
     # 选币(1h + PIT $1M 地板 + 黑名单)——一次
     grids = select_grids(cache, universe, win_start, win_end, HL_STRATEGY, HL_FACTORS,
