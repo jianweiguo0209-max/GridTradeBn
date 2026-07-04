@@ -98,3 +98,6 @@ class ResilientAdapter(ExchangeAdapter):
     def fetch_mark_ohlcv(self, symbol: str, timeframe: str,
                          start_ms: int, end_ms: int) -> pd.DataFrame:
         return self._call('fetch_mark_ohlcv', symbol, timeframe, start_ms, end_ms)
+
+    def fetch_24h_quote_volumes(self) -> dict:
+        return self._call('fetch_24h_quote_volumes')

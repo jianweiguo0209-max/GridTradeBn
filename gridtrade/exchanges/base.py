@@ -151,3 +151,8 @@ class ExchangeAdapter(ABC):
     def fetch_mark_ohlcv(self, symbol: str, timeframe: str,
                          start_ms: int, end_ms: int) -> pd.DataFrame:
         raise NotImplementedError
+
+    # ---- 可选：24h 成交额（用于流动性地板；默认空=上层跳过过滤）----
+    def fetch_24h_quote_volumes(self) -> dict:
+        """{canonical symbol: 24h 计价币成交额}。默认空 dict（无数据 → resolve_live_universe fail-open 跳过）。"""
+        return {}

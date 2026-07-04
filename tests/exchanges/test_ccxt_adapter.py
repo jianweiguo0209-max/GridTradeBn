@@ -17,6 +17,12 @@ class FakeCcxtClient:
                 {'timestamp': 1704070800000, 'fundingRate': -0.0002}]
     def fetch_ticker(self, symbol):
         return {'last': 2.0}
+    def fetch_tickers(self, symbols=None, params=None):
+        return {
+            'BTC/USDT:USDT': {'quoteVolume': 1000.0},
+            'ETH/USDT:USDT': {'quoteVolume': 500.0},
+            'NOVOL/USDT:USDT': {'quoteVolume': None},   # 无量 → 跳过
+        }
     def fetch_balance(self, params=None):
         return {'USDT': {'total': 1000.0, 'free': 800.0}}
     def fetch_positions(self, symbols=None, params=None):
@@ -136,3 +142,9 @@ def test_list_instruments_swap_only_and_deduped():
     syms = [i.symbol for i in a.list_instruments()]
     assert syms == ['BTC/USDC:USDC', 'ETH/USDC:USDC']   # spot 丢、重复 canonical 去重
     assert 'SOL/USDC:USDC' not in syms                  # SOL 无 swap 对应，若 swap 过滤被删也不会因去重被吸收
+
+
+def test_fetch_24h_quote_volumes_maps_quotevolume():
+    a = _adapter()
+    vols = a.fetch_24h_quote_volumes()
+    assert vols == {'BTC/USDT:USDT': 1000.0, 'ETH/USDT:USDT': 500.0}   # None 被跳过

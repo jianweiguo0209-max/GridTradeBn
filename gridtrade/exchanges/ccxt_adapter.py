@@ -120,6 +120,18 @@ class CcxtAdapter(ExchangeAdapter):
     def fetch_price(self, symbol) -> float:
         return float(self.client.fetch_ticker(self.to_native(symbol))['last'])
 
+    def fetch_24h_quote_volumes(self) -> dict:
+        tickers = self.client.fetch_tickers()
+        out = {}
+        for sym, t in tickers.items():
+            qv = t.get('quoteVolume')
+            if qv is None:
+                continue
+            canonical = self.to_canonical(sym)
+            if float(qv) > out.get(canonical, 0.0):   # 同 canonical(spot+swap 折叠) 取较大者
+                out[canonical] = float(qv)
+        return out
+
     # ---- 账户/交易 ----
     def fetch_balance(self) -> Balance:
         b = self.client.fetch_balance()
