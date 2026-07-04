@@ -14,20 +14,40 @@ def resolve_universe(datasource, *, blacklist=(), quote='USDT', min_list_age_day
 def prewarm_ohlcv(datasource, universe, start_ms, end_ms, *, log=print):
     total = 0
     n = 0
+    skipped = 0
+    first_err = None
     for s in universe:
-        df = datasource.fetch_ohlcv_range(s, start_ms, end_ms)
+        try:
+            df = datasource.fetch_ohlcv_range(s, start_ms, end_ms)
+        except Exception as exc:      # 坏币(ccxt BadSymbol/无数据/拉取失败)跳过，不中断全池
+            skipped += 1              # 全市场含少量不可拉取币；镜像 live fetch_universe_candles
+            if first_err is None:
+                first_err = '%s -> %r' % (s, exc)
+            continue
         total += int(len(df))
         n += 1
         if n % 25 == 0:
             log('[prewarm] ohlcv %d/%d' % (n, len(universe)))
-    return {'symbols': n, 'rows': total}
+    if skipped:
+        log('[prewarm] ohlcv skipped %d symbols (e.g. %s)' % (skipped, first_err))
+    return {'symbols': n, 'rows': total, 'skipped': skipped}
 
 
 def prewarm_funding(datasource, universe, start_ms, end_ms, *, log=print):
     total = 0
     n = 0
+    skipped = 0
+    first_err = None
     for s in universe:
-        df = datasource.fetch_funding_range(s, start_ms, end_ms)
+        try:
+            df = datasource.fetch_funding_range(s, start_ms, end_ms)
+        except Exception as exc:      # 坏币跳过，不中断
+            skipped += 1
+            if first_err is None:
+                first_err = '%s -> %r' % (s, exc)
+            continue
         total += int(len(df))
         n += 1
-    return {'symbols': n, 'rows': total}
+    if skipped:
+        log('[prewarm] funding skipped %d symbols (e.g. %s)' % (skipped, first_err))
+    return {'symbols': n, 'rows': total, 'skipped': skipped}

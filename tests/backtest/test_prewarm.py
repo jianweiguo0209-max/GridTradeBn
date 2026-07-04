@@ -40,6 +40,26 @@ def test_prewarm_ohlcv_populates_cache_then_offline(tmp_path):
     assert len(df) == 48
 
 
+def test_prewarm_ohlcv_skips_bad_coin(tmp_path):
+    # 全市场含个别不可拉取币（ccxt BadSymbol）；坏币跳过、不中断全池、好币照常缓存。
+    from gridtrade.backtest.prewarm import prewarm_ohlcv
+    start = 1_704_067_200_000
+    syms = ['GOOD/USDT:USDT', 'BAD/USDT:USDT']
+
+    class _BadOne(FakeExchange):
+        def fetch_ohlcv(self, symbol, timeframe, start_ms, end_ms):
+            if symbol == 'BAD/USDT:USDT':
+                raise ValueError('hyperliquid does not have market symbol BAD')
+            return super().fetch_ohlcv(symbol, timeframe, start_ms, end_ms)
+
+    ex = _BadOne(instruments=[Instrument(s, 0.1, 0.001, 0.001, 'live', 0) for s in syms])
+    ex.seed_ohlcv('GOOD/USDT:USDT', _bars('GOOD/USDT:USDT', start, 48))
+    ds = _ds(tmp_path, ex)
+    stat = prewarm_ohlcv(ds, syms, start, start + 47 * 3600_000)
+    assert stat['skipped'] == 1                          # BAD 被跳过
+    assert stat['symbols'] == 1 and stat['rows'] == 48   # GOOD 正常缓存、未受影响
+
+
 def test_resolve_universe_filters(tmp_path):
     from gridtrade.backtest.prewarm import resolve_universe
     insts = [Instrument('AAA/USDT:USDT', 0.1, 0.001, 0.001, 'live', 0),
