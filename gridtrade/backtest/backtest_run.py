@@ -304,7 +304,6 @@ def main(argv=None):
     print('[BT] window %s -> %s | sim_tf=%s' % (win_start, win_end, sim_tf))
 
     from gridtrade.backtest.prewarm import resolve_universe
-    from gridtrade.backtest.datasource import DataSource
 
     t0 = time.time()
     # phase1: 解析全市场票池(−黑名单) + 预热全市场 1h
