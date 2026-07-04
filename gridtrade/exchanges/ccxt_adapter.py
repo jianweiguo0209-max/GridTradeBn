@@ -29,10 +29,17 @@ class CcxtAdapter(ExchangeAdapter):
     def list_instruments(self) -> List[Instrument]:
         self.client.load_markets()
         out = []
+        seen = set()
         for sym, m in self.client.markets.items():
+            if m.get('swap') is not True:          # 只留永续合约，丢 spot/其它类型
+                continue
+            canonical = self.to_canonical(sym)
+            if canonical in seen:                   # 同 canonical 去重（HL spot+swap/多键折叠）
+                continue
+            seen.add(canonical)
             info = m.get('info', {}) or {}
             out.append(Instrument(
-                symbol=self.to_canonical(sym),
+                symbol=canonical,
                 tick=float(m.get('precision', {}).get('price') or 0.0),
                 lot=float(m.get('precision', {}).get('amount') or 0.0),
                 min_size=float(m.get('limits', {}).get('amount', {}).get('min') or 0.0),

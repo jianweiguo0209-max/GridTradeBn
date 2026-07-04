@@ -43,7 +43,7 @@ class FakeCcxtClient:
         self._lev = (leverage, symbol)
     def load_markets(self):
         return {'BTC/USDT:USDT': {}}
-    markets = {'BTC/USDT:USDT': {'precision': {'price': 0.1, 'amount': 0.001},
+    markets = {'BTC/USDT:USDT': {'swap': True, 'precision': {'price': 0.1, 'amount': 0.001},
                                  'limits': {'amount': {'min': 0.001}},
                                  'active': True, 'info': {'listTime': '0'}}}
 
@@ -109,3 +109,27 @@ def test_instruments_mapping():
     a = _adapter()
     insts = a.list_instruments()
     assert insts[0].symbol == 'BTC/USDT:USDT' and insts[0].state == 'live'
+
+
+def test_list_instruments_swap_only_and_deduped():
+    from gridtrade.exchanges.ccxt_adapter import CcxtAdapter
+
+    class _FoldClient:
+        def load_markets(self):
+            return self.markets
+        markets = {
+            'BTC/USDC:USDC':   {'swap': True,  'precision': {'price': 0.1, 'amount': 0.001},
+                                'limits': {'amount': {'min': 0.001}}, 'active': True, 'info': {}},
+            'BTC/USDC':        {'swap': False, 'spot': True, 'precision': {}, 'limits': {},
+                                'active': True, 'info': {}},                       # spot → 丢
+            'ETH/USDC:USDC':   {'swap': True,  'precision': {}, 'limits': {}, 'active': True, 'info': {}},
+            'ETH/USDC:USDC-2': {'swap': True,  'precision': {}, 'limits': {}, 'active': True, 'info': {}},  # 折叠成 ETH → 去重
+        }
+
+    class _FoldAdapter(CcxtAdapter):
+        def to_canonical(self, native):
+            return native.split('/')[0] + '/USDC:USDC'
+
+    a = _FoldAdapter(_FoldClient(), name='fold')
+    syms = [i.symbol for i in a.list_instruments()]
+    assert syms == ['BTC/USDC:USDC', 'ETH/USDC:USDC']   # spot 丢、重复 canonical 去重
