@@ -19,15 +19,19 @@ from gridtrade.config import DEFAULT_STOP_CFG, DEFAULT_STRATEGY_CONFIG
 from gridtrade.core.grid_engine import simulate_grid_engine
 from gridtrade.core.grid_params import calc_grid_params_v1, calc_grid_params_v2
 
-# HL 回测默认票池/策略（镜像 gridtrade.config 已验证参数；stop_loss_config 补 funding 止损）
-HL_UNIVERSE = ['BTC/USDC:USDC', 'ETH/USDC:USDC', 'SOL/USDC:USDC', 'AVAX/USDC:USDC',
-               'ARB/USDC:USDC', 'OP/USDC:USDC', 'LINK/USDC:USDC', 'DOGE/USDC:USDC']
+# HL 回测默认策略（镜像 gridtrade.config 已验证参数；stop_loss_config 补 funding 止损）
 HL_STRATEGY = {**DEFAULT_STRATEGY_CONFIG,
                'stop_loss_config': dict(DEFAULT_STOP_CFG),
                'active_stop_mode': 'pv',   # 主动止损默认 pv（回测扫描最优）
                'pv_config': {'mult': DEFAULT_STOP_CFG['pv_mult'], 'pnl_thr': DEFAULT_STOP_CFG['pv_pnl_thr'],
                              'period': DEFAULT_STOP_CFG['pv_period'], 'n': DEFAULT_STOP_CFG['pv_n']}}
 HL_FACTORS = dict(DEFAULT_STRATEGY_CONFIG['factors'])
+
+import os as _os
+# 回测票池口径对齐 prod：全市场动态 −黑名单 −逐 run_time PIT $1M 成交额地板。
+# 票池在 main() 里由 list_instruments 解析（见 main）；此处只放阈值/黑名单常量（可 env 覆写）。
+BT_MIN_QUOTE_VOLUME_24H = float(_os.environ.get('BT_MIN_QUOTE_VOLUME_24H', '1000000'))
+BT_BLACKLIST = tuple(s.strip() for s in _os.environ.get('BT_BLACKLIST', '').split(',') if s.strip())
 
 
 def holding_bars(series_df, run_time, period):
