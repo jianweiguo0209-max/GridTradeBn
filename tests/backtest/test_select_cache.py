@@ -63,3 +63,45 @@ def test_enabled_env(monkeypatch):
     assert SC.enabled() is True
     monkeypatch.setenv('BT_SELECT_CACHE', 'off')
     assert SC.enabled() is False
+
+
+def test_select_grids_cache_hit_skips_recompute(tmp_path, monkeypatch):
+    import gridtrade.backtest.selection_replay as SR
+    from gridtrade.backtest.backtest_run import select_grids
+    from tests.backtest.test_backtest_run import _strategy
+    syms = ['AAA/USDT:USDT', 'BBB/USDT:USDT', 'CCC/USDT:USDT', 'DDD/USDT:USDT']
+    cache = _seed_cache(tmp_path, syms)
+    ws, we = pd.Timestamp('2024-01-09'), pd.Timestamp('2024-01-12')
+    g1 = select_grids(cache, syms, ws, we, _strategy(), FACTORS, timeframe='1h')   # MISS 写
+    assert len(g1) > 0
+
+    def _boom(*a, **k):
+        raise AssertionError('cache HIT 不应再调 replay_selection')
+    monkeypatch.setattr(SR, 'replay_selection', _boom)
+    g2 = select_grids(cache, syms, ws, we, _strategy(), FACTORS, timeframe='1h')   # HIT 读
+    key = lambda gs: [(str(rt), int(off), row['symbol']) for rt, off, row in gs]
+    assert key(g1) == key(g2)
+
+
+def test_select_grids_cache_off_never_writes(tmp_path, monkeypatch):
+    from gridtrade.backtest.backtest_run import select_grids
+    from tests.backtest.test_backtest_run import _strategy
+    monkeypatch.setenv('BT_SELECT_CACHE', 'off')
+    syms = ['AAA/USDT:USDT', 'BBB/USDT:USDT']
+    cache = _seed_cache(tmp_path, syms)
+    ws, we = pd.Timestamp('2024-01-10'), pd.Timestamp('2024-01-11')
+    select_grids(cache, syms, ws, we, _strategy(), FACTORS, timeframe='1h')
+    assert not os.path.isdir(os.path.join(str(tmp_path), '_select_cache'))          # off → 不落盘
+
+
+def test_select_grids_parallel_then_cache_hit(tmp_path):
+    from gridtrade.backtest.backtest_run import select_grids
+    from tests.backtest.test_backtest_run import _strategy
+    syms = ['AAA/USDT:USDT', 'BBB/USDT:USDT', 'CCC/USDT:USDT', 'DDD/USDT:USDT']
+    cache = _seed_cache(tmp_path, syms)
+    ws, we = pd.Timestamp('2024-01-09'), pd.Timestamp('2024-01-12')
+    g3 = select_grids(cache, syms, ws, we, _strategy(), FACTORS, timeframe='1h', workers=3)  # MISS 并行写
+    g1 = select_grids(cache, syms, ws, we, _strategy(), FACTORS, timeframe='1h', workers=1)  # HIT 读
+    key = lambda gs: [(str(rt), int(off), row['symbol'], round(float(row['close']), 8))
+                      for rt, off, row in gs]
+    assert len(g3) > 0 and key(g1) == key(g3)

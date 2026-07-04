@@ -105,7 +105,18 @@ def _simulate_grid_task(payload):
 
 def select_grids(cache, universe, window_start, window_end, strategy_config, factors,
                  *, timeframe='1h', min_quote_volume=0.0, blacklist=(), workers=1, log=print):
-    """只跑选币回放（1h + PIT 地板 + 黑名单），返回 [(rt, offset, row)]。offline。"""
+    """只跑选币回放（1h + PIT 地板 + 黑名单），返回 [(rt, offset, row)]。offline。
+    结果按选币参数 + 每币缓存天范围数据指纹磁盘缓存（BT_SELECT_CACHE=off 旁路）。"""
+    from gridtrade.backtest import select_cache as SC
+    use_cache = SC.enabled()
+    key = params = None
+    if use_cache:
+        key, params = SC.compute_key(cache, universe, window_start, window_end, timeframe,
+                                     min_quote_volume, blacklist, strategy_config, factors)
+        hit = SC.load(cache, key, params)
+        if hit is not None:
+            log('[BT] select cache HIT %s (picks=%d)' % (key, len(hit)))
+            return hit
     grids = []
     run_times = [pd.Timestamp(t) for t in pd.date_range(window_start, window_end, freq='1H')]
     SR.replay_selection(cache, universe, run_times, strategy_config, factors,
@@ -113,6 +124,9 @@ def select_grids(cache, universe, window_start, window_end, strategy_config, fac
                         timeframe=timeframe, min_quote_volume=min_quote_volume,
                         blacklist=blacklist, workers=workers, log=log)
     log('[BT] picks=%d' % len(grids))
+    if use_cache:
+        SC.save(cache, key, params, grids)
+        log('[BT] select cache MISS %s (saved)' % key)
     return grids
 
 
