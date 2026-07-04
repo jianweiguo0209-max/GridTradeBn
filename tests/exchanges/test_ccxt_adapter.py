@@ -124,6 +124,8 @@ def test_list_instruments_swap_only_and_deduped():
                                 'active': True, 'info': {}},                       # spot → 丢
             'ETH/USDC:USDC':   {'swap': True,  'precision': {}, 'limits': {}, 'active': True, 'info': {}},
             'ETH/USDC:USDC-2': {'swap': True,  'precision': {}, 'limits': {}, 'active': True, 'info': {}},  # 折叠成 ETH → 去重
+            'SOL/USDC':        {'swap': False, 'spot': True, 'precision': {}, 'limits': {},
+                                'active': True, 'info': {}},                       # spot-only、无 swap 对应 → 丢（隔离 swap 过滤 vs 去重）
         }
 
     class _FoldAdapter(CcxtAdapter):
@@ -133,3 +135,4 @@ def test_list_instruments_swap_only_and_deduped():
     a = _FoldAdapter(_FoldClient(), name='fold')
     syms = [i.symbol for i in a.list_instruments()]
     assert syms == ['BTC/USDC:USDC', 'ETH/USDC:USDC']   # spot 丢、重复 canonical 去重
+    assert 'SOL/USDC:USDC' not in syms                  # SOL 无 swap 对应，若 swap 过滤被删也不会因去重被吸收
