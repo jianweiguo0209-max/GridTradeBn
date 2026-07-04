@@ -56,7 +56,7 @@ def run_scheduler_once(runtime, *, now_fn=time.time,
     offset = compute_offset(run_time, period)
     tag = '%s%d' % (DEFAULT_STRATEGY_CONFIG['strategy_tag'], offset)
     universe = resolve_live_universe(rt.adapter, rt.config.blacklist,
-                                     rt.config.whitelist)
+                                     rt.config.whitelist, rt.config.min_quote_volume_24h)
     candles = fetch_candles(rt.adapter, universe, run_time,
                             max_candle_num=DEFAULT_STRATEGY_CONFIG['max_candle_num'])
     ctx = TriggerContext(rt.config.exchange, run_time, candles)

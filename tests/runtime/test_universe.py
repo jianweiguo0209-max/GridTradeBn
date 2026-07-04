@@ -53,3 +53,30 @@ def test_blacklist_applies_even_in_whitelist_mode():
     out = resolve_live_universe(ex, blacklist=('ETH/USDC:USDC',),
                                 whitelist=('BTC/USDC:USDC', 'ETH/USDC:USDC'))
     assert out == ['BTC/USDC:USDC']
+
+
+def test_universe_min_quote_volume_floor():
+    from gridtrade.runtime.universe import resolve_live_universe
+    ex = _ex(('BTC/USDC:USDC', 'live'), ('MID/USDC:USDC', 'live'),
+             ('LOW/USDC:USDC', 'live'), ('NOVOL/USDC:USDC', 'live'))
+    ex.seed_quote_volumes({'BTC/USDC:USDC': 5_000_000.0, 'MID/USDC:USDC': 1_000_000.0,
+                           'LOW/USDC:USDC': 100_000.0})   # NOVOL 无量
+    # 门槛 1e6：保留 >=1e6（BTC/MID）；LOW 与无量 NOVOL 剔除
+    out = resolve_live_universe(ex, min_quote_volume=1_000_000.0)
+    assert out == ['BTC/USDC:USDC', 'MID/USDC:USDC']
+
+
+def test_universe_floor_zero_disabled_keeps_all():
+    from gridtrade.runtime.universe import resolve_live_universe
+    ex = _ex(('BTC/USDC:USDC', 'live'), ('LOW/USDC:USDC', 'live'))
+    ex.seed_quote_volumes({'BTC/USDC:USDC': 5_000_000.0, 'LOW/USDC:USDC': 1.0})
+    # 门槛 0 = 停用：不过滤（也不管成交额）
+    assert resolve_live_universe(ex, min_quote_volume=0.0) == ['BTC/USDC:USDC', 'LOW/USDC:USDC']
+
+
+def test_universe_floor_failopen_on_empty_volumes():
+    from gridtrade.runtime.universe import resolve_live_universe
+    ex = _ex(('BTC/USDC:USDC', 'live'), ('LOW/USDC:USDC', 'live'))
+    # 未 seed 成交额 → fetch_24h_quote_volumes 返回 {} → fail-open 不清空票池
+    assert resolve_live_universe(ex, min_quote_volume=1_000_000.0) == \
+           ['BTC/USDC:USDC', 'LOW/USDC:USDC']

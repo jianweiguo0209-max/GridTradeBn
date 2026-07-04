@@ -81,6 +81,11 @@ def test_whitelist_parsing():
     assert cfg.whitelist == ('BTC/USDT:USDT', 'ETH/USDT:USDT')
 
 
+def test_min_quote_volume_24h_default_and_parse():
+    assert load_deploy_config(env={}).min_quote_volume_24h == 0.0
+    assert load_deploy_config(env={'MIN_QUOTE_VOLUME_24H': '1000000'}).min_quote_volume_24h == 1_000_000.0
+
+
 def test_display_tz_defaults_and_parsing():
     assert load_deploy_config(env={}).display_tz == 'UTC'
     assert load_deploy_config(env={'DISPLAY_TZ': 'Asia/Shanghai'}).display_tz == 'Asia/Shanghai'
