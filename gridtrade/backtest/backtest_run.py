@@ -67,6 +67,13 @@ def summarize(df):
     }
 
 
+# 仿真明细列（顺序须与 _simulate_grid_task 返回 dict 的 key 顺序一致）——
+# 零任务时给空 DataFrame 带上 schema，避免下游 df['symbol'] 触 KeyError。
+_RESULT_COLS = ['run_time', 'offset', 'symbol', 'entry', 'grid_num', 'low', 'high',
+                'hold_bars', 'n_fills', 'pnl_ratio', 'exit_reason', 'terminated',
+                'unreal_pnl', 'funding_missing']
+
+
 def _simulate_grid_task(payload):
     """单个网格仿真（顶层函数，可 pickle → 供进程池并行）。
     payload=(data_task, cfg)：data_task 是选币/数据（可跨参数组合复用），cfg 是仿真配置。
@@ -93,7 +100,8 @@ def _simulate_grid_task(payload):
 
 
 def build_grid_tasks(cache, universe, window_start, window_end, strategy_config, factors,
-                     *, timeframe='1h', sim_timeframe=None, log=print):
+                     *, timeframe='1h', sim_timeframe=None, min_quote_volume=0.0,
+                     blacklist=(), log=print):
     """选币回放 + 组装每格数据 payload（**不含仿真配置**，故可跨多组参数复用）。
     返回 data_task 列表：(rt, offset, sym, entry, gp, bars_df, funding_df)。
     选币是回测里最贵的一步——扫参时 build 一次、simulate_tasks 多次，可省 N-1 次选币。"""
@@ -110,7 +118,8 @@ def build_grid_tasks(cache, universe, window_start, window_end, strategy_config,
     run_times = [pd.Timestamp(t) for t in pd.date_range(window_start, window_end, freq='1H')]
     SR.replay_selection(cache, universe, run_times, strategy_config, factors,
                         lambda rt, off, row: grids.append((rt, off, row.copy())),
-                        timeframe=timeframe, log=log)
+                        timeframe=timeframe, min_quote_volume=min_quote_volume,
+                        blacklist=blacklist, log=log)
     log('[BT] picks=%d' % len(grids))
 
     funding_by_sym = {}
@@ -150,12 +159,13 @@ def simulate_tasks(data_tasks, *, leverage, fee_rate=0.0005, max_rate=0.5, stop_
             results = list(ex.map(_simulate_grid_task, payloads, chunksize=8))
     else:
         results = [_simulate_grid_task(p) for p in payloads]
-    return pd.DataFrame(results)
+    return pd.DataFrame(results) if results else pd.DataFrame(columns=_RESULT_COLS)
 
 
 def run_backtest(cache, universe, window_start, window_end, strategy_config, factors,
                  *, timeframe='1h', sim_timeframe=None, fee_rate=0.0005,
-                 max_rate=0.5, leverage=None, workers=1, log=print):
+                 max_rate=0.5, leverage=None, min_quote_volume=0.0, blacklist=(),
+                 workers=1, log=print):
     """timeframe: 选币因子所用 K 线周期（换仓周期粒度，默认 1h）。
     sim_timeframe: 持仓成交仿真所用 K 线周期（None=沿用 timeframe）。传 '1m' 可解耦——
     选币仍在 1h 上（因子行为不变），持仓在 1m 上跑高保真触网/成交。
@@ -164,7 +174,8 @@ def run_backtest(cache, universe, window_start, window_end, strategy_config, fac
     lev = leverage if leverage is not None else strategy_config['leverage']
     tasks = build_grid_tasks(cache, universe, window_start, window_end, strategy_config,
                              factors, timeframe=timeframe,
-                             sim_timeframe=sim_timeframe, log=log)
+                             sim_timeframe=sim_timeframe, min_quote_volume=min_quote_volume,
+                             blacklist=blacklist, log=log)
     return simulate_tasks(tasks, leverage=lev, fee_rate=fee_rate, max_rate=max_rate,
                           stop_cfg=strategy_config['stop_loss_config'],
                           active_stop_mode=strategy_config.get('active_stop_mode', 'pv'),
