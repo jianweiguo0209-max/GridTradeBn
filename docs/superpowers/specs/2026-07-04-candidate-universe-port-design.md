@@ -46,7 +46,8 @@ def resolve_live_universe(adapter, blacklist=(), whitelist=(), min_quote_volume=
     live = [s for s in live if s not in set(blacklist)]        # 档0：无条件硬禁
     if min_quote_volume and min_quote_volume > 0:              # ③ 绝对地板
         vol = adapter.fetch_24h_quote_volumes()               # {canonical: 24h quoteVolume}
-        live = [s for s in live if (vol.get(s) or 0.0) >= min_quote_volume]
+        if vol:                                               # 空(无数据/未实现)→fail-open跳过、不清空票池
+            live = [s for s in live if (vol.get(s) or 0.0) >= min_quote_volume]
     if whitelist:
         return [s for s in live if s in set(whitelist)]
     return live
@@ -55,7 +56,7 @@ def resolve_live_universe(adapter, blacklist=(), whitelist=(), min_quote_volume=
 - 具体禁哪些币是**策略/config**（`BLACKLIST_SYMBOLS` env）；文档那 25 个是 OKX 符号，HL 用自己的名单，机制到位即可。
 
 ### ③ 绝对流动性地板 — 新 adapter 方法 + config
-- **config**：新增 `min_quote_volume_24h: float`（env `MIN_QUOTE_VOLUME_24H`，默认 `1_000_000.0`，0=停用）。
+- **config**：新增 `min_quote_volume_24h: float`（env `MIN_QUOTE_VOLUME_24H`，**code 默认 `0.0`=停用**——避免改变现有无该 env 部署（如 testnet，成交额是假的）的行为；**$1M 只在 `fly.prod.toml` 显式设**）。
 - **adapter 接口**：`ExchangeAdapter.fetch_24h_quote_volumes() -> Dict[str, float]`（canonical symbol → 24h 计价币成交额）。
   - `CcxtAdapter` 实现：`client.fetch_tickers()` → 逐 ticker 取 `quoteVolume`，`to_canonical` 归一，同 canonical 取已见的最大值（去重时保守取活跃者）。
   - HL 无需覆写（ccxt 直传 `dayNtlVlm`，已验证）。
