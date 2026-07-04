@@ -72,7 +72,7 @@ def resolve_live_universe(adapter, blacklist=(), whitelist=(), min_quote_volume=
 - **§1**（`tests/exchanges/`）：fake ccxt markets 含 spot + swap + 重复 canonical → 断言 `list_instruments` 只出去重后的 swap。
 - **§6**（`tests/runtime/test_universe.py`）：whitelist + blacklist 同设 → 断言被禁币**即使在白名单里也被剔除**（复现"白名单模式黑名单失效"→RED→GREEN）。
 - **③ 地板**：fake adapter 的 `fetch_24h_quote_volumes` 返回构造的 volume_map → 断言 `< 门槛`剔除、`None/缺失`剔除、`门槛=0`不调用该方法且全保留、`>=门槛`保留。
-- **config**：`MIN_QUOTE_VOLUME_24H` 默认 1e6 + env 覆写解析。
+- **config**：`MIN_QUOTE_VOLUME_24H` code 默认 `0.0`（停用）+ env 覆写解析（prod 显式设 1e6）。
 - `resolve_live_universe` 现有测试联动（新增 `min_quote_volume` 默认 0 保持向后兼容，旧测试不改）。
 - 双 TZ（沿用现约定）全套绿。
 
