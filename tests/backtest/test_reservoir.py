@@ -146,3 +146,59 @@ def test_1h_equals_1m_reaggregated():
         np.testing.assert_allclose(direct[col].to_numpy('float64'),
                                    re[col].to_numpy('float64'), rtol=1e-12,
                                    err_msg='%s 口径漂移' % col)
+
+
+def _fake_cp_2coins(day, dest, log=print):
+    """两币 × 7200 秒（2 根 1h / 120 根 1m 不足——用 7200s 产 2 根 1h、120 根 1m）。"""
+    raw = pd.concat([_raw_1s('BTC', day + ' 00:00:00', 7200, base=100.0),
+                     _raw_1s('ETH', day + ' 00:00:00', 7200, base=50.0)], ignore_index=True)
+    raw.to_parquet(dest, index=False)
+    return True
+
+
+def test_warm_ohlcv_writes_both_namespaces(tmp_path, monkeypatch):
+    cache = ParquetCache(str(tmp_path))
+    monkeypatch.setattr(R, '_s3_cp', _fake_cp_2coins)
+    stat = R.warm_reservoir_ohlcv(cache, UNI, _ms(_PAST_DAY), _ms(_PAST_DAY) + _DAY_MS - 1)
+    assert stat['1h']['days'] == 1 and stat['1m']['days'] == 1
+    assert stat['1m']['rows'] == 2 * 120      # 2 币 × 120 根 1m（7200s）
+    assert stat['1h']['rows'] == 2 * 2        # 2 币 × 2 根 1h
+    for s in UNI:
+        assert cache.exists('1h', s, _PAST_DAY) and cache.exists('1m', s, _PAST_DAY)
+    df = cache.read('1h', 'BTC/USDC:USDC', _PAST_DAY)
+    assert len(df) == 2 and list(df.columns) == CANDLE_COLS
+
+
+def test_warm_ohlcv_idempotent_and_partial_refill(tmp_path, monkeypatch):
+    import os as _os
+    cache = ParquetCache(str(tmp_path))
+    monkeypatch.setattr(R, '_s3_cp', _fake_cp_2coins)
+    R.warm_reservoir_ohlcv(cache, UNI, _ms(_PAST_DAY), _ms(_PAST_DAY) + _DAY_MS - 1)
+
+    calls = []
+    def _counting_cp(day, dest, log=print):
+        calls.append(day)
+        return _fake_cp_2coins(day, dest, log=log)
+    monkeypatch.setattr(R, '_s3_cp', _counting_cp)
+    # 全命中 → skip、零下载
+    st2 = R.warm_reservoir_ohlcv(cache, UNI, _ms(_PAST_DAY), _ms(_PAST_DAY) + _DAY_MS - 1)
+    assert st2['skipped_cached'] == 1 and calls == []
+    # 删掉 1h 一边 → 重下补齐两边（幂等条件=所有 timeframe 全命中）
+    for s in UNI:
+        _os.remove(_os.path.join(str(tmp_path), '1h', s, _PAST_DAY + '.parquet'))
+    st3 = R.warm_reservoir_ohlcv(cache, UNI, _ms(_PAST_DAY), _ms(_PAST_DAY) + _DAY_MS - 1)
+    assert calls == [_PAST_DAY] and st3['1h']['days'] == 1
+    for s in UNI:
+        assert cache.exists('1h', s, _PAST_DAY)
+
+
+def test_warm_1m_wrapper_old_format_and_no_1h(tmp_path, monkeypatch):
+    # 薄包装：返回旧格式 dict、只写 1m 不写 1h
+    cache = ParquetCache(str(tmp_path))
+    monkeypatch.setattr(R, '_s3_cp', _fake_cp_2coins)
+    stat = warm_reservoir_1m(cache, UNI, _ms(_PAST_DAY), _ms(_PAST_DAY) + _DAY_MS - 1)
+    assert set(stat) == {'days', 'rows', 'skipped_cached', 'retry_later'}
+    assert stat['days'] == 1 and stat['rows'] == 2 * 120
+    for s in UNI:
+        assert cache.exists('1m', s, _PAST_DAY)
+        assert not cache.exists('1h', s, _PAST_DAY)
