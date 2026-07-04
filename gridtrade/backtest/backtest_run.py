@@ -104,14 +104,14 @@ def _simulate_grid_task(payload):
 
 
 def select_grids(cache, universe, window_start, window_end, strategy_config, factors,
-                 *, timeframe='1h', min_quote_volume=0.0, blacklist=(), log=print):
+                 *, timeframe='1h', min_quote_volume=0.0, blacklist=(), workers=1, log=print):
     """只跑选币回放（1h + PIT 地板 + 黑名单），返回 [(rt, offset, row)]。offline。"""
     grids = []
     run_times = [pd.Timestamp(t) for t in pd.date_range(window_start, window_end, freq='1H')]
     SR.replay_selection(cache, universe, run_times, strategy_config, factors,
                         lambda rt, off, row: grids.append((rt, off, row.copy())),
                         timeframe=timeframe, min_quote_volume=min_quote_volume,
-                        blacklist=blacklist, log=log)
+                        blacklist=blacklist, workers=workers, log=log)
     log('[BT] picks=%d' % len(grids))
     return grids
 
@@ -155,11 +155,11 @@ def assemble_grid_tasks(cache, grids, strategy_config, *, sim_timeframe=None,
 
 def build_grid_tasks(cache, universe, window_start, window_end, strategy_config, factors,
                      *, timeframe='1h', sim_timeframe=None, min_quote_volume=0.0,
-                     blacklist=(), log=print):
+                     blacklist=(), workers=1, log=print):
     """选币 + 组装（offline 便捷组合，run_backtest/测试用）。两段式预热见 main()。"""
     grids = select_grids(cache, universe, window_start, window_end, strategy_config, factors,
                          timeframe=timeframe, min_quote_volume=min_quote_volume,
-                         blacklist=blacklist, log=log)
+                         blacklist=blacklist, workers=workers, log=log)
     return assemble_grid_tasks(cache, grids, strategy_config,
                                sim_timeframe=sim_timeframe, timeframe=timeframe, log=log)
 
@@ -193,7 +193,7 @@ def run_backtest(cache, universe, window_start, window_end, strategy_config, fac
     tasks = build_grid_tasks(cache, universe, window_start, window_end, strategy_config,
                              factors, timeframe=timeframe,
                              sim_timeframe=sim_timeframe, min_quote_volume=min_quote_volume,
-                             blacklist=blacklist, log=log)
+                             blacklist=blacklist, workers=workers, log=log)
     return simulate_tasks(tasks, leverage=lev, fee_rate=fee_rate, max_rate=max_rate,
                           stop_cfg=strategy_config['stop_loss_config'],
                           active_stop_mode=strategy_config.get('active_stop_mode', 'pv'),
@@ -301,6 +301,7 @@ def main(argv=None):
 
     root = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'data', 'hl_validate')
     cache = ParquetCache(root)
+    workers = int(os.environ.get('BT_WORKERS', '1'))
     print('[BT] window %s -> %s | sim_tf=%s' % (win_start, win_end, sim_tf))
 
     from gridtrade.backtest.prewarm import resolve_universe
@@ -316,7 +317,7 @@ def main(argv=None):
     # 选币(1h + PIT $1M 地板 + 黑名单)——一次
     grids = select_grids(cache, universe, win_start, win_end, HL_STRATEGY, HL_FACTORS,
                          timeframe='1h', min_quote_volume=BT_MIN_QUOTE_VOLUME_24H,
-                         blacklist=BT_BLACKLIST)
+                         blacklist=BT_BLACKLIST, workers=workers)
     selected = sorted({row['symbol'] for _, _, row in grids})
     print('[BT] 选中 %d 币' % len(selected))
 
@@ -325,7 +326,6 @@ def main(argv=None):
                             sim_timeframe=sim_tf)
     print('[BT] prewarm done %.1fs' % (time.time() - t0))
 
-    workers = int(os.environ.get('BT_WORKERS', '1'))
     t0 = time.time()
     tasks = assemble_grid_tasks(cache, grids, HL_STRATEGY,
                                 sim_timeframe=(None if sim_tf == '1h' else sim_tf), timeframe='1h')
