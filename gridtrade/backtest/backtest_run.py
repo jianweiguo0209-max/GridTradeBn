@@ -2,12 +2,13 @@
 全部复用 gridtrade.core 纯函数；数据从 ParquetCache 读（预热后离线）。
 
 本模块是**唯一预热+回测入口**：
-  - run_backtest(...)  纯离线核心（只读 cache，无网络）——测试/复用都走它。
-  - prewarm_all(...)   单一预热：1h 选币(HL API) + 持仓(1m 走 Reservoir S3 / 其它走 HL API) + funding。
-                       幂等，按天缓存复用；1m 用 Reservoir 需 AWS 凭证（requester-pays）。
-  - main()             CLI：prewarm_all → run_backtest → summarize → CSV。
-                       跑：TZ=Asia/Shanghai .venv/bin/python -m gridtrade.backtest.backtest_run [days] [sim_tf]
-网络依赖（ccxt/adapter/reservoir）全部在 prewarm_all/main 内**惰性导入**，保持核心离线可测。
+  - run_backtest(...)         纯离线核心（只读 cache，无网络）——测试/复用都走它。
+  - prewarm_1h(...)           phase1：全市场(−黑名单) 1h 选币 OHLCV(HL API，含暖机)，幂等按天缓存复用。
+  - prewarm_sim_and_funding() phase2：仅选中币 持仓(1m 走 Reservoir S3 / 其它走 HL API) + funding。
+                              1m 用 Reservoir 需 AWS 凭证（requester-pays）。
+  - main()                    CLI：全市场解析+1h预热 → select_grids(一次) → 仅选中币预热 → 回测 → summarize → CSV。
+                              跑：TZ=Asia/Shanghai .venv/bin/python -m gridtrade.backtest.backtest_run [days] [sim_tf]
+网络依赖（ccxt/adapter/reservoir）全部在 prewarm_1h/prewarm_sim_and_funding/main 内**惰性导入**，保持核心离线可测。
 """
 import os
 
@@ -27,11 +28,10 @@ HL_STRATEGY = {**DEFAULT_STRATEGY_CONFIG,
                              'period': DEFAULT_STOP_CFG['pv_period'], 'n': DEFAULT_STOP_CFG['pv_n']}}
 HL_FACTORS = dict(DEFAULT_STRATEGY_CONFIG['factors'])
 
-import os as _os
 # 回测票池口径对齐 prod：全市场动态 −黑名单 −逐 run_time PIT $1M 成交额地板。
-# 票池在 main() 里由 list_instruments 解析（见 main）；此处只放阈值/黑名单常量（可 env 覆写）。
-BT_MIN_QUOTE_VOLUME_24H = float(_os.environ.get('BT_MIN_QUOTE_VOLUME_24H', '1000000'))
-BT_BLACKLIST = tuple(s.strip() for s in _os.environ.get('BT_BLACKLIST', '').split(',') if s.strip())
+# 票池在 main() 里由 resolve_universe 解析全市场（见 main）；此处只放阈值/黑名单常量（可 env 覆写）。
+BT_MIN_QUOTE_VOLUME_24H = float(os.environ.get('BT_MIN_QUOTE_VOLUME_24H', '1000000'))
+BT_BLACKLIST = tuple(s.strip() for s in os.environ.get('BT_BLACKLIST', '').split(',') if s.strip())
 
 
 def holding_bars(series_df, run_time, period):
@@ -200,20 +200,11 @@ def run_backtest(cache, universe, window_start, window_end, strategy_config, fac
                           pv_cfg=strategy_config.get('pv_config', {}), workers=workers)
 
 
-def prewarm_all(cache, universe, warm_start_ms, win_start_ms, end_ms, *,
-                sim_timeframe='1m', log=print):
-    """单一预热（幂等，按天缓存复用）：
-      - 1h 选币 OHLCV（HL API，从 warm_start 起含暖机）
-      - 持仓 OHLCV：sim_timeframe=='1m' 走 Reservoir S3(download-or-reuse)，其它走 HL API
-      - funding（HL API）
-    sim_timeframe=='1m' 时 Reservoir 是 requester-pays，需已配 AWS 凭证。网络依赖惰性导入。"""
+def _hl_datasource_1h(cache):
+    """构造带退避的 HL 适配器 + 1h DataSource（网络；惰性导入）。返回 (adapter, ds_1h)。"""
     import time
-
     import ccxt
-
-    from gridtrade.backtest import prewarm as PW
     from gridtrade.backtest.datasource import DataSource
-    from gridtrade.backtest.reservoir import warm_reservoir_1m
     from gridtrade.exchanges.hyperliquid import HyperliquidAdapter
 
     class _RetryHL(HyperliquidAdapter):
@@ -235,22 +226,39 @@ def prewarm_all(cache, universe, warm_start_ms, win_start_ms, end_ms, *,
             return self._retry(super().fetch_funding_history, symbol, start_ms, end_ms)
 
     adapter = _RetryHL(ccxt.hyperliquid({'enableRateLimit': True, 'timeout': 30000}))
-    ds_1h = DataSource(adapter, cache, timeframe='1h')
+    return adapter, DataSource(adapter, cache, timeframe='1h')
 
-    log('[prewarm] 1h 选币: %s' % PW.prewarm_ohlcv(ds_1h, universe, warm_start_ms, end_ms))
 
+def prewarm_1h(cache, universe, warm_start_ms, end_ms, *, log=print):
+    """phase1：全市场 1h 选币 OHLCV(含暖机)。返回 adapter（复用于 phase2）。"""
+    from gridtrade.backtest import prewarm as PW
+    adapter, ds_1h = _hl_datasource_1h(cache)
+    log('[prewarm] 1h 选币(全市场 %d): %s'
+        % (len(universe), PW.prewarm_ohlcv(ds_1h, universe, warm_start_ms, end_ms)))
+    return adapter
+
+
+def prewarm_sim_and_funding(cache, adapter, selected, win_start_ms, end_ms, *,
+                            sim_timeframe='1m', log=print):
+    """phase2：仅选中币的持仓 OHLCV(1m 走 Reservoir / 其它走 HL) + funding。
+    sim_timeframe=='1m' 时 Reservoir 是 requester-pays，需已配 AWS 凭证。网络依赖惰性导入。"""
+    from gridtrade.backtest import prewarm as PW
+    from gridtrade.backtest.datasource import DataSource
+    from gridtrade.backtest.reservoir import warm_reservoir_1m
     sim_tf = sim_timeframe or '1h'
     if sim_tf == '1m':
-        sr = warm_reservoir_1m(cache, universe, win_start_ms, end_ms, log=log)
-        log('[prewarm] 1m@Reservoir: %s' % sr)
+        sr = warm_reservoir_1m(cache, selected, win_start_ms, end_ms, log=log)
+        log('[prewarm] 1m@Reservoir(选中 %d): %s' % (len(selected), sr))
         if sr['rows'] == 0 and sr['skipped_cached'] == 0:
-            raise RuntimeError('Reservoir 未拉到任何 1m 数据——检查 AWS 凭证 / 桶权限 / 币种，'
-                               '或窗口内数据在 S3 尚未发布（retry_later=%d）' % sr['retry_later'])
+            raise RuntimeError('Reservoir 未拉到任何 1m 数据——检查 AWS 凭证/桶权限/币种 '
+                               '(retry_later=%d)' % sr['retry_later'])
     elif sim_tf != '1h':
         ds = DataSource(adapter, cache, timeframe=sim_tf)
-        log('[prewarm] %s 持仓: %s' % (sim_tf, PW.prewarm_ohlcv(ds, universe, win_start_ms, end_ms)))
-
-    log('[prewarm] funding: %s' % PW.prewarm_funding(ds_1h, universe, win_start_ms, end_ms))
+        log('[prewarm] %s 持仓(选中 %d): %s'
+            % (sim_tf, len(selected), PW.prewarm_ohlcv(ds, selected, win_start_ms, end_ms)))
+    ds_1h = DataSource(adapter, cache, timeframe='1h')
+    log('[prewarm] funding(选中 %d): %s'
+        % (len(selected), PW.prewarm_funding(ds_1h, selected, win_start_ms, end_ms)))
 
 
 _WARMUP_DAYS = 14   # 选币 1h 暖机（窗口前多取的天数）
@@ -295,15 +303,37 @@ def main(argv=None):
     cache = ParquetCache(root)
     print('[BT] window %s -> %s | sim_tf=%s' % (win_start, win_end, sim_tf))
 
+    from gridtrade.backtest.prewarm import resolve_universe
+    from gridtrade.backtest.datasource import DataSource
+
     t0 = time.time()
-    prewarm_all(cache, HL_UNIVERSE, _ms(warm_start), _ms(win_start), _ms(win_end), sim_timeframe=sim_tf)
+    # phase1: 解析全市场票池(−黑名单) + 预热全市场 1h
+    _adapter, _ds1h = _hl_datasource_1h(cache)
+    universe = resolve_universe(_ds1h, blacklist=BT_BLACKLIST)
+    print('[BT] 全市场票池 %d 币(−黑名单 %d)' % (len(universe), len(BT_BLACKLIST)))
+    from gridtrade.backtest import prewarm as PW
+    print('[BT] 1h 预热: %s' % PW.prewarm_ohlcv(_ds1h, universe, _ms(warm_start), _ms(win_end)))
+
+    # 选币(1h + PIT $1M 地板 + 黑名单)——一次
+    grids = select_grids(cache, universe, win_start, win_end, HL_STRATEGY, HL_FACTORS,
+                         timeframe='1h', min_quote_volume=BT_MIN_QUOTE_VOLUME_24H,
+                         blacklist=BT_BLACKLIST)
+    selected = sorted({row['symbol'] for _, _, row in grids})
+    print('[BT] 选中 %d 币' % len(selected))
+
+    # phase2: 仅选中币预热 1m/funding
+    prewarm_sim_and_funding(cache, _adapter, selected, _ms(win_start), _ms(win_end),
+                            sim_timeframe=sim_tf)
     print('[BT] prewarm done %.1fs' % (time.time() - t0))
 
-    workers = int(os.environ.get('BT_WORKERS', '1'))    # 并行进程数：BT_WORKERS=4 提速
+    workers = int(os.environ.get('BT_WORKERS', '1'))
     t0 = time.time()
-    df = run_backtest(cache, HL_UNIVERSE, win_start, win_end, HL_STRATEGY, HL_FACTORS,
-                      timeframe='1h', sim_timeframe=(None if sim_tf == '1h' else sim_tf),
-                      workers=workers)
+    tasks = assemble_grid_tasks(cache, grids, HL_STRATEGY,
+                                sim_timeframe=(None if sim_tf == '1h' else sim_tf), timeframe='1h')
+    df = simulate_tasks(tasks, leverage=HL_STRATEGY['leverage'],
+                        stop_cfg=HL_STRATEGY['stop_loss_config'],
+                        active_stop_mode=HL_STRATEGY.get('active_stop_mode', 'pv'),
+                        pv_cfg=HL_STRATEGY.get('pv_config', {}), workers=workers)
     print('[BT] backtest %.1fs (workers=%d)' % (time.time() - t0, workers))
 
     tag = '@Reservoir+funding' if sim_tf == '1m' else ''
