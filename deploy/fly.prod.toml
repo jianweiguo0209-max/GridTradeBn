@@ -33,16 +33,15 @@ primary_region = "nrt"
   BLACKLIST_SYMBOLS = ""            # 档0 硬禁名单，留空=不禁；上线前由用户填 HL coin 符号，如 "XXX/USDC:USDC,YYY/USDC:USDC"
   # 风控项（CAP / CAP_MIN / CAP_MAX / LEVERAGE）沿用 config.py 默认或按需 fly secrets 覆盖。
   # 单网格 cap = clamp(equity×CAP_EQUITY_FRAC, CAP_MIN, CAP_MAX)；每笔挂单 notional ≈
-  #   cap×LEVERAGE×max_rate/(档数+1)。
-  # CAP_EQUITY_FRAC=0.50（非默认 0.10 覆写）：本金 ~$220 小额下，0.10 会让 cap≈$22 →
-  #   每笔挂单 ≈$3，低于 HL mainnet 全市场 $10 最小下单额（cost.min=10）→ 首批网格挂单被全数
-  #   拒单、建不起来。经 testnet 实测标定：cap≈$98 时最差单笔 $9.71（SOL/22 档），最差
-  #   单笔/cap≈0.099；取 frac=0.50 → cap≈$110 → 最差单笔 ~$10.9（$10 上留缓冲），MarginGate
-  #   (default_cap=$100) 仍放行 ~2 个并发网格、实际保证金 ~$75/格。
-  # ⚠ 小账户 band-aid，非鲁棒：equity 回撤 或 某币档数偏高（比值<0.099）时单笔可能再跌破 $10
-  #   （该网格开仓安全失败、不损资金）。长期鲁棒解=加本金到 cap 天然≥$10，或给 grid_order_info
-  #   接入 cost.min 自适应降档（见巡检结论）。放大本金后应把此项调回 0.10。
-  CAP_EQUITY_FRAC = "0.50"
+  #   cap×LEVERAGE×max_rate/(档数+1)，须 ≥ HL mainnet 全市场 $10 最小下单额（cost.min=10）。
+  # CAP_EQUITY_FRAC=0.10（config.py 默认）：本金已增至 ~$1000+（2026-07-04 追加 800→equity~$1021）
+  #   → cap≈$102，正是 testnet 验证过的 ~$98-100 量级，普通币（~20 档）单笔 $10-14 稳过 $10，
+  #   MarginGate(default_cap=$100) 可放行 ~10 个并发网格（回到"多小网格分散"设计）。
+  # 历史：上线时本金仅 ~$220，0.10→cap≈$22→单笔≈$3<$10 首批全被拒；曾临时覆写 0.50（cap≈$110）
+  #   作小账户 band-aid（见记忆 mainnet-order-min-notional）；本金充足后回调默认 0.10。
+  # ⚠ 与 frac 无关的独立局限：高档数币（如 LIT 51 档，需 cap≥$335）用任何现实 cap 都够不着 $10、
+  #   开仓安全失败留 stuck OPENING（不损资金）；根治须给 grid_order_info 接入 cost.min 自适应封顶档数。
+  CAP_EQUITY_FRAC = "0.10"
 
 [processes]
   monitor = "python -m gridtrade.runtime.monitor"
