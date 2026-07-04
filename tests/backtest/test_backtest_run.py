@@ -55,52 +55,18 @@ def test_run_backtest_end_to_end(tmp_path):
     assert df['exit_reason'].map(lambda r: isinstance(r, str) and len(r) > 0).all()
 
 
-def _bars_qv(sym, qv, seed):
-    import numpy as np
-    from gridtrade.exchanges.base import CANDLE_COLS
-    t = pd.date_range('2024-01-01', periods=300, freq='1H')
-    close = 100.0 * np.exp(np.cumsum(np.random.RandomState(seed).normal(0, 0.01, 300)))
-    open_ = np.concatenate([[100.0], close[:-1]])
-    return pd.DataFrame({'symbol': sym, 'candle_begin_time': t,
-                         'open': open_, 'high': np.maximum(open_, close) * 1.001,
-                         'low': np.minimum(open_, close) * 0.999, 'close': close,
-                         'vol': 1.0, 'volCcy': 1.0, 'quote_volume': float(qv)})[CANDLE_COLS]
-
-
-def _seed_qv_cache(tmp_path, coins):
-    from gridtrade.backtest.cache import ParquetCache
-    cache = ParquetCache(str(tmp_path))
-    for i, (sym, qv) in enumerate(coins):
-        df = _bars_qv(sym, qv, seed=i + 1)
-        for day, g in df.groupby(df['candle_begin_time'].dt.strftime('%Y-%m-%d')):
-            cache.write('1h', sym, day, g.reset_index(drop=True))
-    return cache
-
-
-def test_run_backtest_min_quote_volume_filters(tmp_path):
-    from gridtrade.backtest.backtest_run import run_backtest
-    # 三币：RICH/RICH2 quote_volume 大（不同 seed → 有真实横截面），POOR 极小。
-    # 地板剔 POOR 后仍剩 2 个候选，绕开 select_grid_coin 单候选时 55% 分位退化的边界。
-    coins = [('RICH/USDC:USDC', 1e5), ('RICH2/USDC:USDC', 1e5), ('POOR/USDC:USDC', 1.0)]
-    cache = _seed_qv_cache(tmp_path, coins)
-    syms = [c[0] for c in coins]
-    # 门槛=1e6：RICH/RICH2 24h 和 = 24*1e5=2.4e6 过；POOR=24*1=24 剔
-    df = run_backtest(cache, syms, pd.Timestamp('2024-01-10 00:00:00'),
-                      pd.Timestamp('2024-01-11 00:00:00'), _strategy(), FACTORS,
-                      timeframe='1h', min_quote_volume=1_000_000.0)
-    assert len(df) > 0                                       # 地板放行的高量币仍能入选
-    assert (df['symbol'] == 'POOR/USDC:USDC').sum() == 0     # POOR 被地板剔、从不入选
-
-
-def test_run_backtest_floor_excludes_all_returns_schema(tmp_path):
-    # 门槛剔光所有币 → 空选择 → 返回带 schema 的空 DataFrame（下游取列不 KeyError）。
+def test_run_backtest_floor_and_blacklist_gate_selection(tmp_path):
+    # 差分证明地板/黑名单真的接线：同 fixture，关=有网格，开到剔光=空。
     from gridtrade.backtest.backtest_run import run_backtest, _RESULT_COLS
-    coins = [('POOR/USDC:USDC', 1.0), ('POOR2/USDC:USDC', 2.0)]
-    cache = _seed_qv_cache(tmp_path, coins)
-    syms = [c[0] for c in coins]
-    df = run_backtest(cache, syms, pd.Timestamp('2024-01-10 00:00:00'),
-                      pd.Timestamp('2024-01-11 00:00:00'), _strategy(), FACTORS,
-                      timeframe='1h', min_quote_volume=1_000_000.0)
-    assert len(df) == 0                                      # 全被地板剔、无网格
-    assert list(df.columns) == _RESULT_COLS                 # 空表仍带完整列
-    assert (df['symbol'] == 'POOR/USDC:USDC').sum() == 0     # 取列不 KeyError
+    syms = ['AAA/USDT:USDT', 'BBB/USDT:USDT', 'CCC/USDT:USDT', 'DDD/USDT:USDT']
+    cache = _seed_cache(tmp_path, syms)
+    ws, we = pd.Timestamp('2024-01-10 00:00:00'), pd.Timestamp('2024-01-11 00:00:00')
+    base = dict(timeframe='1h')
+    df0 = run_backtest(cache, syms, ws, we, _strategy(), FACTORS, min_quote_volume=0.0, **base)
+    assert len(df0) > 0                                   # 无地板/黑名单：选出网格（baseline）
+    # 地板高到剔光所有币 → 空（若地板未穿到 replay_selection，会 == df0 非空 → 此断言失败）
+    dfhi = run_backtest(cache, syms, ws, we, _strategy(), FACTORS, min_quote_volume=1e12, **base)
+    assert len(dfhi) == 0 and list(dfhi.columns) == _RESULT_COLS
+    # 黑名单全禁 → 空（同理证明 blacklist 已穿线）
+    dfbl = run_backtest(cache, syms, ws, we, _strategy(), FACTORS, blacklist=tuple(syms), **base)
+    assert len(dfbl) == 0
