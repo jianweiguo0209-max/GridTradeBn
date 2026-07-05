@@ -100,8 +100,14 @@ class HyperliquidAdapter(CcxtAdapter):
         mids = self.client.publicPostInfo({'type': 'allMids'}) or {}
         cmap = self._coin_map()
         want = set(symbols)
-        return {cmap[c]: float(px) for c, px in mids.items()
-                if cmap.get(c) in want}
+        out = {cmap[c]: float(px) for c, px in mids.items()
+               if cmap.get(c) in want}
+        # HIP-3 builder-DEX 资产（coin 如 'xyz:MSTR'）不在主 allMids → 逐 symbol 回退补齐
+        # （mainnet 2026-07-05 实证 XYZ-MSTR snapshot missing price；每个缺价币多 1 次调用，
+        # 核心永续不受影响，对未来任何不可映射市场自愈）。
+        for s in want - set(out):
+            out[s] = float(self.fetch_price(s))
+        return out
 
     def fetch_funding_payments_all(self, symbols, since_ms=None):
         # userFunding 本就账户级且把查询 symbol 盖到每行（见 fetch_funding_payments 注释）；

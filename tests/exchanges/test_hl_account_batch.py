@@ -92,3 +92,22 @@ def test_funding_all_grouped_by_delta_coin_pay_positive():
     out = _ad().fetch_funding_payments_all([BTC, KPEPE], since_ms=500)
     assert [p.amount for p in out[KPEPE]] == [0.5]             # 支付为正
     assert [(p.ts, p.amount) for p in out[BTC]] == [(2500, -0.2)]   # ts<since 滤掉
+
+
+def test_prices_all_falls_back_per_symbol_for_unmapped_markets():
+    # HIP-3 builder 资产（如 XYZ-MSTR，coin='xyz:MSTR'）不在主 allMids 里 →
+    # 回退逐 symbol fetch_price 补齐（mainnet 2026-07-05 实证：snapshot missing price）。
+    XYZM = 'XYZ-MSTR/USDC:USDC'
+
+    class _ClientB(_Client):
+        markets = dict(_MARKETS)
+        markets[XYZM] = {'symbol': XYZM, 'swap': True, 'base': 'XYZ-MSTR',
+                         'info': {'name': 'xyz:MSTR'}}   # builder coin 名，不在 allMids
+        def fetch_ticker(self, symbol):
+            self.calls.append(('fetch_ticker', symbol))
+            return {'last': 107.19}
+
+    ad = HyperliquidAdapter(_ClientB())
+    out = ad.fetch_prices_all([BTC, XYZM])
+    assert out == {BTC: 50000.5, XYZM: 107.19}           # allMids 命中 + 回退补齐
+    assert ('fetch_ticker', XYZM) in ad.client.calls      # 只有缺价币走回退
