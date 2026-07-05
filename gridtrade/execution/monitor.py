@@ -3,8 +3,8 @@ from gridtrade.core.stop_rules import evaluate_exit
 
 
 def monitor_grid(executor, grid_id, symbol, stop_cfg, *, margin_rate=0.05, skip_replenish=False,
-                 pv_spike=0, funding_rate=0.0):
-    res = executor.sync(grid_id, symbol, skip_replenish=skip_replenish)
+                 pv_spike=0, funding_rate=0.0, snapshot=None):
+    res = executor.sync(grid_id, symbol, skip_replenish=skip_replenish, snapshot=snapshot)
     snap = res['snapshot']
     acc = executor.accounting.get(grid_id)
     pnl_ratio_max = acc.pnl_ratio_max if acc is not None else snap['pnl_ratio']

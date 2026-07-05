@@ -135,12 +135,14 @@ class GridExecutor:
         self.grids.transition_status(gid, ACTIVE, expected_version=g2.version)
         return gid
 
-    def sync(self, grid_id, symbol, *, skip_replenish=False):
+    def sync(self, grid_id, symbol, *, skip_replenish=False, snapshot=None):
         geom = self._geom[grid_id]
         price_array = geom['price_array']
         order_num = geom['order_num']
         cursor = max(0, self.fills.max_ts(grid_id) - _TRADE_REFETCH_OVERLAP_MS)
-        trades = self.adapter.fetch_my_trades(symbol, since_ms=cursor)
+        # 快照=轮首账户级批量读（权重与格数解耦）；None=逐格取数（测试基线/回退面）
+        trades = (snapshot.trades_for(symbol, since_ms=cursor) if snapshot is not None
+                  else self.adapter.fetch_my_trades(symbol, since_ms=cursor))
         # 按 exchange order id 把成交映射回网格线（跨所通用；HL fill 只带 oid，不带 cloid）。
         # 中性底仓/平仓的市价单不在 grid_orders → 其成交 order_id 不在 by_oid，自动排除。
         _all = self.orders.list_by_grid(grid_id)
@@ -198,13 +200,20 @@ class GridExecutor:
 
         # 资金费流水
         fcur = self._funding_cursor.get(grid_id, 0)
-        pays = self.adapter.fetch_funding_payments(symbol, since_ms=fcur)
+        pays = (snapshot.funding_for(symbol, since_ms=fcur) if snapshot is not None
+                else self.adapter.fetch_funding_payments(symbol, since_ms=fcur))
         for p in pays:
             self.live[grid_id].add_funding(p.amount)
         if pays:
             self._funding_cursor[grid_id] = pays[-1].ts + 1
 
-        snap = self.live[grid_id].snapshot(float(self.adapter.fetch_price(symbol)))
+        if snapshot is not None:
+            px = snapshot.price(symbol)
+            if px is None:   # 快照缺币价（allMids 罕见缺行）→ 本格降级，勿用 0 价算净值
+                raise RuntimeError('snapshot missing price for %s' % symbol)
+        else:
+            px = self.adapter.fetch_price(symbol)
+        snap = self.live[grid_id].snapshot(float(px))
         acc = self.accounting.get(grid_id)
         if acc is not None:
             acc.realized_pnl = snap['realized_pnl']
