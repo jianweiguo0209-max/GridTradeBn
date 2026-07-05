@@ -69,7 +69,7 @@ def build_runtime(config) -> Runtime:
         MaxConcurrentGate(executor.grids, config.max_concurrent),
         RiskBudgetGate(executor.grids, config.total_budget, config.default_cap),
         MinNotionalGate(executor, config.min_order_notional, log=_flush_log),
-        MarginGate(adapter, config.default_cap, log=_flush_log),
+        MarginGate(adapter, config.default_cap, executor=executor, log=_flush_log),
     ], log=_flush_log)
     bus = EventBus()
     # 实盘退出信号：pv_spike（对齐回测 calc_pv_spike）+ funding_rate（HL 真实费率），按 grid 节流

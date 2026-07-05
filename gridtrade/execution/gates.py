@@ -162,13 +162,16 @@ class MinNotionalGate(AdmissionGate):
 class MarginGate(AdmissionGate):
     """可用保证金门：实时查交易所可用余额(cash) >= 本提议所需(cap)，同轮累计扣减。
 
-    口径（用户敲定）：所需=proposal.cap（未给用 default_cap）；放行条件 cash - 已预留 >= 所需；
+    口径（用户敲定）：所需=proposal.cap；未给时优先 executor._resolve_cap()（与真实开仓同源的
+    动态 cap，随权益自动跟随——default_cap 是静态值会与动态 cap 脱节、预留虚低），executor
+    未传回退 default_cap（向后兼容）。放行条件 cash - 已预留 >= 所需；
     fail-closed（余额读不到则全拒）。须置于门链末尾（短路链中过它即准入，预留不虚高）。
     """
 
-    def __init__(self, adapter, default_cap, *, log=None):
+    def __init__(self, adapter, default_cap, *, executor=None, log=None):
         self.adapter = adapter
         self.default_cap = float(default_cap)
+        self.executor = executor    # 可选：动态 cap 来源（_resolve_cap 内部已有失败回退）
         self._available = None      # 本批可用余额快照；None=未快照
         self._reserved = 0.0        # 本批已放行提议的累计所需
         self._balance_ok = True
@@ -191,7 +194,12 @@ class MarginGate(AdmissionGate):
             self.begin_batch()
         if not self._balance_ok:
             return GateResult(False, 'MarginGate', 'balance unavailable')
-        required = (proposal.cap if proposal.cap is not None else self.default_cap)
+        if proposal.cap is not None:
+            required = proposal.cap
+        elif self.executor is not None:
+            required = float(self.executor._resolve_cap())   # 与真实开仓同源的动态 cap
+        else:
+            required = self.default_cap
         if self._available - self._reserved < required:
             return GateResult(False, 'MarginGate',
                               'free cash %.4f - reserved %.4f < required %.4f'

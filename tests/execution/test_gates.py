@@ -317,3 +317,20 @@ def test_min_notional_gate_disabled_when_zero():
     p = _proposal(grid_params={'low_price': 1.0, 'high_price': 1.5, 'grid_count': 149,
                                'stop_low_price': 0.9, 'stop_high_price': 1.6})
     assert gate.check(p).passed is True
+
+
+def test_margin_gate_dynamic_reserve_uses_executor_resolve_cap():
+    # 方案B：提案未带 cap 时，预留额 = executor._resolve_cap()（与真实开仓同源动态 cap）。
+    # 差分 load-bearing：cash=250 < 动态 cap 302 → 拒；旧逻辑(default_cap=100)会误放。
+    from gridtrade.execution.gates import MarginGate
+    gate = MarginGate(_BalAdapter(250.0), default_cap=100.0, executor=_SizerStub(cap=302.0))
+    r = gate.check(_proposal())
+    assert r.passed is False and r.gate == 'MarginGate'
+    assert '302' in (r.reason or '')                    # 拒因含真实预留额，可观测
+
+
+def test_margin_gate_without_executor_falls_back_to_default_cap():
+    # 向后兼容护栏：executor 未传 → 预留额仍为 default_cap（现有调用/测试零改动语义）。
+    from gridtrade.execution.gates import MarginGate
+    gate = MarginGate(_BalAdapter(250.0), default_cap=100.0)
+    assert gate.check(_proposal()).passed is True       # 250 >= 100
