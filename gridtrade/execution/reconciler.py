@@ -120,13 +120,21 @@ class Reconciler:
     def _fuse_filled(self, symbol, oid, since_ms=None, snapshot=None):
         """保险丝是否已成交。按 exchange order id 匹配（唯一）；since_ms 作限时优化，
         传 None 则全量扫（FakeExchange 用逻辑计数器 ts，与 epoch ms 不可比较时退化全量）。
-        快照路径：快照 trades 窗口起点 ≤ 全格最小游标，宕机窗口内的触发成交必在其中。
+
+        快照路径盲区（XYZ-MSTR 2026-07-05 实证）：快照 trades 窗口起点=全格最小游标，
+        活跃格会把窗口推过安静格的保险丝成交时刻 → 漏判"已触发"→ 误重挂覆写 oid →
+        成交证据永久丢失、模型永久背离。故快照查不到时**重挂前逐格全量直查**兜底——
+        本方法只在 fuse 从 book 消失的罕见分支被调用，多一次调用换确定性。
         """
         if oid is None:
             return False
-        trades = (snapshot.trades_for(symbol) if snapshot is not None
-                  else self.ex.adapter.fetch_my_trades(symbol, since_ms=since_ms))
-        return any(t.order_id == oid for t in trades)
+        if snapshot is not None:
+            if any(t.order_id == oid for t in snapshot.trades_for(symbol)):
+                return True
+            return any(t.order_id == oid
+                       for t in self.ex.adapter.fetch_my_trades(symbol, since_ms=None))
+        return any(t.order_id == oid
+                   for t in self.ex.adapter.fetch_my_trades(symbol, since_ms=since_ms))
 
     def reconcile_fuses(self, grid_id, symbol, snapshot=None):
         """灾难保险丝三态对账：在挂→无动作；被丢→重挂；已触发→撑网全拆。"""

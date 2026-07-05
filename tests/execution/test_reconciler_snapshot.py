@@ -70,3 +70,36 @@ def test_fuse_replaced_and_fired_via_snapshot(store):
     snap = build_account_snapshot(ex, [BTC])
     out = rec.reconcile_fuses(gid, BTC, snapshot=snap)
     assert out == {'replaced': 1, 'fired': False}
+
+
+def test_fuse_fired_outside_snapshot_window_still_detected(store):
+    # XYZ-MSTR 2026-07-05 事故复现：快照 trades 窗口起点=全格最小游标，活跃格把窗口
+    # 推过安静格的保险丝成交时刻 → 旧实现漏判"已触发"→ 误重挂覆写 oid → 永久盲区。
+    # 修复：快照查不到时重挂前逐格全量直查（fetch_my_trades since=None）。
+    from gridtrade.exchanges.base import Trade
+    ex, gx, gid = _setup(store, stop_orders=True)
+    g = gx.grids.get(gid)
+    # 模拟保险丝已触发：从 book 消失 + 成交带 fuse 的 order_id（ts=1，逻辑时钟很早）
+    ex._stops[BTC] = [s for s in ex._stops[BTC] if s.id != g.fuse_low_oid]
+    ex._trades.append(Trade(id='fusefill', client_oid='f', symbol=BTC, side='buy',
+                            price=97.0, size=4.0, fee=0.0, ts=1,
+                            order_id=g.fuse_low_oid))
+    rec = Reconciler(gx)
+    # 快照窗口起点推到 fuse 成交之后（模拟其他活跃格推进了最小游标）
+    snap = build_account_snapshot(ex, [BTC], trade_since_ms=1_000_000)
+    assert snap.trades_for(BTC) == []                    # 窗口确实错过了 fuse 成交
+    out = rec.reconcile_fuses(gid, BTC, snapshot=snap)
+    assert out['fired'] is True                          # 直查回退 → 正确判定已触发
+    assert gx.grids.get(gid).status == 'CLOSED'          # 撑网全拆
+
+
+def test_fuse_truly_lost_still_replaced_after_direct_scan(store):
+    # 真"被丢"（无成交）：直查确认未触发后照常重挂，不误判 fired。
+    ex, gx, gid = _setup(store, stop_orders=True)
+    g = gx.grids.get(gid)
+    ex._stops[BTC] = [s for s in ex._stops[BTC] if s.id != g.fuse_low_oid]
+    rec = Reconciler(gx)
+    snap = build_account_snapshot(ex, [BTC], trade_since_ms=1_000_000)
+    out = rec.reconcile_fuses(gid, BTC, snapshot=snap)
+    assert out == {'replaced': 1, 'fired': False}
+    assert gx.grids.get(gid).status == 'ACTIVE'
