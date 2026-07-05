@@ -17,14 +17,25 @@ from gridtrade.runtime.introspect import adapter_endpoint
 from gridtrade.runtime.universe import resolve_live_universe
 
 
+# 逐币取数间隔（ms）。HL 权重制限频：IP 预算 1200/分，candleSnapshot 权重 20 + 每 60 根加权
+# （160 根 ≈ 23/币）；2000ms → 30 请求/分 ≈ 690 权重（58% 预算），给 monitor 留近半余量。
+# 全市场 ~91 币一轮 ≈ 3.5 分钟（选币 K 线截止仍锚定整点 run_time，仅下单顺延几分钟）。
+# ccxt enableRateLimit 的 50ms 名义间隔对权重制无效（2026-07-05 05:00 mainnet 429 风暴实证）。
+FETCH_PACE_MS_DEFAULT = 2000.0
+
+
 def fetch_universe_candles(adapter, symbols, run_time, *, timeframe='1h',
-                           max_candle_num=160) -> dict:
+                           max_candle_num=160, pace_ms=None, sleep=time.sleep) -> dict:
     end_ms = int(pd.Timestamp(run_time).timestamp() * 1000)
     start_ms = end_ms - max_candle_num * 3600 * 1000   # 1h 根
+    if pace_ms is None:
+        pace_ms = FETCH_PACE_MS_DEFAULT
     out = {}
     skipped = 0
     first_err = None
-    for sym in symbols:
+    for i, sym in enumerate(symbols):
+        if i and pace_ms > 0:
+            sleep(pace_ms / 1000.0)   # 币间节流（默认开；env SCHEDULER_FETCH_PACE_MS 可调，0=关）
         try:
             df = adapter.fetch_ohlcv(sym, timeframe, start_ms, end_ms)
         except Exception as exc:
@@ -58,7 +69,8 @@ def run_scheduler_once(runtime, *, now_fn=time.time,
     universe = resolve_live_universe(rt.adapter, rt.config.blacklist,
                                      rt.config.whitelist, rt.config.min_quote_volume_24h)
     candles = fetch_candles(rt.adapter, universe, run_time,
-                            max_candle_num=DEFAULT_STRATEGY_CONFIG['max_candle_num'])
+                            max_candle_num=DEFAULT_STRATEGY_CONFIG['max_candle_num'],
+                            pace_ms=getattr(rt.config, 'scheduler_fetch_pace_ms', None))
     ctx = TriggerContext(rt.config.exchange, run_time, candles)
     result = run_scheduler_cycle(rt.manager, rt.trigger_engine, rt.reconciler,
                                  ctx, close_tag=tag)

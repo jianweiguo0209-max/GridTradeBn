@@ -186,3 +186,47 @@ def test_retry_success_records_breaker_success():
     # 成功后失败计数清零：再失败 1 次仍不该 open
     cb.record_failure()
     assert cb.allow() is True
+
+
+def test_rate_limit_burst_absorbed_by_retry_does_not_open_breaker():
+    # 429 单次尝试中性：突发被退避吸收（重试内成功）→ 熔断零计数。
+    # 差分 load-bearing：旧逻辑每次尝试 record_failure，threshold=1 会立即 open。
+    from gridtrade.exchanges.resilience import CircuitBreaker, call_with_retry
+    breaker = CircuitBreaker(failure_threshold=1, cooldown=30.0)
+    calls = {'n': 0}
+    def fn():
+        calls['n'] += 1
+        if calls['n'] < 3:
+            raise ccxt.RateLimitExceeded('429')
+        return 'ok'
+    out = call_with_retry(fn, _policy(), sleep=lambda s: None,
+                          rng=random.Random(0), breaker=breaker)
+    assert out == 'ok'
+    assert breaker.allow() is True          # 电路未开（旧逻辑此处已 open）
+
+
+def test_rate_limit_exhausted_counts_once_into_breaker():
+    # 429 重试耗尽仍失败 → 恰好计 1 次熔断（持续不可用该开电路→MarginGate fail-closed
+    # 挡开仓，避免在残缺市场数据上选币）。threshold=1 下单次耗尽即 open 可直接断言。
+    from gridtrade.exchanges.resilience import CircuitBreaker, call_with_retry
+    breaker = CircuitBreaker(failure_threshold=1, cooldown=30.0)
+    def fn():
+        raise ccxt.RateLimitExceeded('still 429')
+    with pytest.raises(ccxt.RateLimitExceeded):
+        call_with_retry(fn, _policy(max_attempts=3), sleep=lambda s: None,
+                        rng=random.Random(0), breaker=breaker)
+    assert breaker.allow() is False         # 耗尽计入 → 电路 open
+
+
+def test_network_error_still_counts_every_attempt():
+    # 真网络故障行为不变：每次尝试都计数（threshold=2、max_attempts=4 → 第 2 次尝试后即 open，
+    # 后续 allow()=False 提前抛 CircuitOpenError）。
+    from gridtrade.exchanges.resilience import (CircuitBreaker, CircuitOpenError,
+                                                call_with_retry)
+    breaker = CircuitBreaker(failure_threshold=2, cooldown=30.0)
+    def fn():
+        raise ccxt.NetworkError('down')
+    with pytest.raises((ccxt.NetworkError, CircuitOpenError)):
+        call_with_retry(fn, _policy(max_attempts=4), sleep=lambda s: None,
+                        rng=random.Random(0), breaker=breaker)
+    assert breaker.allow() is False

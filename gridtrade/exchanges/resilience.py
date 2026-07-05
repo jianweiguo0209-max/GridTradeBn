@@ -91,10 +91,15 @@ def call_with_retry(fn, policy, *, classify=classify_error, sleep=time.sleep,
                 if breaker is not None:
                     breaker.record_success()
                 raise
-            if breaker is not None:
-                breaker.record_failure()    # 仅 retryable/rate_limit 计入熔断
             attempt += 1
-            if attempt >= policy.max_attempts:
+            exhausted = attempt >= policy.max_attempts
+            # 429/DDoS 单次尝试**中性**：交易所健康、只是让你慢点，由退避重试吸收，
+            # 不该秒开全局电路（曾致 MarginGate 查余额被熔断 fail-closed 连锁）。
+            # 但退避耗尽仍失败=持续不可用 → 计 1 次熔断（连续多币耗尽会开电路 →
+            # 门链 fail-closed 挡开仓，避免在残缺市场数据上选币）。真网络故障照旧每次计。
+            if breaker is not None and (kind != 'rate_limit' or exhausted):
+                breaker.record_failure()
+            if exhausted:
                 raise
             base = (policy.rate_limit_base_delay if kind == 'rate_limit'
                     else policy.base_delay)

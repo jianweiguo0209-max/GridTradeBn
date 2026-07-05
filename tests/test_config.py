@@ -116,3 +116,10 @@ def test_strategy_defaults_mirror_legacy():
     assert DEFAULT_STOP_CFG['fundingRate_stop_loss'] == 0.0015
     assert DEFAULT_STOP_CFG['pv_pnl_thr'] == -0.02
     assert DEFAULT_STOP_CFG['pv_period'] == '15min'   # 非 '15m'（pandas 会当成月）
+
+
+def test_scheduler_fetch_pace_ms_default_and_override():
+    from gridtrade.config import load_deploy_config
+    assert load_deploy_config(env={'EXCHANGE': 'fake'}).scheduler_fetch_pace_ms == 2000.0
+    assert load_deploy_config(env={'EXCHANGE': 'fake',
+                                   'SCHEDULER_FETCH_PACE_MS': '0'}).scheduler_fetch_pace_ms == 0.0
