@@ -7,8 +7,7 @@ from dataclasses import dataclass
 
 from gridtrade.config import DEFAULT_STOP_CFG, DEFAULT_STRATEGY_CONFIG
 from gridtrade.exchanges.registry import build_adapter
-from gridtrade.exchanges.resilience import CircuitBreaker
-from gridtrade.exchanges.resilient_adapter import ResilientAdapter
+from gridtrade.exchanges.resilient_adapter import ResilientAdapter, default_breakers
 from gridtrade.execution.events import EventBus
 from gridtrade.execution.gates import (GateChain, MarginGate, MaxConcurrentGate,
                                        MinNotionalGate, RiskBudgetGate, SymbolLockGate)
@@ -52,7 +51,7 @@ def build_runtime(config) -> Runtime:
         'testnet': config.testnet,
         'quote_currency': config.quote_currency,
     })
-    adapter = ResilientAdapter(inner, breaker=CircuitBreaker())
+    adapter = ResilientAdapter(inner, breakers=default_breakers())
 
     store = (StateStore.from_url(config.database_url) if config.database_url
              else StateStore.in_memory())

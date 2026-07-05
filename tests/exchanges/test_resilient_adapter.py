@@ -100,3 +100,116 @@ def test_shared_breaker_trips_across_calls_then_blocks():
 def test_is_exchange_adapter_instance():
     from gridtrade.exchanges.base import ExchangeAdapter
     assert isinstance(_resilient(_Inner()), ExchangeAdapter)
+
+
+# ---- 三路电路 + 写锁（monitor per-grid 并行化前提）----
+
+def test_breakers_per_category_independent():
+    # 单端点故障只熔断所属类别：fetch_my_trades(account_read) 打穿电路后，
+    # 行情读(market_read)与交易写(trade_write)照常（根治 7-02 单端点拖垮全局事故形态）。
+    from gridtrade.exchanges.resilience import CircuitOpenError
+    from gridtrade.exchanges.resilient_adapter import default_breakers
+
+    class _Inner2(_Inner):
+        def fetch_my_trades(self, symbol, since_ms=None):
+            self.calls.append(('fetch_my_trades', symbol))
+            self._maybe_fail('fetch_my_trades')
+            return []
+
+    brs = {k: CircuitBreaker(failure_threshold=2, cooldown=999.0, clock=lambda: 0.0)
+           for k in default_breakers()}
+    inner = _Inner2().fail('fetch_my_trades', 99, ccxt.NetworkError('500'))
+    ra = _resilient(inner, policy=RetryPolicy(max_attempts=1), breakers=brs)
+    for _ in range(2):
+        with pytest.raises(ccxt.NetworkError):
+            ra.fetch_my_trades('X')
+    with pytest.raises(CircuitOpenError):
+        ra.fetch_my_trades('X')                    # account_read 电路已开
+    assert ra.fetch_price('X') == 123.5            # market_read 不受影响
+    assert ra.create_limit_order('X', 'buy', 1.0, 1.0) == 'ORDER'   # trade_write 不受影响
+
+
+def test_breaker_and_breakers_mutually_exclusive():
+    with pytest.raises(ValueError):
+        _resilient(_Inner(), breaker=CircuitBreaker(),
+                   breakers={'market_read': CircuitBreaker()})
+
+
+def test_write_calls_serialized_reads_concurrent():
+    # HL nonce 约束：写调用绝不并发重叠（全局写锁）；读调用可真并发。
+    import threading
+
+    class _Probe:
+        name = 'probe'
+        def __init__(self):
+            self._mu = threading.Lock()
+            self.write_inflight = 0
+            self.write_max = 0
+            self.read_barrier = threading.Barrier(2, timeout=5.0)
+            self.read_overlap = True
+        def create_limit_order(self, symbol, side, price, size, **kw):
+            with self._mu:
+                self.write_inflight += 1
+                self.write_max = max(self.write_max, self.write_inflight)
+            import time as _t; _t.sleep(0.03)
+            with self._mu:
+                self.write_inflight -= 1
+            return 'ORDER'
+        def fetch_price(self, symbol):
+            try:
+                self.read_barrier.wait()   # 两个读线程须同时在内层 → 证明读未被串行
+            except threading.BrokenBarrierError:
+                self.read_overlap = False
+            return 1.0
+
+    probe = _Probe()
+    ra = _resilient(probe)
+    ws = [threading.Thread(target=lambda: ra.create_limit_order('X', 'buy', 1.0, 1.0))
+          for _ in range(4)]
+    for t in ws: t.start()
+    for t in ws: t.join()
+    assert probe.write_max == 1                    # 写从未重叠
+
+    rs = [threading.Thread(target=lambda: ra.fetch_price('X')) for _ in range(2)]
+    for t in rs: t.start()
+    for t in rs: t.join()
+    assert probe.read_overlap is True              # 读确有并发
+
+
+def test_write_lock_released_during_retry_backoff():
+    # 锁包单次尝试而非整个重试循环：一个写在退避 sleep 期间，另一写可进入。
+    import threading
+
+    class _FlakyWrite:
+        name = 'flaky'
+        def __init__(self):
+            self.order = []
+            self._failed_once = False
+        def create_limit_order(self, symbol, side, price, size, **kw):
+            self.order.append(side)
+            if side == 'buy' and not self._failed_once:
+                self._failed_once = True
+                raise ccxt.RequestTimeout('flaky')
+            return 'ORDER'
+        def create_market_order(self, symbol, side, size, **kw):
+            self.order.append('mkt-' + side)
+            return 'ORDER'
+
+    inner = _FlakyWrite()
+    entered_backoff = threading.Event()
+    resume = threading.Event()
+    def blocking_sleep(d):
+        entered_backoff.set()
+        assert resume.wait(timeout=5.0)
+    ra = ResilientAdapter(inner, policy=FAST, sleep=blocking_sleep)
+    t1 = threading.Thread(target=lambda: ra.create_limit_order('X', 'buy', 1.0, 1.0))
+    t1.start()
+    assert entered_backoff.wait(timeout=5.0)       # t1 已在退避 sleep（锁应已释放）
+    done = threading.Event()
+    t2 = threading.Thread(target=lambda: (ra.create_market_order('X', 'sell', 1.0),
+                                          done.set()))
+    t2.start()
+    assert done.wait(timeout=5.0)                  # t1 退避期间 t2 的写能完成
+    resume.set()
+    t1.join(); t2.join()
+    assert inner.order == ['buy', 'mkt-sell', 'buy']

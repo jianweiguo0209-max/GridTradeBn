@@ -26,6 +26,10 @@ def run_monitor(runtime, *, once=False, sleep=time.sleep, log=print,
         if getattr(rt, 'equity', None) is not None:
             ctrl_kw['equity_repo'] = rt.equity
             ctrl_kw['snapshot_interval_sec'] = rt.config.equity_snapshot_interval_sec
+        # per-grid 并行 + 长轮中途心跳打点（beat 失败由 cycle 内部降级处理）
+        ctrl_kw['beat'] = lambda: rt.heartbeats.beat('monitor')
+        ctrl_kw['parallel'] = getattr(rt.config, 'monitor_parallel', 1)
+        ctrl_kw['unit_warn_sec'] = getattr(rt.config, 'monitor_unit_warn_sec', 30.0)
     while True:
         try:
             cycle_fn(rt.reconciler, rt.manager, **ctrl_kw)

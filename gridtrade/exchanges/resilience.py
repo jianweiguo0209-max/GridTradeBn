@@ -5,6 +5,7 @@
 ccxt；execution/runtime 层只拿被包装的结果，保持 ccxt-free。
 """
 import random as _random
+import threading
 import time
 from dataclasses import dataclass
 
@@ -35,7 +36,12 @@ def classify_error(exc: Exception) -> str:
 
 
 class CircuitBreaker:
-    """连续失败达阈值则 open；冷却到点 half-open 放行一次试探；成功 close、失败重 open。"""
+    """连续失败达阈值则 open；冷却到点 half-open 放行一次试探；成功 close、失败重 open。
+
+    线程安全：monitor per-grid 并行后多线程共用一路电路。半开只授一个探针线程
+    （其余线程 allow()=False → CircuitOpenError）；探针线程自身可重入——429 中性
+    重试期间 call_with_retry 会对同一逻辑调用再次 allow()，不能把自己挡死。
+    """
 
     def __init__(self, failure_threshold=5, cooldown=30.0, clock=time.monotonic):
         self.failure_threshold = int(failure_threshold)
@@ -44,28 +50,38 @@ class CircuitBreaker:
         self._failures = 0
         self._opened_at = None
         self._half_open = False
+        self._probe_tid = None      # 半开探针的持有线程 id
+        self._lock = threading.Lock()
 
     def allow(self) -> bool:
-        if self._opened_at is None:
-            return True
-        if self.clock() - self._opened_at >= self.cooldown:
-            self._half_open = True
-            return True
-        return False
+        with self._lock:
+            if self._opened_at is None:
+                return True
+            if self._probe_tid is not None:
+                return self._probe_tid == threading.get_ident()
+            if self.clock() - self._opened_at >= self.cooldown:
+                self._half_open = True
+                self._probe_tid = threading.get_ident()
+                return True
+            return False
 
     def record_success(self) -> None:
-        self._failures = 0
-        self._opened_at = None
-        self._half_open = False
+        with self._lock:
+            self._failures = 0
+            self._opened_at = None
+            self._half_open = False
+            self._probe_tid = None
 
     def record_failure(self) -> None:
-        if self._half_open:
-            self._opened_at = self.clock()   # 试探失败 -> 重新 open
-            self._half_open = False
-            return
-        self._failures += 1
-        if self._failures >= self.failure_threshold:
-            self._opened_at = self.clock()
+        with self._lock:
+            if self._half_open:
+                self._opened_at = self.clock()   # 试探失败 -> 重新 open
+                self._half_open = False
+                self._probe_tid = None
+                return
+            self._failures += 1
+            if self._failures >= self.failure_threshold:
+                self._opened_at = self.clock()
 
 
 def call_with_retry(fn, policy, *, classify=classify_error, sleep=time.sleep,

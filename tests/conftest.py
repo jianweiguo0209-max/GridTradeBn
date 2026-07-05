@@ -32,6 +32,7 @@ def store():
         st = StateStore.in_memory()
         st.create_all()
         yield st
+        st.dispose_and_cleanup()   # 临时库文件即刻删除（in_memory 已改文件后端）
 
 
 @pytest.fixture

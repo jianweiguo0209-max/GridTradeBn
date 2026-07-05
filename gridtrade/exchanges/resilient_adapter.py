@@ -1,7 +1,15 @@
 """ResilientAdapter：把 P4f 健壮性（退避重试 + 熔断）包到内层 ExchangeAdapter 每个调用。
 
 execution/runtime 拿到本适配器即天然健壮（需求 1）。重试安全靠 client_oid 幂等。
+
+并发（monitor per-grid 并行化）：
+- 电路按类别拆三路（market_read / account_read / trade_write），单端点故障只熔断
+  所属类别，不再拖垮全局（7-02 fetch_my_trades 500 事故形态）。传 breaker= 保持
+  单路旧语义（互斥，二选一）。
+- 写方法全局串行：HL 按钱包要求 nonce 递增，并发写会撞 nonce。锁包**单次尝试**
+  而非整个重试循环——退避 sleep 期间释放，不让一个重试中的写卡住全部写。
 """
+import threading
 import time
 from typing import List, Optional
 
@@ -9,24 +17,63 @@ import pandas as pd
 
 from gridtrade.exchanges.base import (Balance, ExchangeAdapter, FundingPayment,
                                       Instrument, Order, Position, Trade)
-from gridtrade.exchanges.resilience import RetryPolicy, call_with_retry
+from gridtrade.exchanges.resilience import CircuitBreaker, RetryPolicy, call_with_retry
+
+# 写方法穷举（base 接口审计）：漏一个 = nonce 竞态。新增写接口必须同步进这张表。
+WRITE_METHODS = frozenset({
+    'create_limit_order', 'create_market_order', 'create_stop_order',
+    'cancel_order', 'cancel_all', 'set_leverage',
+})
+ACCOUNT_READ_METHODS = frozenset({
+    'fetch_balance', 'fetch_positions', 'fetch_my_trades',
+    'fetch_open_orders', 'fetch_funding_payments',
+})
+CATEGORIES = ('market_read', 'account_read', 'trade_write')
+
+
+def category_of(method_name: str) -> str:
+    if method_name in WRITE_METHODS:
+        return 'trade_write'
+    if method_name in ACCOUNT_READ_METHODS:
+        return 'account_read'
+    return 'market_read'
+
+
+def default_breakers() -> dict:
+    return {c: CircuitBreaker() for c in CATEGORIES}
 
 
 class ResilientAdapter(ExchangeAdapter):
-    def __init__(self, inner, *, policy=None, breaker=None,
+    def __init__(self, inner, *, policy=None, breaker=None, breakers=None,
                  sleep=time.sleep, rng=None):
+        if breaker is not None and breakers is not None:
+            raise ValueError('breaker（单路）与 breakers（按类别）互斥，二选一')
         self._inner = inner
         self.name = getattr(inner, 'name', 'resilient')
         self._policy = policy or RetryPolicy()
-        self._breaker = breaker
+        if breakers is not None:
+            self._breakers = dict(breakers)
+        elif breaker is not None:
+            self._breakers = {c: breaker for c in CATEGORIES}   # 旧语义：单路共享
+        else:
+            self._breakers = None
+        self._write_lock = threading.Lock()
         self._sleep = sleep
         self._rng = rng
 
     def _call(self, _name, *args, **kwargs):
         inner_fn = getattr(self._inner, _name)
-        return call_with_retry(lambda: inner_fn(*args, **kwargs), self._policy,
+        if _name in WRITE_METHODS:
+            def attempt():
+                with self._write_lock:      # 只锁单次尝试；退避 sleep 在锁外
+                    return inner_fn(*args, **kwargs)
+        else:
+            def attempt():
+                return inner_fn(*args, **kwargs)
+        breaker = self._breakers.get(category_of(_name)) if self._breakers else None
+        return call_with_retry(attempt, self._policy,
                                sleep=self._sleep, rng=self._rng,
-                               breaker=self._breaker)
+                               breaker=breaker)
 
     # ---- 行情（公共）----
     def list_instruments(self) -> List[Instrument]:

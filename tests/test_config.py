@@ -123,3 +123,11 @@ def test_scheduler_fetch_pace_ms_default_and_override():
     assert load_deploy_config(env={'EXCHANGE': 'fake'}).scheduler_fetch_pace_ms == 2000.0
     assert load_deploy_config(env={'EXCHANGE': 'fake',
                                    'SCHEDULER_FETCH_PACE_MS': '0'}).scheduler_fetch_pace_ms == 0.0
+
+
+def test_monitor_parallel_config():
+    cfg = load_deploy_config(env={})
+    assert cfg.monitor_parallel == 4 and cfg.monitor_unit_warn_sec == 30.0
+    cfg = load_deploy_config(env={'MONITOR_PARALLEL': '1',
+                                  'MONITOR_UNIT_WARN_SEC': '10'})
+    assert cfg.monitor_parallel == 1 and cfg.monitor_unit_warn_sec == 10.0

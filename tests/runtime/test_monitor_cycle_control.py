@@ -30,10 +30,28 @@ def test_monitor_cycle_consumes_one_command(store):
     assert cmds.list_recent()[0].status == CMD_DONE
 
 
-def test_monitor_cycle_halt_skips_replenish(store):
+def test_monitor_cycle_halt_skips_replenish(store, monkeypatch):
+    # halt 标志须传到每个网格单元的 monitor_grid(skip_replenish=True)（补单开关的唯一接缝）。
+    class _Grid:
+        id = 'g1'; symbol = 'BTC/USDT:USDT'; status = 'ACTIVE'
+        exchange = 'fake'; tag = ''; created_at = 0
+    class _ActiveGrids:
+        def list_active(self): return [_Grid()]
     flags = ControlFlagRepository(store); flags.set('trading_halted', True, actor='admin')
-    ex = _Executor(); mgr = _Manager(); mgr.executor = ex
-    run_monitor_cycle(_Reconciler(ex), mgr, flags=flags,
+    ex = _Executor(); ex.grids = _ActiveGrids()
+    mgr = _Manager(); mgr.executor = ex
+    mgr.signals = None; mgr.stop_cfg = {}; mgr.margin_rate = 0.05
+    seen = {}
+    def _fake_monitor_grid(executor, gid, symbol, stop_cfg, *, skip_replenish=False, **kw):
+        seen['skip'] = skip_replenish
+        return {'closed': False, 'reason': None, 'pnl_ratio': 0.0, 'fills': []}
+    monkeypatch.setattr('gridtrade.runtime.cycles.monitor_grid', _fake_monitor_grid)
+    class _Rec(_Reconciler):
+        def restore(self, gid): pass
+        def reconcile_open_orders(self, gid, sym): return {'canceled': 0, 'replaced': 0}
+        def check_position_drift(self, gid, sym): return None
+        def reconcile_fuses(self, gid, sym): return {}
+    run_monitor_cycle(_Rec(ex), mgr, flags=flags,
                       commands=CommandRepository(store), audit=AuditRepository(store),
                       exchange='hyperliquid')
-    assert mgr.last_skip is True                         # halt → monitor_all(skip_replenish=True)
+    assert seen['skip'] is True                          # halt → 单元收到 skip_replenish=True

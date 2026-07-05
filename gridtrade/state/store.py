@@ -1,16 +1,19 @@
 """StateStore：包装一个 SQLAlchemy Engine。
-in_memory() 用 SQLite StaticPool（多次 begin() 共享同一内存库）供测试；
+in_memory() 用每实例独立 SQLite 临时文件 + 连接池（测试/离线模式）；
 from_url() 供 Postgres 生产（如 postgresql+psycopg2://user:pw@host/db）。
 """
-from sqlalchemy import create_engine
-from sqlalchemy.pool import StaticPool
+import os
+import tempfile
+
+from sqlalchemy import create_engine, event
 
 from gridtrade.state.models import metadata
 
 
 class StateStore:
-    def __init__(self, engine):
+    def __init__(self, engine, tmp_path=None):
         self.engine = engine
+        self._tmp_path = tmp_path   # in_memory 的临时库文件；dispose_and_cleanup 删除
 
     @classmethod
     def from_url(cls, url: str) -> 'StateStore':
@@ -24,12 +27,34 @@ class StateStore:
 
     @classmethod
     def in_memory(cls) -> 'StateStore':
+        """一次性库（测试/离线）。曾用 :memory:+StaticPool（单连接），monitor
+        per-grid 并行后多线程并发游标互踩（InterfaceError）；改为每实例独立临时
+        文件 + 默认连接池：每线程独立连接，写冲突走 SQLITE_BUSY+timeout 等待，
+        并发语义与生产 PG 对齐。journal/synchronous 调成内存级速度。"""
+        fd, path = tempfile.mkstemp(prefix='gridtrade-', suffix='.db')
+        os.close(fd)
         engine = create_engine(
-            'sqlite://', future=True,
-            connect_args={'check_same_thread': False},
-            poolclass=StaticPool,
+            'sqlite:///' + path, future=True,
+            connect_args={'check_same_thread': False, 'timeout': 30},
         )
-        return cls(engine)
+
+        @event.listens_for(engine, 'connect')
+        def _fast_pragmas(dbapi_conn, _record):
+            cur = dbapi_conn.cursor()
+            cur.execute('PRAGMA journal_mode=MEMORY')
+            cur.execute('PRAGMA synchronous=OFF')
+            cur.close()
+
+        return cls(engine, tmp_path=path)
+
+    def dispose_and_cleanup(self) -> None:
+        """测试收尾：释放连接池并删除 in_memory 的临时库文件（PG store 只 dispose）。"""
+        self.engine.dispose()
+        if self._tmp_path is not None:
+            try:
+                os.unlink(self._tmp_path)
+            except OSError:
+                pass
 
     def create_all(self) -> None:
         metadata.create_all(self.engine)

@@ -230,3 +230,61 @@ def test_network_error_still_counts_every_attempt():
         call_with_retry(fn, _policy(max_attempts=4), sleep=lambda s: None,
                         rng=random.Random(0), breaker=breaker)
     assert breaker.allow() is False
+
+
+# ---- 并发语义（monitor per-grid 并行化前提）----
+
+def test_half_open_allows_exactly_one_probe_across_threads():
+    # 半开只放一个探针：并发 allow() 恰好一个 True，其余 False（旧无锁版会放一群探针）。
+    import threading
+    from gridtrade.exchanges.resilience import CircuitBreaker
+    clk = _Clock()
+    cb = CircuitBreaker(failure_threshold=1, cooldown=30.0, clock=clk)
+    cb.record_failure()                 # open
+    clk.t = 30.0                        # 冷却到点
+    results = []
+    barrier = threading.Barrier(8)
+    def worker():
+        barrier.wait()
+        results.append(cb.allow())
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads: t.start()
+    for t in threads: t.join()
+    assert sum(results) == 1
+
+
+def test_probe_thread_reentry_allowed_other_threads_blocked():
+    # 探针线程自身可重入（429 中性重试期间 allow 会被再次调用），别的线程仍被挡。
+    import threading
+    from gridtrade.exchanges.resilience import CircuitBreaker
+    clk = _Clock()
+    cb = CircuitBreaker(failure_threshold=1, cooldown=30.0, clock=clk)
+    cb.record_failure()
+    clk.t = 30.0
+    assert cb.allow() is True           # 本线程取得探针
+    assert cb.allow() is True           # 同线程重入放行（重试循环第 2 次尝试）
+    other = []
+    t = threading.Thread(target=lambda: other.append(cb.allow()))
+    t.start(); t.join()
+    assert other == [False]             # 他线程被挡
+    cb.record_success()                 # 探针成功 → 全关
+    t2 = threading.Thread(target=lambda: other.append(cb.allow()))
+    t2.start(); t2.join()
+    assert other == [False, True]
+
+
+def test_probe_failure_reopens_and_next_cooldown_grants_new_probe():
+    import threading
+    from gridtrade.exchanges.resilience import CircuitBreaker
+    clk = _Clock()
+    cb = CircuitBreaker(failure_threshold=1, cooldown=30.0, clock=clk)
+    cb.record_failure()
+    clk.t = 30.0
+    assert cb.allow() is True           # 探针
+    cb.record_failure()                 # 探针失败 → 重新 open（t=30）
+    assert cb.allow() is False
+    clk.t = 60.0
+    got = []
+    t = threading.Thread(target=lambda: got.append(cb.allow()))
+    t.start(); t.join()
+    assert got == [True]                # 新冷却到点，其他线程也能拿到新探针
