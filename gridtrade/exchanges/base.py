@@ -156,3 +156,26 @@ class ExchangeAdapter(ABC):
     def fetch_24h_quote_volumes(self) -> dict:
         """{canonical symbol: 24h 计价币成交额}。默认空 dict（无数据 → resolve_live_universe fail-open 跳过）。"""
         return {}
+
+    # ---- 账户级批量读（monitor 快照用）：默认逐 symbol 合成；HL 等账户级端点交易所覆写 ----
+    def fetch_my_trades_all(self, symbols, since_ms: Optional[int] = None) -> List[Trade]:
+        out: List[Trade] = []
+        for s in symbols:
+            out.extend(self.fetch_my_trades(s, since_ms=since_ms))
+        out.sort(key=lambda t: t.ts)
+        return out
+
+    def fetch_open_orders_all(self, symbols) -> List[Order]:
+        out: List[Order] = []
+        for s in symbols:
+            out.extend(self.fetch_open_orders(s))
+        return out
+
+    def fetch_positions_all(self, symbols) -> dict:
+        return {s: float(self.fetch_positions(s).net_size) for s in symbols}
+
+    def fetch_prices_all(self, symbols) -> dict:
+        return {s: float(self.fetch_price(s)) for s in symbols}
+
+    def fetch_funding_payments_all(self, symbols, since_ms: Optional[int] = None) -> dict:
+        return {s: self.fetch_funding_payments(s, since_ms=since_ms) for s in symbols}
