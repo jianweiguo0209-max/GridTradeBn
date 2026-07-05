@@ -21,6 +21,7 @@ primary_region = "nrt"
   EXCHANGE = "hyperliquid"
   HL_TESTNET = "false"              # ← mainnet，真金白银
   MONITOR_INTERVAL_SEC = "5"
+  MONITOR_PARALLEL = "1"            # ← mainnet 暂钉串行保底；testnet(默认4)验证 ≥2 换仓周期后翻 4（用户决定 2026-07-06）
   SCHEDULER_PERIOD = "12H"
   MAX_CONCURRENT = "20"
   SCHEDULER_RUN_ON_START = "false"  # ← 生产：避免每次自动部署把网格中途关开、烧真手续费
