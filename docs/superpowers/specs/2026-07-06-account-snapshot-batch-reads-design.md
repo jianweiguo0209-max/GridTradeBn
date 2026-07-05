@@ -58,11 +58,13 @@ class AccountSnapshot:
 顺序 5 次调用，全部走 ResilientAdapter（account_read / market_read 电路照罩、退避重试照旧）。
 任何一次重试耗尽 → 异常上抛（cycle 决定整轮跳过）。
 
-**游标口径**（调用方 cycles 计算）：
-- `trade_since_ms = min(各 ACTIVE 格的 fills.max_ts 或 grid.created_at) − 5min 重叠`。
-  顺带修掉现状新格 max_ts=0 → since=0 全量扫的旧毛病（新格用 created_at 起算）。
-- `funding_since_ms = min(各格 _funding_cursor)`（cursor 为 0/缺失时用 created_at，同现状
-  restore 语义）。
+**游标口径**（调用方 cycles 计算；实现修订 2026-07-06）：
+- `trade_since_ms = max(0, min(各 ACTIVE 格的 fills.max_ts) − 5min 重叠)`，与逐格路径
+  **严格等价**（无成交格 = 0）。原设计想顺带用 created_at 修新格全量扫——实现时发现
+  与测试替身（FakeExchange 逻辑计数器 ts）时基不兼容，且 HL since=0 也只回最近
+  2000 条（代价同现状每格行为），故放弃该顺带优化、保持双路径差分等价。
+- `funding_since_ms = min(各格 accounting.funding_cursor，0/缺失时 created_at)`（读 DB，
+  与 restore 语义一致；快照构建时单元的惰性 restore 尚未发生，不能依赖内存态）。
 - 每格消费时再按**本格游标**二次过滤（trades_for/funding_for 的 since_ms 参数），
   与现状逐格 since 语义一致；成交归属仍靠 by_oid（exchange_order_id → 网格线）匹配，
   快照只是供给面变化。

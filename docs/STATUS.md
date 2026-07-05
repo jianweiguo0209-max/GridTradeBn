@@ -92,7 +92,7 @@ gridtrade/
 ## 5. 部署（fly.io）— 当前 testnet 运行中
 
 **fly app `gridtrade-hl`（region nrt 东京）**，三个 process group（同一镜像）：
-- **monitor**：~5s 循环，对账补单 + 实时记账 + 止盈止损 + 跨进程惰性 restore。
+- **monitor**：~5s 循环，对账补单 + 实时记账 + 止盈止损 + 跨进程惰性 restore。per-grid 并行单元（`MONITOR_PARALLEL`，1=串行保底）+ 长轮中途心跳打点 + 熔断三路（market_read/account_read/trade_write）+ HL nonce 写锁。**读路径已快照化（2026-07-06，待部署）**：轮首 `AccountSnapshot` 5 次账户级调用（fills/orders/positions/allMids/funding，≈64 权重与格数解耦）替代逐格 ~6 调（~84 权重/格，曾致 mainnet 429 饱和、parallel 被迫回 1）；快照失败=整轮跳过（fail-safe）。**部署前须完成 spec「上线前硬性验证项」**（真 testnet 直调 ccxt `fetchMyTrades(None)`/`fetchOpenOrders(None)`/allMids 行为假设），见 `docs/superpowers/specs/2026-07-06-account-snapshot-batch-reads-design.md`。
 - **scheduler**：常驻、睡到整点跑（关旧 tag→选币→准入→开新）。
 - **web**：fly 第三进程（**常驻 ≥1 台 / long-live**，`min_machines_running=1`），FastAPI 只读 dashboard（系统健康/活跃网格/单网格明细/历史战绩）；登录鉴权。P1 明细页实时网格价格图：/grid/{id}/chart 片段端点（K 线走势 + 网格挂点/买卖挂单/已成交点/入场止损/当前价，服务端 SVG），原生 JS 每 5s 异步局部刷新（隐藏标签暂停），窗口 生命周期/1h/6h/24h；行情失败降级到 DB 层不崩。P2 控制台：kill 两档(halt/panic) + 关/开网格 + 暂停 scheduler，均经 control_commands 指令队列由 monitor 执行（web 零下单）；control_flags 标志门控；control_audit 审计。注：原设 scale-to-zero(min=0)，但 CI 滚动部署不为空的新进程组建首台机器，故改 min=1（见 deploy/DEPLOY.md）。P3 复盘分析：/analytics 页（权益/已实现曲线、tag 归因、成交分布、退出原因，全服务端 SVG）；真实手续费铺表；equity_snapshots 由 monitor 节流写（EQUITY_SNAPSHOT_INTERVAL_SEC，默认 300s）。所有服务端 SVG 图表（/analytics 与实时网格图）均带 Y 轴刻度 + X 轴时间(HH:MM)/类目标签 + 图例 + 数值标注（`dashboard/svgaxes.py` 共享纯函数；文本仅数值/时间/固定词 + svg_escape 兜底，守 |safe 边界）。
 
