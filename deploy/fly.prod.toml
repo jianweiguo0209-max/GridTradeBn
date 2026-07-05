@@ -21,7 +21,7 @@ primary_region = "nrt"
   EXCHANGE = "hyperliquid"
   HL_TESTNET = "false"              # ← mainnet，真金白银
   MONITOR_INTERVAL_SEC = "5"
-  MONITOR_PARALLEL = "1"            # per-grid 并行监控（2026-07-06 回到串行：并行 4→2 后 429 仍每几分钟一波——5 格串行本身已 ~85% 权重预算，并行只会放大突发；待监控权重优化(账户级批量/低频化)落地后再翻）
+  MONITOR_PARALLEL = "4"            # per-grid 并行监控（2026-07-06 快照版验证后回 4：读路径 AccountSnapshot 化，权重与格数/并发解耦、429 根因已除；1=串行保底）
   SCHEDULER_PERIOD = "12H"
   MAX_CONCURRENT = "20"
   SCHEDULER_RUN_ON_START = "false"  # ← 生产：避免每次自动部署把网格中途关开、烧真手续费
