@@ -50,10 +50,12 @@ def test_chart_missing_grid_404(store):
     assert c.get('/grid/nope/chart').status_code == 404
 
 
-def test_detail_page_has_livechart_and_poll(store):
+def test_detail_page_has_livechart_manual_refresh(store):
     _seed(store)
     c = TestClient(_app(store), base_url='https://testserver')
     c.post('/login', data={'username': 'admin', 'password': 'pw'})
     html = c.get('/grid/g1').text
     assert 'id="livechart"' in html
-    assert '/grid/g1/chart' in html and 'setInterval' in html
+    assert '/grid/g1/chart' in html
+    assert 'setInterval' not in html                 # 不自动轮询
+    assert 'id="chart-refresh"' in html              # 手动刷新按钮

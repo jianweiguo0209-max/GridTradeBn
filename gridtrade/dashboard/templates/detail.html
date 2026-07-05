@@ -5,6 +5,8 @@
   <div class="rangesel">
     走势：<a href="#" data-w="life">生命周期</a>
     <a href="#" data-w="1h">1h</a> <a href="#" data-w="6h">6h</a> <a href="#" data-w="24h">24h</a>
+    <button id="chart-refresh" type="button">刷新</button>
+    <span id="chart-updated"></span>
   </div>
   <div id="livechart">加载中…</div>
 </section>
@@ -13,18 +15,21 @@
   var gid = {{ d.grid.id | tojson }};
   var cur = 'life';
   var box = document.getElementById('livechart');
+  var upd = document.getElementById('chart-updated');
   function load(){
-    if (document.hidden) return;               // 隐藏标签不拉
     fetch('/grid/' + encodeURIComponent(gid) + '/chart?window=' + cur)
       .then(function(r){ return r.text(); })
-      .then(function(h){ box.innerHTML = h; })
+      .then(function(h){
+        box.innerHTML = h;
+        upd.textContent = '更新于 ' + new Date().toLocaleTimeString();
+      })
       .catch(function(){});
   }
   document.querySelectorAll('.rangesel a').forEach(function(a){
     a.addEventListener('click', function(e){ e.preventDefault(); cur = a.getAttribute('data-w'); load(); });
   });
+  document.getElementById('chart-refresh').addEventListener('click', load);
   load();
-  setInterval(load, 5000);
 })();
 </script>
 <p>status={{ d.grid.status }} dir={{ d.grid.direction }}
