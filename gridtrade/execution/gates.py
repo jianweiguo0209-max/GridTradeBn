@@ -118,6 +118,47 @@ class RiskBudgetGate(AdmissionGate):
         return GateResult(True, 'RiskBudgetGate')
 
 
+class MinNotionalGate(AdmissionGate):
+    """最小名义额门：预检每笔挂单名义额 ≥ 交易所最小下单额（HL 全市场 cost.min=$10）。
+
+    动机（mainnet 2026-07-05 实证）：全市场票池里高波动/低价币 v2 布网可达 41~149 档，
+    cap×lev×max_rate 摊到每档后单笔 < $10 → 开仓首单即被拒 → 留零挂单死 OPENING（靠
+    stuck-OPENING 自愈清理但整轮漏开仓）。在门链预检直接拒提案：不建死网格、拒因可观测。
+
+    口径与 executor.open 同源：grid_order_info(cap, lev, low, high, grid_count, ...,
+    min_amount, max_rate)，cap 用 executor._resolve_cap()（与真实开仓同一动态 cap）；
+    最低档名义额 = 每笔数量 × low_price（等量挂单，最低价档名义额最小）。
+    min_notional<=0 = 停用（默认，向后兼容：无此约束的交易所不受影响）。"""
+
+    def __init__(self, executor, min_notional, *, log=None):
+        self.executor = executor
+        self.min_notional = float(min_notional)
+        self.log = log
+
+    def check(self, proposal: GridProposal) -> GateResult:
+        if self.min_notional <= 0:
+            return GateResult(True, 'MinNotionalGate')
+        from gridtrade.core.grid_engine import grid_order_info
+        gp = proposal.grid_params
+        cap = (proposal.cap if proposal.cap is not None
+               else self.executor._resolve_cap())
+        gi = grid_order_info(cap, self.executor.leverage, gp['low_price'],
+                             gp['high_price'], int(gp['grid_count']),
+                             gp['stop_low_price'], gp['stop_high_price'],
+                             min_amount=self.executor.min_amount,
+                             max_rate=self.executor.max_rate)
+        if gi is None:
+            return GateResult(False, 'MinNotionalGate',
+                              'cap %.2f 无法建网（每笔数量<=0）' % cap)
+        worst = float(gi['每笔数量']) * float(gp['low_price'])   # 最低档名义额
+        if worst < self.min_notional:
+            return GateResult(False, 'MinNotionalGate',
+                              'per-order notional %.2f < min %.2f '
+                              '(cap=%.2f grids=%d)' % (worst, self.min_notional,
+                                                       cap, int(gp['grid_count'])))
+        return GateResult(True, 'MinNotionalGate')
+
+
 class MarginGate(AdmissionGate):
     """可用保证金门：实时查交易所可用余额(cash) >= 本提议所需(cap)，同轮累计扣减。
 

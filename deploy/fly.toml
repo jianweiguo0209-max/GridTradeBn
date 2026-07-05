@@ -28,6 +28,7 @@ primary_region = "nrt"
   MONITOR_INTERVAL_SEC = "5"
   SCHEDULER_PERIOD = "12H"
   MAX_CONCURRENT = "20"
+  MIN_ORDER_NOTIONAL = "10"    # 开仓预检：单笔名义额 ≥ HL 最小下单额（testnet 同 mainnet 口径）
   SCHEDULER_RUN_ON_START = "true"   # testnet 调试：scheduler 启动即跑一次；稳定后置 "false"
   # CAP / LEVERAGE / TOTAL_BUDGET / BLACKLIST_SYMBOLS 按需在此或 secrets 配置
 

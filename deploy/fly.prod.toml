@@ -29,7 +29,8 @@ primary_region = "nrt"
   # 去重）−黑名单(BLACKLIST_SYMBOLS，无条件生效)−24h 成交额地板(MIN_QUOTE_VOLUME_24H)，
   # 再由 select_grid_coin 做 55% 相对成交额过滤 + 因子排名选出当轮开仓币种。设计见
   # docs/superpowers/specs/2026-07-04-candidate-universe-port-design.md。
-  MIN_QUOTE_VOLUME_24H = "1000000"  # 全市场动态币池 $1M 绝对 24h 成交额地板（代码默认 0.0，仅 prod 生效）
+  MIN_QUOTE_VOLUME_24H = "1000000"
+  MIN_ORDER_NOTIONAL = "10"         # 开仓预检：单笔挂单名义额 ≥ HL 最小下单额（密网币直接门链拒，不留死 OPENING）  # 全市场动态币池 $1M 绝对 24h 成交额地板（代码默认 0.0，仅 prod 生效）
   BLACKLIST_SYMBOLS = ""            # 档0 硬禁名单，留空=不禁；上线前由用户填 HL coin 符号，如 "XXX/USDC:USDC,YYY/USDC:USDC"
   # 风控项（CAP / CAP_MIN / CAP_MAX / LEVERAGE）沿用 config.py 默认或按需 fly secrets 覆盖。
   # 单网格 cap = clamp(equity×CAP_EQUITY_FRAC, CAP_MIN, CAP_MAX)；每笔挂单 notional ≈

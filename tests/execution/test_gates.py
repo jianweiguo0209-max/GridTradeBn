@@ -276,3 +276,44 @@ def test_margin_gate_in_chain_filter_cumulative_and_per_batch_snapshot():
     kept2 = chain.filter(props)                           # 新批 -> begin_batch 重置
     assert len(kept2) == 2
     assert adapter.calls == 2                             # 每批仅快照一次余额
+
+
+class _SizerStub:
+    """MinNotionalGate 只依赖 executor 的 sizing 表面：_resolve_cap()/leverage/max_rate/min_amount。"""
+    def __init__(self, cap=102.0, leverage=5.0, max_rate=0.5, min_amount=0.0):
+        self._cap = cap
+        self.leverage = leverage
+        self.max_rate = max_rate
+        self.min_amount = min_amount
+
+    def _resolve_cap(self):
+        return self._cap
+
+
+def test_min_notional_gate_blocks_dense_grid():
+    # 密网币：cap=102/lev=5/max_rate=0.5、41 档 low=1.0 → 单笔最低档名义额≈$5 < $10 → 拒
+    from gridtrade.execution.gates import MinNotionalGate
+    gate = MinNotionalGate(_SizerStub(), min_notional=10.0)
+    p = _proposal(grid_params={'low_price': 1.0, 'high_price': 1.5, 'grid_count': 41,
+                               'stop_low_price': 0.9, 'stop_high_price': 1.6})
+    r = gate.check(p)
+    assert r.passed is False and r.gate == 'MinNotionalGate'
+    assert '10' in (r.reason or '')                       # 拒因含最小额，可观测
+
+
+def test_min_notional_gate_allows_sparse_grid():
+    # 疏网：同 cap、10 档 → 单笔≈$18.9 ≥ $10 → 放行
+    from gridtrade.execution.gates import MinNotionalGate
+    gate = MinNotionalGate(_SizerStub(), min_notional=10.0)
+    p = _proposal(grid_params={'low_price': 1.0, 'high_price': 1.5, 'grid_count': 10,
+                               'stop_low_price': 0.9, 'stop_high_price': 1.6})
+    assert gate.check(p).passed is True
+
+
+def test_min_notional_gate_disabled_when_zero():
+    # min_notional<=0 = 停用（默认，向后兼容：OKX 等无此约束的所不受影响）
+    from gridtrade.execution.gates import MinNotionalGate
+    gate = MinNotionalGate(_SizerStub(), min_notional=0.0)
+    p = _proposal(grid_params={'low_price': 1.0, 'high_price': 1.5, 'grid_count': 149,
+                               'stop_low_price': 0.9, 'stop_high_price': 1.6})
+    assert gate.check(p).passed is True
