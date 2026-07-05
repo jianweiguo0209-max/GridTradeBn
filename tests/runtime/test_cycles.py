@@ -221,7 +221,7 @@ def test_monitor_cycle_logs_per_grid_degraded(store):
     class _BadRec:
         ex = gx
         def restore(self, gid): pass
-        def reconcile_open_orders(self, gid, sym): raise RuntimeError('recon boom')
+        def reconcile_open_orders(self, gid, sym, snapshot=None): raise RuntimeError('recon boom')
     logs = []
     run_monitor_cycle(_BadRec(), mgr, log=logs.append)
     assert any('recon boom' in s for s in logs)

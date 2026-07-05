@@ -13,7 +13,9 @@ import time
 from typing import List
 
 from gridtrade.execution.events import GridClosed, OrderFilled
+from gridtrade.execution.grid_executor import _TRADE_REFETCH_OVERLAP_MS
 from gridtrade.execution.monitor import monitor_grid
+from gridtrade.execution.snapshot import build_account_snapshot
 from gridtrade.runtime.commands import consume_one
 from gridtrade.state.models import ACTIVE, CLOSING, FAILED, OPENING, now_ms
 
@@ -45,7 +47,7 @@ def restore_all(reconciler) -> List[str]:
     return restored
 
 
-def _grid_unit(reconciler, manager, grid, *, skip_replenish=False) -> dict:
+def _grid_unit(reconciler, manager, grid, *, skip_replenish=False, snapshot=None) -> dict:
     """单网格监控单元（worker 线程执行体）：restore→信号→monitor→reconcile 一气呵成。
 
     **sync 必须在 reconcile 之前**：否则 reconcile 把刚成交、尚未入账的单当「被丢」
@@ -71,15 +73,19 @@ def _grid_unit(reconciler, manager, grid, *, skip_replenish=False) -> dict:
         res = monitor_grid(ex, grid.id, grid.symbol, manager.stop_cfg,
                            margin_rate=manager.margin_rate,
                            skip_replenish=skip_replenish,
-                           pv_spike=pv_spike, funding_rate=funding_rate)
+                           pv_spike=pv_spike, funding_rate=funding_rate,
+                           snapshot=snapshot)
         out.update(res)
         if not res['closed']:
             out['stage'] = 'reconcile'
-            out['reconciled'] = reconciler.reconcile_open_orders(grid.id, grid.symbol)
-            d = reconciler.check_position_drift(grid.id, grid.symbol)   # C：净仓对账（只告警）
+            out['reconciled'] = reconciler.reconcile_open_orders(grid.id, grid.symbol,
+                                                                 snapshot=snapshot)
+            d = reconciler.check_position_drift(grid.id, grid.symbol,
+                                                snapshot=snapshot)   # C：净仓对账（只告警）
             if d is not None and not d['ok']:
                 out['drift'] = d
-            out['fuse'] = reconciler.reconcile_fuses(grid.id, grid.symbol)   # 保险丝三态
+            out['fuse'] = reconciler.reconcile_fuses(grid.id, grid.symbol,
+                                                     snapshot=snapshot)   # 保险丝三态
     except Exception as exc:              # 降级：单元故障不掀翻整轮（绝不吞 BaseException）
         out['error'] = repr(exc)
     out['elapsed'] = time.monotonic() - t0
@@ -142,16 +148,42 @@ def run_monitor_cycle(reconciler, manager, log=print, *,
 
     halted = bool(flags.get('trading_halted')) if flags is not None else False
     active = _active_grids(ex.grids)
+    snapshot = None
+    snap_failed = False
+    if active:
+        try:
+            # 游标口径与逐格路径严格等价：trade 用 fills.max_ts（无成交=0，同旧行为；
+            # 勿用 created_at 兜底——FakeExchange 等测试替身的成交 ts 是逻辑计数器，与
+            # epoch 不可比较，且 HL since=0 也只回最近 2000 条，代价同现状）。
+            # funding 游标读 DB（单元里的惰性 restore 尚未发生，不能依赖内存态），
+            # created_at 兜底与 restore 语义一致。
+            t_base, f_base = [], []
+            for g in active:
+                t_base.append(int(ex.fills.max_ts(g.id)))
+                acc = ex.accounting.get(g.id)
+                f_base.append(int(acc.funding_cursor) if (acc is not None and acc.funding_cursor)
+                              else int(g.created_at))
+            snapshot = build_account_snapshot(
+                ex.adapter, sorted({g.symbol for g in active}),
+                trade_since_ms=max(0, min(t_base) - _TRADE_REFETCH_OVERLAP_MS),
+                funding_since_ms=max(0, min(f_base)))
+        except Exception as exc:      # 整轮跳过（用户决定）：下轮重建；保险丝在交易所侧独立护网
+            snap_failed = True
+            log('[monitor] snapshot failed: %r (units skipped this round)' % exc)
     results: List[dict] = []
-    if parallel <= 1 or len(active) <= 1:     # 串行保底路径（MONITOR_PARALLEL=1 一键回退）
+    if snap_failed:
+        pass                          # 不派发任何单元；指令/equity/心跳照常
+    elif parallel <= 1 or len(active) <= 1:   # 串行保底路径（MONITOR_PARALLEL=1 一键回退）
         for grid in active:
-            results.append(_grid_unit(reconciler, manager, grid, skip_replenish=halted))
+            results.append(_grid_unit(reconciler, manager, grid,
+                                      skip_replenish=halted, snapshot=snapshot))
             _maybe_beat()
     else:
         next_slow_log = unit_warn_sec
         with _cf.ThreadPoolExecutor(max_workers=int(parallel)) as pool:
             pending = {pool.submit(_grid_unit, reconciler, manager, grid,
-                                   skip_replenish=halted): grid for grid in active}
+                                   skip_replenish=halted, snapshot=snapshot): grid
+                       for grid in active}
             while pending:
                 done, _ = _cf.wait(pending, timeout=1.0)
                 _maybe_beat()

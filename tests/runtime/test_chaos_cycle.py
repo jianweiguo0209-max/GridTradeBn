@@ -33,30 +33,34 @@ def build(store):
     return fake, faulty, gx, mgr
 
 
-def test_bad_grid_reconcile_does_not_block_healthy_grid(store):
-    # 一个网格 reconcile 持续故障 -> 降级记录，不阻塞另一网格的对账
+def test_read_fault_snapshot_skips_round_then_recovers(store):
+    # 语义校准（账户级快照后）：读路径=每轮 1 次账户级调用，故障 blast radius=一轮
+    # 整体跳过（不带残缺数据跑单元；HL 原生实现单端点本就原子），故障消退后下一轮
+    # 全格恢复。故障注入按 _all 方法名（FaultyAdapter 按名拦截，账户级读不再逐 symbol）。
     fake, faulty, gx, mgr = build(store)
     gid_a = gx.open('fake', SYM_A, GP)
     gid_b = gx.open('fake', SYM_B, GP)
     rec = Reconciler(gx)
-    # 恰好耗尽 max_attempts=2：先被处理的网格 reconcile 抛错降级，另一网格 schedule 已空 -> 成功
-    faulty._schedule['fetch_open_orders'] = [ccxt.OnMaintenance('m'), ccxt.OnMaintenance('m')]
-    out = run_monitor_cycle(rec, mgr)
-    assert len(out['degraded']) == 1                       # 仅坏网格降级
-    assert len(out['reconciled']) == 1                     # 健康网格仍完成对账
-    assert set(out['degraded']) | set(out['reconciled']) == {gid_a, gid_b}
+    faulty._schedule['fetch_my_trades_all'] = [ccxt.OnMaintenance('m'), ccxt.OnMaintenance('m')]
+    logs = []
+    out1 = run_monitor_cycle(rec, mgr, log=logs.append)
+    assert out1['monitored'] == []                         # 整轮跳过
+    assert any('snapshot failed' in s for s in logs)
+    out2 = run_monitor_cycle(rec, mgr)                     # 故障耗尽 → 下一轮全格恢复
+    assert set(out2['reconciled']) == {gid_a, gid_b}
 
 
-def test_bad_grid_monitor_does_not_block_healthy_grid(store):
-    # monitor_all 段同样隔离：一个网格 sync 故障 -> 记错降级，另一网格仍被 monitor
+def test_bad_grid_write_does_not_block_healthy_grid(store):
+    # 写路径仍逐格隔离：SYM_A 的重挂写被持续拒 → 仅该格 degraded，SYM_B 照常对账。
+    # 触发方式：丢单 + E2 宽限（2 轮）到期重挂 → create_limit_order 故障恰好耗尽重试。
     fake, faulty, gx, mgr = build(store)
-    gx.open('fake', SYM_A, GP)
-    gx.open('fake', SYM_B, GP)
+    gid_a = gx.open('fake', SYM_A, GP)
+    gid_b = gx.open('fake', SYM_B, GP)
     rec = Reconciler(gx)
-    # fetch_my_trades 仅 sync(monitor_all) 用、reconcile 不用 -> 隔离 monitor_all 段
-    faulty._schedule['fetch_my_trades'] = [ccxt.OnMaintenance('m'), ccxt.OnMaintenance('m')]
-    out = run_monitor_cycle(rec, mgr)
-    assert out['degraded'] == {}                           # reconcile 段不受影响
-    errored = [r for r in out['monitored'] if 'error' in r]
-    ok = [r for r in out['monitored'] if 'error' not in r]
-    assert len(errored) == 1 and len(ok) == 1              # 一坏一好
+    sell_a = [o for o in fake.fetch_open_orders(SYM_A) if o.side == 'sell'][0]
+    fake._open.pop(sell_a.id, None)                        # A 丢一张卖单（成交不可见）
+    run_monitor_cycle(rec, mgr)                            # 宽限第 1 轮：不重挂
+    faulty._schedule['create_limit_order'] = [ccxt.OnMaintenance('m'), ccxt.OnMaintenance('m')]
+    out = run_monitor_cycle(rec, mgr)                      # 第 2 轮：重挂 → 写故障耗尽
+    assert gid_a in out['degraded']                        # 坏格 reconcile 阶段降级
+    assert gid_b in out['reconciled'] and gid_a not in out['reconciled']

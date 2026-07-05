@@ -95,18 +95,34 @@ def test_parallel_stop_close_works(store):
     assert ids[1] in out['reconciled'] and ids[0] not in out['reconciled']
 
 
-def test_parallel_one_grid_error_isolated(store):
-    # 一格 fetch_my_trades 致命错：该格进 monitored error，其余格照常监控+对账。
+def test_parallel_one_grid_write_error_isolated(store):
+    # 写路径（补单）逐格隔离：ETH 补单被拒 → 该格 monitored error，BTC 照常。
+    # （读路径已快照化，读故障=快照失败整轮跳过，见 test_cycles_snapshot / test_chaos_cycle）
+    class _FailOrder:
+        def __init__(self, inner, fail_symbol):
+            self._inner = inner
+            self._fail_symbol = fail_symbol
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+        def create_limit_order(self, symbol, side, price, size, **kw):
+            if symbol == self._fail_symbol:
+                raise ccxt.ExchangeError('boom')
+            return self._inner.create_limit_order(symbol, side, price, size, **kw)
+
     ex, gx, mgr = _setup(store)
     ids = mgr.open_proposals([_proposal(BTC), _proposal(ETH, 't1')])
-    gx.adapter = _Wrapped(ex, fail_symbol=ETH, fail_exc=ccxt.ExchangeError('boom'))
+    rec = Reconciler(gx)
+    sell_eth = [o for o in ex.fetch_open_orders(ETH) if o.side == 'sell'][0]
+    ex._open.pop(sell_eth.id, None)   # ETH 丢单（成交不可见）→ E2 宽限 2 轮后重挂
+    gx.adapter = _FailOrder(ex, ETH)  # ETH 的一切下限价单被拒
+    run_monitor_cycle(rec, mgr, parallel=4)          # 宽限第 1 轮
     logs = []
-    out = run_monitor_cycle(Reconciler(gx), mgr, parallel=4, log=logs.append)
-    by_gid = {r['grid_id']: r for r in out['monitored']}
-    assert 'error' in by_gid[ids[1]] and 'boom' in by_gid[ids[1]]['error']
-    assert by_gid[ids[0]]['closed'] is False
+    out = run_monitor_cycle(rec, mgr, parallel=4, log=logs.append)   # 第 2 轮重挂 → 被拒
+    assert ids[1] in out['degraded'] and 'boom' in out['degraded'][ids[1]]
     assert ids[0] in out['reconciled'] and ids[1] not in out['reconciled']
-    assert any('monitor error' in s and 'boom' in s for s in logs)
+    by_gid = {r['grid_id']: r for r in out['monitored']}
+    assert by_gid[ids[0]]['closed'] is False
+    assert any('degraded' in s and 'boom' in s for s in logs)
 
 
 def test_beat_called_during_long_round_parallel_and_serial(store):

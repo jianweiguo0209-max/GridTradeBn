@@ -6,8 +6,16 @@ from gridtrade.state.models import CMD_DONE
 
 class _Grids:
     def list_active(self): return []
+class _Fills:
+    def max_ts(self, gid): return 0
+class _Accounting:
+    def get(self, gid): return None
 class _Executor:
-    def __init__(self): self.grids = _Grids(); self.closed = []
+    def __init__(self):
+        self.grids = _Grids(); self.closed = []
+        self.fills = _Fills(); self.accounting = _Accounting()
+        from gridtrade.exchanges.fake import FakeExchange
+        self.adapter = FakeExchange(instruments=[], price=1.0)   # 快照构建可用（返回空集）
     def is_loaded(self, gid): return True
     def close(self, gid, symbol, reason): self.closed.append(gid)
 class _Manager:
