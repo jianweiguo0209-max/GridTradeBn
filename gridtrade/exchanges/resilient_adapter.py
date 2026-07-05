@@ -27,6 +27,8 @@ WRITE_METHODS = frozenset({
 ACCOUNT_READ_METHODS = frozenset({
     'fetch_balance', 'fetch_positions', 'fetch_my_trades',
     'fetch_open_orders', 'fetch_funding_payments',
+    'fetch_my_trades_all', 'fetch_open_orders_all', 'fetch_positions_all',
+    'fetch_funding_payments_all',   # fetch_prices_all 不列 = market_read
 })
 CATEGORIES = ('market_read', 'account_read', 'trade_write')
 
@@ -140,6 +142,22 @@ class ResilientAdapter(ExchangeAdapter):
     def fetch_funding_payments(self, symbol: str,
                                since_ms: Optional[int] = None) -> List[FundingPayment]:
         return self._call('fetch_funding_payments', symbol, since_ms=since_ms)
+
+    # ---- 账户级批量读（monitor 快照）----
+    def fetch_my_trades_all(self, symbols, since_ms=None):
+        return self._call('fetch_my_trades_all', symbols, since_ms=since_ms)
+
+    def fetch_open_orders_all(self, symbols):
+        return self._call('fetch_open_orders_all', symbols)
+
+    def fetch_positions_all(self, symbols):
+        return self._call('fetch_positions_all', symbols)
+
+    def fetch_prices_all(self, symbols):
+        return self._call('fetch_prices_all', symbols)
+
+    def fetch_funding_payments_all(self, symbols, since_ms=None):
+        return self._call('fetch_funding_payments_all', symbols, since_ms=since_ms)
 
     # ---- 可选：标记价 K线 ----
     def fetch_mark_ohlcv(self, symbol: str, timeframe: str,

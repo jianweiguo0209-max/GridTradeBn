@@ -213,3 +213,32 @@ def test_write_lock_released_during_retry_backoff():
     resume.set()
     t1.join(); t2.join()
     assert inner.order == ['buy', 'mkt-sell', 'buy']
+
+
+def test_account_batch_methods_wrapped_with_categories():
+    # _all 读方法走电路：4 个账户读共 account_read 一路，prices_all 归 market_read。
+    from gridtrade.exchanges.resilience import CircuitOpenError
+    from gridtrade.exchanges.resilient_adapter import default_breakers
+
+    class _Inner3(_Inner):
+        def fetch_my_trades_all(self, symbols, since_ms=None):
+            self.calls.append(('fetch_my_trades_all', tuple(symbols)))
+            self._maybe_fail('fetch_my_trades_all')
+            return []
+        def fetch_positions_all(self, symbols):
+            self.calls.append(('fetch_positions_all', tuple(symbols)))
+            return {}
+        def fetch_prices_all(self, symbols):
+            self.calls.append(('fetch_prices_all', tuple(symbols)))
+            return {s: 1.0 for s in symbols}
+
+    brs = {k: CircuitBreaker(failure_threshold=2, cooldown=999.0, clock=lambda: 0.0)
+           for k in default_breakers()}
+    inner = _Inner3().fail('fetch_my_trades_all', 99, ccxt.NetworkError('down'))
+    ra = _resilient(inner, policy=RetryPolicy(max_attempts=1), breakers=brs)
+    for _ in range(2):
+        with pytest.raises(ccxt.NetworkError):
+            ra.fetch_my_trades_all(['X'])
+    with pytest.raises(CircuitOpenError):
+        ra.fetch_positions_all(['X'])          # 同 account_read 路被熔断
+    assert ra.fetch_prices_all(['X']) == {'X': 1.0}   # market_read 不受影响
