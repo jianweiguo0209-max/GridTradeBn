@@ -204,20 +204,44 @@ def simulate_tasks(data_tasks, *, leverage, fee_rate=0.0005, max_rate=0.5, stop_
     return pd.DataFrame(results) if results else pd.DataFrame(columns=_RESULT_COLS)
 
 
+def filter_tasks_symbol_lock(data_tasks, period='12H'):
+    """镜像实盘 SymbolLockGate 语义的回测过滤：同币在上一格开仓后 period 锁窗内再被选中
+    → 剔除且不递补（该 run_time 该币空过）；恰满 period 边界=锁释放（实盘轮换同刻关旧开新）。
+    近似注记：实盘止损提前退出会提前释放锁（四窗实测提前退出仅 ~4% 格），本过滤按固定
+    period 锁，偏保守。返回 (保留的 tasks 原对象原顺序, 剔除数)。"""
+    td = pd.to_timedelta(period)
+    locked_until = {}
+    kept = []
+    n_rejected = 0
+    for task in data_tasks:
+        rt, sym = task[0], task[2]
+        if sym in locked_until and rt < locked_until[sym]:
+            n_rejected += 1
+            continue
+        locked_until[sym] = rt + td
+        kept.append(task)
+    return kept, n_rejected
+
+
 def run_backtest(cache, universe, window_start, window_end, strategy_config, factors,
                  *, timeframe='1h', sim_timeframe=None, fee_rate=0.0005,
                  max_rate=0.5, leverage=None, min_quote_volume=0.0, blacklist=(),
-                 workers=1, log=print):
+                 workers=1, symbol_lock=False, log=print):
     """timeframe: 选币因子所用 K 线周期（换仓周期粒度，默认 1h）。
     sim_timeframe: 持仓成交仿真所用 K 线周期（None=沿用 timeframe）。传 '1m' 可解耦——
     选币仍在 1h 上（因子行为不变），持仓在 1m 上跑高保真触网/成交。
     workers: 网格仿真并行进程数（>1 用 ProcessPoolExecutor；结果与串行逐位一致）。
+    symbol_lock: True=套用实盘 SymbolLockGate 同口径过滤（同币 period 锁窗内重选剔除，
+    默认 False 保历史基线可比）。
     扫参请直接用 build_grid_tasks（一次）+ simulate_tasks（多次），避免重复选币。"""
     lev = leverage if leverage is not None else strategy_config['leverage']
     tasks = build_grid_tasks(cache, universe, window_start, window_end, strategy_config,
                              factors, timeframe=timeframe,
                              sim_timeframe=sim_timeframe, min_quote_volume=min_quote_volume,
                              blacklist=blacklist, workers=workers, log=log)
+    if symbol_lock:
+        tasks, n_rej = filter_tasks_symbol_lock(tasks, period=strategy_config['period'])
+        log('[BT] symbol_lock: rejected %d tasks (每币≤1，与实盘 SymbolLockGate 同口径)' % n_rej)
     return simulate_tasks(tasks, leverage=lev, fee_rate=fee_rate, max_rate=max_rate,
                           stop_cfg=strategy_config['stop_loss_config'],
                           active_stop_mode=strategy_config.get('active_stop_mode', 'pv'),
@@ -366,6 +390,9 @@ def main(argv=None):
     t0 = time.time()
     tasks = assemble_grid_tasks(cache, grids, HL_STRATEGY,
                                 sim_timeframe=(None if sim_tf == '1h' else sim_tf), timeframe='1h')
+    if os.environ.get('BT_SYMBOL_LOCK', '').lower() in ('1', 'true', 'on'):
+        tasks, n_rej = filter_tasks_symbol_lock(tasks, period=HL_STRATEGY['period'])
+        print('[BT] symbol_lock: rejected %d tasks (每币≤1，与实盘 SymbolLockGate 同口径)' % n_rej)
     df = simulate_tasks(tasks, leverage=HL_STRATEGY['leverage'],
                         stop_cfg=HL_STRATEGY['stop_loss_config'],
                         active_stop_mode=HL_STRATEGY.get('active_stop_mode', 'pv'),

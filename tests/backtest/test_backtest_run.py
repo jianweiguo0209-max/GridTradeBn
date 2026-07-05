@@ -108,3 +108,38 @@ def test_main_reservoir_guard_before_network(monkeypatch):
         B.main(['2025-07-01', '2025-07-20', '1m'])   # warm_start=2025-06-17 < 2025-07-31
     msg = str(ei.value)
     assert 'Reservoir' in msg and '2025-08-14' in msg   # 报错含归档起点换算出的最早窗口起点
+
+
+def test_filter_tasks_symbol_lock_semantics():
+    # 镜像实盘 SymbolLockGate：同币 12h 锁窗内再选中 → 剔除且不递补；跨币不互扰；顺序保持。
+    import pandas as pd
+    from gridtrade.backtest.backtest_run import filter_tasks_symbol_lock
+    def t(rt, sym):
+        return (pd.Timestamp(rt), 0, sym, 1.0, {}, None, None)
+    tasks = [t('2026-01-01 00:00', 'A'),
+             t('2026-01-01 05:00', 'A'),    # A 锁窗内(5h) → 剔
+             t('2026-01-01 05:00', 'B'),    # 异币不受 A 锁影响 → 留
+             t('2026-01-01 12:00', 'A'),    # 恰好 12h 边界=锁释放 → 留（实盘轮换同刻关旧开新）
+             t('2026-01-01 16:00', 'B'),    # B 锁窗内(11h) → 剔
+             t('2026-01-01 23:00', 'A')]    # A 第二格锁窗内(11h) → 剔
+    kept, n_rejected = filter_tasks_symbol_lock(tasks, period='12H')
+    assert [(str(x[0]), x[2]) for x in kept] == [
+        ('2026-01-01 00:00:00', 'A'), ('2026-01-01 05:00:00', 'B'),
+        ('2026-01-01 12:00:00', 'A')]
+    assert n_rejected == 3
+    assert kept == [tasks[0], tasks[2], tasks[3]]   # 原对象、原顺序（零改写）
+
+
+def test_run_backtest_symbol_lock_differential(tmp_path):
+    # 差分：lock on 的网格集是 off 的真子集（只剔不增；默认 off 行为不变）。
+    import pandas as pd
+    from gridtrade.backtest.backtest_run import run_backtest
+    syms = ['AAA/USDT:USDT', 'BBB/USDT:USDT', 'CCC/USDT:USDT', 'DDD/USDT:USDT']
+    cache = _seed_cache(tmp_path, syms)
+    ws, we = pd.Timestamp('2024-01-10 00:00:00'), pd.Timestamp('2024-01-11 00:00:00')
+    df_off = run_backtest(cache, syms, ws, we, _strategy(), FACTORS, timeframe='1h')
+    df_on = run_backtest(cache, syms, ws, we, _strategy(), FACTORS, timeframe='1h',
+                         symbol_lock=True)
+    assert len(df_off) > len(df_on) > 0              # 每小时同币重选场景下必有剔除
+    key = lambda d: set(zip(d['run_time'].astype(str), d['symbol']))
+    assert key(df_on) <= key(df_off)                 # 真子集：只剔不增
