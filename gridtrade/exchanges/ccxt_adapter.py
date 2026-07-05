@@ -146,6 +146,15 @@ class CcxtAdapter(ExchangeAdapter):
                 return Position(symbol, net, float(p.get('entryPrice') or 0.0))
         return Position(symbol, 0.0, 0.0)
 
+    def _to_trade(self, r) -> Trade:
+        return Trade(
+            id=str(r['id']),
+            client_oid=str((r.get('info', {}) or {}).get('clOrdId') or r.get('order') or r['id']),
+            symbol=self.to_canonical(r['symbol']), side=r['side'],
+            price=float(r['price']), size=float(r['amount']),
+            fee=float((r.get('fee') or {}).get('cost') or 0.0), ts=int(r['timestamp']),
+            order_id=(str(r['order']) if r.get('order') is not None else None))
+
     def _to_order(self, r) -> Order:
         return Order(
             id=str(r['id']),
@@ -199,16 +208,8 @@ class CcxtAdapter(ExchangeAdapter):
         return [self._to_order(r) for r in self.client.fetch_open_orders(self.to_native(symbol))]
 
     def fetch_my_trades(self, symbol, since_ms=None) -> List[Trade]:
-        out = []
-        for r in self.client.fetch_my_trades(self.to_native(symbol), since=since_ms):
-            out.append(Trade(
-                id=str(r['id']),
-                client_oid=str((r.get('info', {}) or {}).get('clOrdId') or r.get('order') or r['id']),
-                symbol=self.to_canonical(r['symbol']), side=r['side'],
-                price=float(r['price']), size=float(r['amount']),
-                fee=float((r.get('fee') or {}).get('cost') or 0.0), ts=int(r['timestamp']),
-                order_id=(str(r['order']) if r.get('order') is not None else None)))
-        return out
+        return [self._to_trade(r)
+                for r in self.client.fetch_my_trades(self.to_native(symbol), since=since_ms)]
 
     def set_leverage(self, symbol, leverage) -> None:
         self.client.set_leverage(leverage, self.to_native(symbol))

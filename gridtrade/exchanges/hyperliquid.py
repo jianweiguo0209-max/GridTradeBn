@@ -57,6 +57,73 @@ class HyperliquidAdapter(CcxtAdapter):
         out.sort(key=lambda p: p.ts)
         return out
 
+    # ---- 账户级批量读（HL 原生：fills/orders/positions/funding 端点本就账户级）----
+    def _coin_map(self):
+        # HL 原生 coin 名（如 'kPEPE'）→ canonical symbol。必须经 ccxt markets 映射，
+        # 勿 f-string 拼接（大小写/前缀会错）。实例内缓存（新上币重启进程后可见）。
+        if getattr(self, '_coin_map_cache', None) is None:
+            self.client.load_markets()
+            m2 = {}
+            for m in self.client.markets.values():
+                if m.get('swap') is not True:
+                    continue
+                coin = ((m.get('info') or {}).get('name')) or m.get('base')
+                m2[coin] = self.to_canonical(m['symbol'])
+            self._coin_map_cache = m2
+        return self._coin_map_cache
+
+    def fetch_my_trades_all(self, symbols, since_ms=None):
+        want = set(symbols)
+        out = [self._to_trade(r) for r in self.client.fetch_my_trades(None, since=since_ms)]
+        out = [t for t in out if t.symbol in want]
+        out.sort(key=lambda t: t.ts)
+        return out
+
+    def fetch_open_orders_all(self, symbols):
+        want = set(symbols)
+        return [o for o in (self._to_order(r) for r in self.client.fetch_open_orders(None))
+                if o.symbol in want]
+
+    def fetch_positions_all(self, symbols):
+        want = set(symbols)
+        out = {}
+        for p in self.client.fetch_positions():
+            sym = self.to_canonical(p['symbol'])
+            if sym not in want:
+                continue
+            contracts = float(p.get('contracts') or 0.0)
+            out[sym] = contracts if p.get('side') == 'long' else -contracts
+        return out
+
+    def fetch_prices_all(self, symbols):
+        # allMids 权重 2（fetchTickers 走高权重端点，不用）
+        mids = self.client.publicPostInfo({'type': 'allMids'}) or {}
+        cmap = self._coin_map()
+        want = set(symbols)
+        return {cmap[c]: float(px) for c, px in mids.items()
+                if cmap.get(c) in want}
+
+    def fetch_funding_payments_all(self, symbols, since_ms=None):
+        # userFunding 本就账户级且把查询 symbol 盖到每行（见 fetch_funding_payments 注释）；
+        # 任取一个 symbol 触发查询，按 info.delta.coin 分组回各币种。
+        probe = symbols[0] if symbols else None
+        rows = self.client.fetch_funding_history(
+            self.to_native(probe) if probe else None, since=since_ms)
+        cmap = self._coin_map()
+        out = {s: [] for s in symbols}
+        for r in rows:
+            ts = int(r['timestamp'])
+            if since_ms is not None and ts < since_ms:
+                continue
+            coin = ((r.get('info') or {}).get('delta') or {}).get('coin')
+            sym = cmap.get(coin)
+            if sym not in out:
+                continue
+            out[sym].append(FundingPayment(ts=ts, amount=-float(r['amount'])))
+        for s in out:
+            out[s].sort(key=lambda p: p.ts)
+        return out
+
     def create_market_order(self, symbol, side, size, *,
                             reduce_only=False, client_oid=None):
         # HL 无真正市价单：ccxt 需一个参考价来算滑点上限（默认 5%）。传当前价。
