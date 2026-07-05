@@ -180,8 +180,17 @@ class GridExecutor:
                     if (opp_line, opp_side) not in open_lines:
                         p = price_array[opp_line]
                         oid = self._next_oid(grid_id, opp_line)
-                        order = self.adapter.create_limit_order(symbol, opp_side, p, order_num,
-                                                                post_only=False, client_oid=oid)
+                        try:
+                            order = self.adapter.create_limit_order(symbol, opp_side, p, order_num,
+                                                                    post_only=False, client_oid=oid)
+                        except Exception as exc:
+                            # 线上只有异常字符串可见：交易所拒补单（如 HL min $10）时必须带上
+                            # 实际参数，否则"合法名义额为何被拒"不可查（2026-07-05 VVV 之谜）。
+                            # 保留原异常类型（重试/熔断分类、monitor 降级路径不变）。
+                            raise type(exc)(
+                                'replenish %s %s line=%d px=%.8g sz=%.8g notional=%.2f: %s'
+                                % (symbol, opp_side, opp_line, p, order_num,
+                                   p * order_num, exc)) from exc
                         self.orders.upsert(GridOrder(client_oid=oid, grid_id=grid_id, line_index=opp_line,
                                                      side=opp_side, price=p, size=order_num, status='open',
                                                      exchange_order_id=getattr(order, 'id', None)))

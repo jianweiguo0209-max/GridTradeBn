@@ -77,3 +77,21 @@ def test_replenish_idempotent_on_resync(store):
     res2 = gx.sync(gid, SYM)                                       # 二次 sync：无新成交
     assert res2['new_fills'] == 0
     assert len(fake.fetch_open_orders(SYM)) == open_after_first    # 不重复补单
+
+
+def test_replenish_invalid_order_error_carries_order_params(store):
+    # 可观测性：补单被交易所拒（如 HL min $10）时，异常须携带实际下单参数
+    # （side/价/量/名义额）——线上只有异常字符串可见，缺参数则根因不可查
+    # （2026-07-05 VVV $26 合法补单被拒 $10 之谜的排查缺口）。
+    fake, faulty, gx = build_stack(store)
+    gid = gx.open('fake', SYM, GP)
+    _arm_pending_replenish(fake, gx, gid)          # 下次 sync 将补 sell@line5
+    faulty._schedule['create_limit_order'] = [
+        ccxt.InvalidOrder('Order must have minimum value of $10.')]
+    with pytest.raises(ccxt.InvalidOrder) as ei:
+        gx.sync(gid, SYM)
+    msg = str(ei.value)
+    assert 'replenish' in msg and SYM in msg       # 哪个网格动作、哪个币
+    assert 'sell' in msg                           # 方向
+    assert 'notional=' in msg and 'px=' in msg and 'sz=' in msg   # 价/量/名义额全带
+    assert 'minimum value' in msg                  # 原始交易所错误保留
