@@ -42,12 +42,14 @@ class Reconciler:
                                        else g.created_at)
         ex._fuses[grid_id] = {'low': g.fuse_low_oid, 'high': g.fuse_high_oid}
 
-    def reconcile_open_orders(self, grid_id, symbol):
+    def reconcile_open_orders(self, grid_id, symbol, snapshot=None):
         ex = self.ex
         # 按 exchange order id 对账（跨所通用；HL open order 只带 oid、不带我方 cloid）。
         expected = {o.exchange_order_id: o for o in ex.orders.list_open_by_grid(grid_id)
                     if o.exchange_order_id}
-        on_exchange = {o.id: o for o in ex.adapter.fetch_open_orders(symbol)}
+        src = (snapshot.orders_for(symbol) if snapshot is not None
+               else ex.adapter.fetch_open_orders(symbol))
+        on_exchange = {o.id: o for o in src}
 
         # 保险丝 oid 排除于「unexpected 撤单」循环：HL 默认 fetch_open_orders 走
         # frontendOpenOrders（含 trigger/stop 单），保险丝不在 grid_orders(expected)，
@@ -91,7 +93,7 @@ class Reconciler:
                 missing.pop(coid)
         return {'canceled': canceled, 'replaced': replaced}
 
-    def check_position_drift(self, grid_id, symbol, *, tol_lots=1.5):
+    def check_position_drift(self, grid_id, symbol, *, tol_lots=1.5, snapshot=None):
         """净仓对账（防御纵深）：比较模型净仓（grid_accounting.net_position）与交易所真实持仓。
 
         **只读告警**，不自动改仓（自动纠仓风险高，留人工/后续处置）。容差 = tol_lots × 每格量
@@ -105,35 +107,43 @@ class Reconciler:
         geom = ex._geom.get(grid_id)
         order_num = float(geom['order_num']) if geom else 0.0
         model = float(acc.net_position)
-        real = float(ex.adapter.fetch_positions(symbol).net_size)
+        if snapshot is not None:
+            pos = snapshot.position(symbol)
+            real = float(pos) if pos is not None else 0.0   # 快照无仓位行 = 交易所 flat
+        else:
+            real = float(ex.adapter.fetch_positions(symbol).net_size)
         drift = model - real
         tol = tol_lots * order_num
         return {'grid_id': grid_id, 'model': model, 'exchange': real,
                 'drift': drift, 'tol': tol, 'ok': abs(drift) <= tol}
 
-    def _fuse_filled(self, symbol, oid, since_ms=None):
+    def _fuse_filled(self, symbol, oid, since_ms=None, snapshot=None):
         """保险丝是否已成交。按 exchange order id 匹配（唯一）；since_ms 作限时优化，
         传 None 则全量扫（FakeExchange 用逻辑计数器 ts，与 epoch ms 不可比较时退化全量）。
+        快照路径：快照 trades 窗口起点 ≤ 全格最小游标，宕机窗口内的触发成交必在其中。
         """
         if oid is None:
             return False
-        return any(t.order_id == oid
-                   for t in self.ex.adapter.fetch_my_trades(symbol, since_ms=since_ms))
+        trades = (snapshot.trades_for(symbol) if snapshot is not None
+                  else self.ex.adapter.fetch_my_trades(symbol, since_ms=since_ms))
+        return any(t.order_id == oid for t in trades)
 
-    def reconcile_fuses(self, grid_id, symbol):
+    def reconcile_fuses(self, grid_id, symbol, snapshot=None):
         """灾难保险丝三态对账：在挂→无动作；被丢→重挂；已触发→撑网全拆。"""
         ex = self.ex
         if not ex.stop_orders_enabled:
             return {'replaced': 0, 'fired': False}
         g = ex.grids.get(grid_id)
-        on_exchange = {o.id for o in ex.adapter.fetch_open_orders(symbol)}
+        src = (snapshot.orders_for(symbol) if snapshot is not None
+               else ex.adapter.fetch_open_orders(symbol))
+        on_exchange = {o.id for o in src}
         specs = [('low', 'sell', g.stop_low_price, g.fuse_low_oid),
                  ('high', 'buy', g.stop_high_price, g.fuse_high_oid)]
         replaced = 0
         for key, side, trigger, oid in specs:
             if oid is not None and oid in on_exchange:
                 continue                                   # 在挂
-            if self._fuse_filled(symbol, oid):
+            if self._fuse_filled(symbol, oid, snapshot=snapshot):
                 ex.close(grid_id, symbol, '保险丝触发')   # 已触发 -> 撑网全拆
                 return {'replaced': replaced, 'fired': True}
             # 被丢（或迁移空 oid）-> (重)挂，回写新 oid
