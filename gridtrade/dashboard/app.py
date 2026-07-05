@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -221,6 +221,32 @@ def create_app(store, adapter, *, username: str, password_hash: str,
                                          tz_name=display_tz),
             'exits': an.exit_reason_stats(store, start_ms=start_ms),
         }
+        from datetime import datetime, timedelta, timezone
+        today = datetime.now(timezone.utc).date()
+        ctx['export_start'] = (today - timedelta(days=30)).isoformat()
+        ctx['export_end'] = today.isoformat()
         return templates.TemplateResponse(request, 'analytics.html', ctx)
+
+    def _export_csv(request: Request, start: str, end: str, kind: str):
+        if not _user(request):
+            return RedirectResponse('/login', status_code=302)
+        from gridtrade.dashboard import export_csv as ex
+        try:
+            s, e = ex.parse_day_ms(start), ex.parse_day_ms(end, end=True)
+        except ValueError:
+            return PlainTextResponse('start/end 需为 YYYY-MM-DD', status_code=400)
+        if s > e:
+            return PlainTextResponse('start 不能晚于 end', status_code=400)
+        body = ex.grids_csv(store, s, e) if kind == 'grids' else ex.fills_csv(store, s, e)
+        return PlainTextResponse(body, media_type='text/csv; charset=utf-8', headers={
+            'Content-Disposition': 'attachment; filename="%s_%s_%s.csv"' % (kind, start, end)})
+
+    @app.get('/analytics/export/grids.csv')
+    def export_grids(request: Request, start: str = '', end: str = ''):
+        return _export_csv(request, start, end, 'grids')
+
+    @app.get('/analytics/export/fills.csv')
+    def export_fills(request: Request, start: str = '', end: str = ''):
+        return _export_csv(request, start, end, 'fills')
 
     return app

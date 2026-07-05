@@ -35,4 +35,13 @@
 <td>{{ e.share | fmt_pct }}</td>
 <td class="{{ e.avg_pnl | pnl_class }}">{{ e.avg_pnl | fmt_num }}</td></tr>{% endfor %}
 </tbody></table>
+
+<h2>数据导出</h2>
+<form method="get" action="/analytics/export/grids.csv">
+  起 <input type="date" name="start" value="{{ export_start }}">
+  止 <input type="date" name="end" value="{{ export_end }}">
+  <button>导出网格 CSV</button>
+  <button formaction="/analytics/export/fills.csv">导出成交明细 CSV</button>
+  <small>（UTC 日历天、含两端；口径=周期内关闭的网格，成交明细为这些网格的全部成交）</small>
+</form>
 {% endblock %}
