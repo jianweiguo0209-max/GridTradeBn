@@ -99,7 +99,7 @@ def load_deploy_config(env=None) -> DeployConfig:
         max_concurrent=_i(env, 'MAX_CONCURRENT', 20),
         total_budget=_f(env, 'TOTAL_BUDGET', 1_000_000.0),
         default_cap=_f(env, 'DEFAULT_CAP', cap),   # 未设 -> 用 cap
-        blacklist=_csv(env, 'BLACKLIST_SYMBOLS'),
+        blacklist=_csv(env, 'BLACKLIST_SYMBOLS') or DEFAULT_TIER_POLICY.tier0,
         whitelist=_csv(env, 'UNIVERSE_WHITELIST'),
         scheduler_run_on_start=_b(env, 'SCHEDULER_RUN_ON_START', False),
         dashboard_user=_s(env, 'DASHBOARD_USER', 'admin'),
@@ -122,6 +122,21 @@ def load_deploy_config(env=None) -> DeployConfig:
 
 
 # ---- 默认策略常量（镜像 account_0/config.py 已验证参数；可在构造触发器/执行器时覆盖）----
+from gridtrade.core.tier_policy import TierPolicy
+
+# 三档名单唯一事实源（spec 2026-07-06-tiered-*）：实盘默认与回测默认都取此处；
+# env（实盘 BLACKLIST_SYMBOLS / 回测 BT_TIER0 等）只作覆盖（运维紧急面/扫参面）。
+DEFAULT_TIER_POLICY = TierPolicy(
+    tier0=('BTC/USDC:USDC', 'ETH/USDC:USDC', 'VINE/USDC:USDC', 'NEO/USDC:USDC',
+           'PEOPLE/USDC:USDC', 'KNEIRO/USDC:USDC', 'MOODENG/USDC:USDC',
+           'FARTCOIN/USDC:USDC', 'CFX/USDC:USDC'),
+    # legacy black_dict["0"] 25 币中 HL 在市 9 个（NEIRO→k 前缀 KNEIRO）；未上市 16 币
+    # 不猜译名（PI/DEGEN/ALCH/MAX/OL/MASK/ACT/SONIC/BR/RDNT/MAGIC/CSPR/LOOKS/MEW/
+    # NEIROETH/IP），上市巡检再补。
+    tier1=(),
+    tier2_cap=1,   # 当前实盘现实（SymbolLockGate 每币≤1）；回测评估后另批准再调
+)
+
 DEFAULT_STRATEGY_CONFIG = {
     'strategy_name': 'gridtrade',
     'strategy_tag': 'gt0',          # 不含中文/下划线/特殊字符

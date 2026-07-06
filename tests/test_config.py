@@ -68,11 +68,22 @@ def test_default_cap_falls_back_to_cap_when_unset():
     assert cfg.cap == 300.0 and cfg.default_cap == 300.0   # default_cap 未设 -> 用 cap
 
 
-def test_blacklist_parsing():
-    assert load_deploy_config(env={}).blacklist == ()
+def test_blacklist_defaults_to_tier0_env_overrides():
+    # 名单单源（spec 2026-07-06-tiered-* 同源性①）：env 未设/空串 → DEFAULT_TIER_POLICY.tier0；
+    # 非空 → 覆盖（运维紧急面）。
+    from gridtrade.config import DEFAULT_TIER_POLICY
+    assert load_deploy_config(env={}).blacklist == DEFAULT_TIER_POLICY.tier0
+    assert load_deploy_config(env={'BLACKLIST_SYMBOLS': ''}).blacklist == DEFAULT_TIER_POLICY.tier0
     cfg = load_deploy_config(env={'BLACKLIST_SYMBOLS': 'BTC, ETH ,SOL'})
     assert cfg.blacklist == ('BTC', 'ETH', 'SOL')      # 去空白
-    assert load_deploy_config(env={'BLACKLIST_SYMBOLS': ''}).blacklist == ()
+
+
+def test_default_tier_policy_content():
+    from gridtrade.config import DEFAULT_TIER_POLICY
+    assert 'FARTCOIN/USDC:USDC' in DEFAULT_TIER_POLICY.tier0     # legacy 档0 移植
+    assert 'KNEIRO/USDC:USDC' in DEFAULT_TIER_POLICY.tier0       # NEIRO→HL k 前缀
+    assert len(DEFAULT_TIER_POLICY.tier0) == 9
+    assert DEFAULT_TIER_POLICY.tier1 == () and DEFAULT_TIER_POLICY.tier2_cap == 1
 
 
 def test_whitelist_parsing():

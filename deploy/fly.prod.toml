@@ -32,11 +32,9 @@ primary_region = "nrt"
   # docs/superpowers/specs/2026-07-04-candidate-universe-port-design.md。
   MIN_QUOTE_VOLUME_24H = "1000000"
   MIN_ORDER_NOTIONAL = "10"         # 开仓预检：单笔挂单名义额 ≥ HL 最小下单额（密网币直接门链拒，不留死 OPENING）  # 全市场动态币池 $1M 绝对 24h 成交额地板（代码默认 0.0，仅 prod 生效）
-  # 档0 硬禁名单（legacy black_dict["0"] 移植，2026-07-06 用户指令）：25 币中 9 个在 HL 上市
-  # （NEIRO→HL 为 k 前缀 KNEIRO），逐一对 list_instruments 核验后填入；其余 16 个 HL 未上市
-  # 不猜译名（PI/DEGEN/ALCH/MAX/OL/MASK/ACT/SONIC/BR/RDNT/MAGIC/CSPR/LOOKS/MEW/NEIROETH/IP），
-  # 日后上市巡检时补。已持有的被禁币（如 FARTCOIN）不强平，随 12H 换仓自然退出后不再入选。
-  BLACKLIST_SYMBOLS = "BTC/USDC:USDC,ETH/USDC:USDC,VINE/USDC:USDC,NEO/USDC:USDC,PEOPLE/USDC:USDC,KNEIRO/USDC:USDC,MOODENG/USDC:USDC,FARTCOIN/USDC:USDC,CFX/USDC:USDC"
+  # 档0 硬禁名单单源在 gridtrade/config.py DEFAULT_TIER_POLICY.tier0（legacy 移植 9 币，
+  # spec 2026-07-06-tiered-*）；此处 env 仅作运维紧急覆盖（非空才生效），名单变更走代码
+  # commit 两侧（实盘/回测）原子同步。已持有的被禁币不强平，随 12H 换仓自然退出。
   # 风控项（CAP / CAP_MIN / CAP_MAX / LEVERAGE）沿用 config.py 默认或按需 fly secrets 覆盖。
   # 单网格 cap = clamp(equity×CAP_EQUITY_FRAC, CAP_MIN, CAP_MAX)；每笔挂单 notional ≈
   #   cap×LEVERAGE×max_rate/(档数+1)，须 ≥ HL mainnet 全市场 $10 最小下单额（cost.min=10）。
