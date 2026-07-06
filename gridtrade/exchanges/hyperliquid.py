@@ -187,6 +187,22 @@ class HyperliquidAdapter(CcxtAdapter):
                     out[sym] = float(pos.get('szi') or 0.0)
         return out
 
+    def _dex_mids(self, dex):
+        """dex 版 allMids（0.1s/权重2）→ {canonical: mid}。"""
+        mids = self.client.publicPostInfo({'type': 'allMids', 'dex': dex}) or {}
+        cmap = self._coin_map()
+        return {cmap[c]: float(px) for c, px in mids.items() if c in cmap}
+
+    def fetch_price(self, symbol) -> float:
+        # builder 资产：fetchTicker 实测 ~10s/次（曾把 mainnet 轮长 2.4s 拖到 13.6s），
+        # 改走 dex 版 allMids（0.1s）；主 dex 原路径不变。
+        dex = self._dex_of(symbol)
+        if dex:
+            px = self._dex_mids(dex).get(symbol)
+            if px is not None:
+                return px
+        return super().fetch_price(symbol)
+
     def fetch_prices_all(self, symbols):
         # allMids 权重 2（fetchTickers 走高权重端点，不用）
         mids = self.client.publicPostInfo({'type': 'allMids'}) or {}
@@ -194,11 +210,15 @@ class HyperliquidAdapter(CcxtAdapter):
         want = set(symbols)
         out = {cmap[c]: float(px) for c, px in mids.items()
                if cmap.get(c) in want}
-        # HIP-3 builder-DEX 资产（coin 如 'xyz:MSTR'）不在主 allMids → 逐 symbol 回退补齐
-        # （mainnet 2026-07-05 实证 XYZ-MSTR snapshot missing price；每个缺价币多 1 次调用，
-        # 核心永续不受影响，对未来任何不可映射市场自愈）。
-        for s in want - set(out):
-            out[s] = float(self.fetch_price(s))
+        # HIP-3 builder 资产不在主 allMids → 按 dex 批量 allMids 补齐（每 dex 一次 0.1s；
+        # mainnet 2026-07-05 XYZ-MSTR 缺价盲窗 + 2026-07-06 fetchTicker 10s 慢路径双实证）。
+        missing = want - set(out)
+        if missing:
+            for dex in sorted(self._dexes_for(missing)):
+                dm = self._dex_mids(dex)
+                out.update({s: dm[s] for s in missing if s in dm})
+        for s in want - set(out):          # 最终罕见后备（不可映射市场自愈）
+            out[s] = float(super().fetch_price(s))
         return out
 
     def fetch_funding_payments_all(self, symbols, since_ms=None):

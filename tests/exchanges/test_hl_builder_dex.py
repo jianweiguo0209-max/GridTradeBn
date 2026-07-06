@@ -103,3 +103,25 @@ def test_order_status_mapping():
     assert ad.order_status(KIO, '222') == 'filled'
     assert ad.order_status(KIO, '333') == 'canceled'
     assert ad.order_status(KIO, '999') == 'unknown'
+
+
+def test_builder_prices_via_dex_allmids_not_ticker():
+    # builder 缺价回退用 dex 版 allMids（0.1s），勿用 fetchTicker（实测 10s/次，
+    # 曾把 mainnet 轮长从 2.4s 拖到 13.6s）。
+    class _ClientP(_Client):
+        def publicPostInfo(self, params):
+            self.calls.append(('info', params.get('type'), params.get('dex')))
+            t = params.get('type')
+            if t == 'allMids' and params.get('dex') == 'xyz':
+                return {'xyz:KIOXIA': '571.2'}
+            if t == 'allMids':
+                return {'BTC': '50000.5'}
+            return _Client.publicPostInfo(self, params)
+        def fetch_ticker(self, symbol):
+            raise AssertionError('builder 价不得走 fetchTicker（10s 慢路径）')
+
+    ad = HyperliquidAdapter(_ClientP())
+    out = ad.fetch_prices_all([BTC, KIO])
+    assert out == {BTC: 50000.5, KIO: 571.2}
+    assert ('info', 'allMids', 'xyz') in ad.client.calls
+    assert ad.fetch_price(KIO) == 571.2                    # 单币路径同样走 dex allMids
