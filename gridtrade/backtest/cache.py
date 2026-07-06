@@ -57,6 +57,22 @@ class ParquetCache:
         """落空哨兵：这天确认没数据，写一个 schema-only 空 parquet。"""
         self.write(namespace, symbol, day, pd.DataFrame(columns=columns))
 
+    def list_symbols(self, namespace):
+        """列举某 namespace 下已缓存的所有 canonical symbol（如 'BTC/USDC:USDC'）。
+        落盘结构 root/ns/<base>/<quote:settle>/ 两级 → 重建带 '/' 的 canonical。"""
+        base = os.path.join(self.root, namespace)
+        if not os.path.isdir(base):
+            return []
+        out = []
+        for a in sorted(os.listdir(base)):
+            ad = os.path.join(base, a)
+            if not os.path.isdir(ad):
+                continue
+            for b in sorted(os.listdir(ad)):
+                if os.path.isdir(os.path.join(ad, b)):
+                    out.append('%s/%s' % (a, b))
+        return out
+
     def list_days(self, namespace, symbol):
         """廉价列举某 symbol 在该 namespace 下已缓存的天（不读 parquet 内容）。
         返回排序后的 'YYYY-MM-DD' 列表；目录不存在则空列表。"""
