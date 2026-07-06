@@ -56,15 +56,27 @@ class Reconciler:
                else ex.adapter.fetch_open_orders(symbol))
         on_exchange = {o.id: o for o in src}
 
-        # 保险丝 oid 排除于「unexpected 撤单」循环：HL 默认 fetch_open_orders 走
-        # frontendOpenOrders（含 trigger/stop 单），保险丝不在 grid_orders(expected)，
-        # 若不排除则每轮对账都会误撤两张保险丝。
+        # 「unexpected 撤单」的受保护集合 = 本币**全部活跃格**的挂单 ∪ 保险丝——
+        # cap=2 后同币可有多格，只按本格 expected 判孤儿会互撤同门全部挂单
+        # （mainnet KIOXIA 2026-07-06 实证：双格互杀、挂单存活仅 33s、两格经济死亡）。
+        # 保险丝必须在内：HL fetch_open_orders 含 trigger 单而 fuse 不在 grid_orders。
         g = ex.grids.get(grid_id)
-        fuse_oids = {oid for oid in (g.fuse_low_oid, g.fuse_high_oid) if oid is not None}
+        protected = set(expected)
+        for sib in ex.grids.list_active():
+            if sib.symbol != symbol or sib.exchange != g.exchange:
+                continue
+            for oid in (sib.fuse_low_oid, sib.fuse_high_oid):
+                if oid is not None:
+                    protected.add(oid)
+            if sib.id == grid_id:
+                continue
+            protected.update(o.exchange_order_id
+                             for o in ex.orders.list_open_by_grid(sib.id)
+                             if o.exchange_order_id)
 
         canceled = 0
         for oid, o in on_exchange.items():
-            if oid not in expected and oid not in fuse_oids:
+            if oid not in protected:
                 ex.adapter.cancel_order(symbol, o.id)
                 canceled += 1
 
@@ -111,7 +123,19 @@ class Reconciler:
             return None
         geom = ex._geom.get(grid_id)
         order_num = float(geom['order_num']) if geom else 0.0
-        model = float(acc.net_position)
+        # cap=2 后同币可有多格，而交易所仓位是账户级按币聚合——model 必须取本币
+        # **全部活跃格**的净仓之和，否则双格下必然假背离。容差同样按格数放大。
+        g = ex.grids.get(grid_id)
+        model = 0.0
+        n_sib = 0
+        for sib in ex.grids.list_active():
+            if sib.symbol != g.symbol or sib.exchange != g.exchange:
+                continue
+            sib_acc = acc if sib.id == grid_id else ex.accounting.get(sib.id)
+            if sib_acc is not None:
+                model += float(sib_acc.net_position)
+                n_sib += 1
+        order_num *= max(1, n_sib)
         if snapshot is not None:
             pos = snapshot.position(symbol)
             real = float(pos) if pos is not None else 0.0   # 快照无仓位行 = 交易所 flat
