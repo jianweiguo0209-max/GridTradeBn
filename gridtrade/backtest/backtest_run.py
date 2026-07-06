@@ -35,6 +35,21 @@ BT_MIN_QUOTE_VOLUME_24H = float(os.environ.get('BT_MIN_QUOTE_VOLUME_24H', '10000
 BT_BLACKLIST = tuple(s.strip() for s in os.environ.get('BT_BLACKLIST', '').split(',') if s.strip())
 
 
+def _weights_from_env(strategy_config, factors):
+    """选币权重覆盖 env（P1 权重扫描研究用；spec 2026-07-07 正确管线重跑）：
+    BT_WEIGHTS='w_Reg,w_Sgcz,w_Er'（对齐 factors dict 顺序）覆盖 rank 权重；
+    BT_SGCZ_DESC=1 把 Sgcz 方向翻转（ascending False）。未设 → 原样返回（现行等权）。
+    只改选币排名组合，不动因子值/其它策略参数。"""
+    wv = os.environ.get('BT_WEIGHTS')
+    sc, fac = strategy_config, factors
+    if wv:
+        sc = dict(strategy_config,
+                  weight_list=[float(x) for x in wv.split(',') if x.strip() != ''])
+    if os.environ.get('BT_SGCZ_DESC', '').lower() in ('1', 'true', 'on'):
+        fac = dict(factors); fac['Sgcz_5'] = False
+    return sc, fac
+
+
 def _tiers_from_env():
     """三档评估 env（spec 2026-07-06-tiered-*）：显式设置任一 BT_TIER* 才启用
     （默认 None=基线可比）；未给的档位回落 DEFAULT_TIER_POLICY（名单单源 config.py）。"""
@@ -478,9 +493,13 @@ def main(argv=None):
         from gridtrade.backtest import prewarm as PW
         print('[BT] 1h 预热: %s' % PW.prewarm_ohlcv(_ds1h, universe, _ms(warm_start), _ms(win_end)))
 
-    # 选币(1h + PIT $1M 地板 + 黑名单)——一次
+    # 选币(1h + PIT $1M 地板 + 黑名单)——一次；权重/方向可经 BT_WEIGHTS/BT_SGCZ_DESC 覆盖
     _cand_k = int(os.environ.get('BT_TIER_CAND_K', 5)) if tiers is not None else 1
-    grids = select_grids(cache, universe, win_start, win_end, HL_STRATEGY, HL_FACTORS,
+    _sc, _fac = _weights_from_env(HL_STRATEGY, HL_FACTORS)
+    if _sc is not HL_STRATEGY or _fac is not HL_FACTORS:
+        print('[BT] 权重覆盖: weights=%s Sgcz_asc=%s'
+              % (_sc['weight_list'], _fac.get('Sgcz_5')))
+    grids = select_grids(cache, universe, win_start, win_end, _sc, _fac,
                          timeframe='1h', min_quote_volume=BT_MIN_QUOTE_VOLUME_24H,
                          blacklist=bt_blacklist, workers=workers,
                          candidates_per_rt=_cand_k)

@@ -143,3 +143,21 @@ def test_run_backtest_symbol_lock_differential(tmp_path):
     assert len(df_off) > len(df_on) > 0              # 每小时同币重选场景下必有剔除
     key = lambda d: set(zip(d['run_time'].astype(str), d['symbol']))
     assert key(df_on) <= key(df_off)                 # 真子集：只剔不增
+
+
+def test_weights_from_env_override(monkeypatch):
+    from gridtrade.backtest.backtest_run import _weights_from_env
+    sc0 = {'weight_list': [1, 1, 1], 'period': '12H'}
+    fac0 = {'Reg_v2_5': True, 'Sgcz_5': True, 'Er_2': True}
+    # 无 env → 原样
+    monkeypatch.delenv('BT_WEIGHTS', raising=False)
+    monkeypatch.delenv('BT_SGCZ_DESC', raising=False)
+    assert _weights_from_env(sc0, fac0) == (sc0, fac0)
+    # BT_WEIGHTS 覆盖权重
+    monkeypatch.setenv('BT_WEIGHTS', '1,0,2')
+    sc, fac = _weights_from_env(sc0, fac0)
+    assert sc['weight_list'] == [1.0, 0.0, 2.0] and sc0['weight_list'] == [1, 1, 1]  # 不改原
+    # BT_SGCZ_DESC 翻转方向
+    monkeypatch.setenv('BT_SGCZ_DESC', '1')
+    sc, fac = _weights_from_env(sc0, fac0)
+    assert fac['Sgcz_5'] is False and fac0['Sgcz_5'] is True
