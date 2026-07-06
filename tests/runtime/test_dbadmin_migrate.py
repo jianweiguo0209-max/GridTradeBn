@@ -40,6 +40,24 @@ def test_migrate_is_idempotent():
     assert add_grid_fills_fee(st) == 'skipped'
 
 
+def test_migrate_adds_close_reason_and_idempotent():
+    # 旧库（无 close_reason 列）→ added；新库/重跑 → skipped。
+    from gridtrade.runtime.dbadmin import add_grids_close_reason
+    st = StateStore.in_memory()
+    md = sa.MetaData()
+    sa.Table('grids', md,
+             sa.Column('id', sa.String, primary_key=True),
+             sa.Column('status', sa.String, nullable=False))
+    md.create_all(st.engine)
+    assert add_grids_close_reason(st) == 'added'
+    cols = {c['name'] for c in sa.inspect(st.engine).get_columns('grids')}
+    assert 'close_reason' in cols
+    assert add_grids_close_reason(st) == 'skipped'
+    st2 = StateStore.in_memory()
+    st2.create_all()                      # 新库 schema 已含列
+    assert add_grids_close_reason(st2) == 'skipped'
+
+
 def test_slotify_active_symbol_idempotent(store):
     # 槽位迁移：旧格式 'SYM' → 'SYM#0'；已槽位化/NULL 不动；重跑 skipped。
     import sqlalchemy as sa

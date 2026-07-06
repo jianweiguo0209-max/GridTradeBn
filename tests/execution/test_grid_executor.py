@@ -196,6 +196,38 @@ def test_close_record_money_uses_grid_cap_not_executor_default(store):
     assert abs(rec.total_pnl - rec.pnl_ratio * 50.0) < 1e-12
 
 
+def test_resume_restores_original_close_reason(store):
+    # close() 已落真因但中途死掉（停在 CLOSING）→ 续平落 record 须还原真因：
+    # '周期再平衡(续平)' 而非裸 '平仓恢复'（恢复动作≠触发原因，裸写盖真因）。
+    ex, store, gx = _setup(store, price=100.0)
+    gid = gx.open(ex_exchange_name(), SYM, GP)
+    g = gx.grids.get(gid)
+    gx.grids.set_close_reason(gid, '周期再平衡')
+    gx.grids.transition_status(gid, 'CLOSING', expected_version=g.version)
+    gx.finalize_close(gid, SYM, '平仓恢复')
+    rec = gx.records.list_by_grid(gid)[0]
+    assert rec.exit_reason == '周期再平衡(续平)'
+
+
+def test_resume_without_stored_reason_falls_back(store):
+    # 遗留场景（CLOSING 但无 close_reason，如外部直接转态）→ 保持 '平仓恢复' 兜底。
+    ex, store, gx = _setup(store, price=100.0)
+    gid = gx.open(ex_exchange_name(), SYM, GP)
+    g = gx.grids.get(gid)
+    gx.grids.transition_status(gid, 'CLOSING', expected_version=g.version)
+    gx.finalize_close(gid, SYM, '平仓恢复')
+    assert gx.records.list_by_grid(gid)[0].exit_reason == '平仓恢复'
+
+
+def test_close_persists_reason_and_record_unchanged(store):
+    # 正常关格：close() 把真因落 grids.close_reason；record 原因不变。
+    ex, store, gx = _setup(store, price=100.0)
+    gid = gx.open(ex_exchange_name(), SYM, GP)
+    gx.close(gid, SYM, '固定止损')
+    assert gx.grids.get(gid).close_reason == '固定止损'
+    assert gx.records.list_by_grid(gid)[0].exit_reason == '固定止损'
+
+
 def test_close_then_reopen_same_symbol_ok(store):
     ex, store, gx = _setup(store, price=100.0)
     gid = gx.open(ex_exchange_name(), SYM, GP)

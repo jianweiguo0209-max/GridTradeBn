@@ -228,6 +228,7 @@ class GridExecutor:
 
     def close(self, grid_id, symbol, reason):
         grid = self.grids.get(grid_id)
+        self.grids.set_close_reason(grid_id, reason)   # 真因先落库：中途失败续平不丢
         if grid.status != CLOSING:
             self.grids.transition_status(grid_id, CLOSING, expected_version=grid.version)
         return self.finalize_close(grid_id, symbol, reason)
@@ -237,6 +238,10 @@ class GridExecutor:
         # close() 中途失败留下的 CLOSING 网格由 monitor 循环调本方法续平自愈——
         # 否则残仓无人认领、状态机卡死（瞬时网络/交易所抖动即触发，mainnet 上很危险）。
         grid = self.grids.get(grid_id)
+        # 续平路径还原关格真因（'周期再平衡(续平)'）：'平仓恢复' 只是恢复动作，不是
+        # 触发原因，裸写会盖掉真因（mainnet 实证 SPX 轮换关格被记成平仓恢复）。
+        if reason == '平仓恢复' and grid.close_reason:
+            reason = '%s(续平)' % grid.close_reason
         self.adapter.cancel_all(symbol)
         # 撤掉未触发的另一张保险丝（cancel_all 在多数所已覆盖触发单，这里再 best-effort 补刀，跨所稳妥）。
         for oid in (grid.fuse_low_oid, grid.fuse_high_oid):

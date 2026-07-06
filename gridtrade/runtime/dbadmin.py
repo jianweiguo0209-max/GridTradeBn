@@ -42,6 +42,16 @@ def add_grids_fuse_oids(store) -> str:
     return 'added'
 
 
+def add_grids_close_reason(store) -> str:
+    """幂等：grids 缺 close_reason 列则加上（NULL 允许）——关格真因持久化。"""
+    cols = {c['name'] for c in sa.inspect(store.engine).get_columns('grids')}
+    if 'close_reason' in cols:
+        return 'skipped'
+    with store.engine.begin() as c:
+        c.execute(sa.text('ALTER TABLE grids ADD COLUMN close_reason VARCHAR'))
+    return 'added'
+
+
 def slotify_active_symbol(store) -> str:
     """幂等：旧格式 active_symbol='SYM' 改写为槽位格式 'SYM#0'（cap=2 槽位方案，
     spec 2026-07-06-tiered-*；UNIQUE(exchange,active_symbol) 不变，'||' 拼接 PG/SQLite 通用）。"""
@@ -56,6 +66,7 @@ def migrate(store) -> list:
     """跑所有增量迁移（幂等）。返回每步结果。"""
     return [('add_grid_fills_fee', add_grid_fills_fee(store)),
             ('add_grids_fuse_oids', add_grids_fuse_oids(store)),
+            ('add_grids_close_reason', add_grids_close_reason(store)),
             ('slotify_active_symbol', slotify_active_symbol(store))]
 
 

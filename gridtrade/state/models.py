@@ -81,6 +81,8 @@ grids = Table(
     Column('version', Integer, nullable=False, default=1),
     Column('fuse_low_oid', String, nullable=True),
     Column('fuse_high_oid', String, nullable=True),
+    # 关格真因（close() 发起时落库）：续平/恢复路径落 record 不丢原始触发原因
+    Column('close_reason', String, nullable=True),
     UniqueConstraint('exchange', 'active_symbol', name='uq_grids_active'),
 )
 
@@ -226,6 +228,7 @@ class Grid:
     version: int = 1
     fuse_low_oid: Optional[str] = None
     fuse_high_oid: Optional[str] = None
+    close_reason: Optional[str] = None
 
 
 @dataclass
