@@ -1,12 +1,20 @@
-"""GridRepository：网格意图的持久化（活跃唯一 + 乐观锁 + 状态机）。"""
+"""GridRepository：网格意图的持久化（活跃槽位 + 乐观锁 + 状态机）。
+
+槽位方案（cap=2 全套改造，spec 2026-07-06-tiered-*）：UNIQUE(exchange, active_symbol)
+原样保留，active_symbol 存 'SYM#slot'（slot=0..cap-1）——同币最多 cap 个活跃格，
+抢槽仍是 DB 原子操作（并发双开的 TOCTOU 防线不因 cap>1 而丢失）。
+"""
 import uuid
 from typing import List, Optional
 
-from sqlalchemy import insert, select, update
+import sqlalchemy as sa
+from sqlalchemy import func, insert, select, update
 
 from gridtrade.state.models import (ACTIVE_STATES, ConcurrencyError, Grid,
                                     StateError, TERMINAL_STATES, can_transition,
                                     grids, now_ms)
+
+_UNLIMITED_SLOT_BOUND = 64   # cap=不限(None) 时的槽位实际上界（防御性；现实并发远小于此）
 
 _FIELDS = ('id', 'exchange', 'symbol', 'status', 'offset', 'tag', 'direction',
            'entry_price', 'low_price', 'high_price', 'stop_low_price',
@@ -25,18 +33,36 @@ class GridRepository:
     def __init__(self, store):
         self.engine = store.engine
 
-    def create(self, grid: Grid) -> Grid:
+    def create(self, grid: Grid, *, max_slots=None) -> Grid:
+        """max_slots：本币种活跃槽上限；None → 按 DEFAULT_TIER_POLICY.cap_for 推导
+        （名单单源；cap 不限时用 _UNLIMITED_SLOT_BOUND 兜底）。活跃态逐槽尝试插入，
+        UNIQUE 冲突换下一槽；槽满抛 ConcurrencyError（门链竞态漏网时的 DB 级兜底）。"""
         gid = grid.id or uuid.uuid4().hex
         ts = now_ms()
         created = grid.created_at or ts
         updated = grid.updated_at or ts
-        active_symbol = grid.symbol if grid.status in ACTIVE_STATES else None
         values = {f: getattr(grid, f) for f in _FIELDS}
-        values.update(id=gid, created_at=created, updated_at=updated, version=1,
-                      active_symbol=active_symbol)
-        with self.engine.begin() as c:
-            c.execute(insert(grids), values)
-        return self.get(gid)
+        values.update(id=gid, created_at=created, updated_at=updated, version=1)
+        if grid.status not in ACTIVE_STATES:
+            values['active_symbol'] = None
+            with self.engine.begin() as c:
+                c.execute(insert(grids), values)
+            return self.get(gid)
+        if max_slots is None:
+            from gridtrade.config import DEFAULT_TIER_POLICY
+            from gridtrade.core.tier_policy import cap_for
+            max_slots = cap_for(grid.symbol, DEFAULT_TIER_POLICY)
+        limit = int(max_slots) if max_slots else _UNLIMITED_SLOT_BOUND
+        for slot in range(limit):
+            values['active_symbol'] = '%s#%d' % (grid.symbol, slot)
+            try:
+                with self.engine.begin() as c:
+                    c.execute(insert(grids), values)
+                return self.get(gid)
+            except sa.exc.IntegrityError:
+                continue                      # 槽被占 → 试下一槽
+        raise ConcurrencyError('no free symbol slot for %s on %s (cap=%d)'
+                               % (grid.symbol, grid.exchange, limit))
 
     def get(self, grid_id: str) -> Optional[Grid]:
         with self.engine.connect() as c:
@@ -44,12 +70,23 @@ class GridRepository:
         return _to_grid(row) if row is not None else None
 
     def get_active_by_symbol(self, exchange: str, symbol: str) -> Optional[Grid]:
+        """任一活跃格（槽位前缀匹配 'SYM#%'；canonical 符号不含 '#'，无误配）。"""
         with self.engine.connect() as c:
             row = c.execute(
                 select(grids).where(grids.c.exchange == exchange,
-                                    grids.c.active_symbol == symbol)
+                                    grids.c.active_symbol.like(symbol + '#%'))
             ).first()
         return _to_grid(row) if row is not None else None
+
+    def count_active_by_symbol(self, exchange: str, symbol: str) -> int:
+        """本币活跃格数（SymbolLockGate cap 判定用）。"""
+        with self.engine.connect() as c:
+            n = c.execute(
+                select(func.count()).select_from(grids)
+                .where(grids.c.exchange == exchange,
+                       grids.c.active_symbol.like(symbol + '#%'))
+            ).scalar()
+        return int(n or 0)
 
     def list_active(self) -> List[Grid]:
         with self.engine.connect() as c:
@@ -74,16 +111,17 @@ class GridRepository:
             if not can_transition(current.status, new_status):
                 raise StateError(
                     f'illegal transition {current.status} -> {new_status}')
-            # Terminal -> release slot (NULL). Active state -> (re)claim symbol slot.
-            # Any other (currently unreachable: all 6 states are terminal or active)
-            # -> preserve existing occupancy rather than silently dropping the slot.
+            # Terminal -> release slot (NULL). Active -> 保留既有槽位后缀（勿用裸 symbol
+            # 覆写，否则丢 slot 编号且撞 UNIQUE）。理论不可达的 terminal->active 兜底
+            # 抢 #0（撞则由 UNIQUE 拒绝）。
+            cur_active = row._mapping['active_symbol']
             if new_status in TERMINAL_STATES:
                 active_symbol = None
             elif new_status in ACTIVE_STATES:
-                active_symbol = current.symbol
+                active_symbol = cur_active if cur_active is not None \
+                    else current.symbol + '#0'
             else:
-                active_symbol = (current.symbol
-                                 if current.status in ACTIVE_STATES else None)
+                active_symbol = cur_active
             res = c.execute(
                 update(grids)
                 .where(grids.c.id == grid_id, grids.c.version == expected_version)

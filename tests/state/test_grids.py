@@ -30,12 +30,14 @@ def test_get_active_by_symbol(store):
     assert repo.get_active_by_symbol('okx', 'ETH/USDT:USDT') is None
 
 
-def test_second_active_same_symbol_rejected(store):
-    import sqlalchemy as sa
+def test_active_same_symbol_capped_at_slot_limit(store):
+    # 槽位方案语义校准（原为 UNIQUE 直接拒第 2 格）：cap 内可开多格、槽满抛
+    # ConcurrencyError（DB 级兜底不丢，详见 tests/state/test_grid_slots.py）。
+    from gridtrade.state.models import ConcurrencyError
     repo = _repo(store)
-    repo.create(_grid(status=ACTIVE))
-    with pytest.raises(sa.exc.IntegrityError):
-        repo.create(_grid(status=ACTIVE))
+    repo.create(_grid(status=ACTIVE), max_slots=1)
+    with pytest.raises(ConcurrencyError):
+        repo.create(_grid(status=ACTIVE), max_slots=1)
 
 
 def test_transition_optimistic_lock_and_slot_release(store):
