@@ -260,10 +260,13 @@ class GridExecutor:
             attempt += 1
             pos = self.adapter.fetch_positions(symbol)
         snap = self.live[grid_id].snapshot(float(self.adapter.fetch_price(symbol)))
+        # 记录按该格真实资金计钱：pnl_ratio 分母是 LiveEquity.cap==grid.cap（动态 cap），
+        # 乘 executor 静态默认 cap 会整体错标（restore-cap 同族，mainnet 2026-07-06 实证低报 3x）。
+        grid_cap = grid.cap if grid.cap else self.cap
         if not self.records.list_by_grid(grid_id):   # 幂等：续平不重复落库
             self.records.add(Record(id='', grid_id=grid_id, exchange=grid.exchange, symbol=symbol,
                                     tag=grid.tag, offset=grid.offset, opened_at=grid.created_at,
-                                    closed_at=now_ms(), sz=self.cap, total_pnl=snap['pnl_ratio'] * self.cap,
+                                    closed_at=now_ms(), sz=grid_cap, total_pnl=snap['pnl_ratio'] * grid_cap,
                                     pnl_ratio=snap['pnl_ratio'], exit_reason=reason))
         g2 = self.grids.get(grid_id)
         self.grids.transition_status(grid_id, CLOSED, expected_version=g2.version)

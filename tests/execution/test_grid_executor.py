@@ -174,6 +174,28 @@ def test_close_cancels_orders_flattens_and_records(store):
     assert len(recs) == 1 and recs[0].exit_reason == '固定止损'
 
 
+def test_close_record_money_uses_grid_cap_not_executor_default(store):
+    # 差分：动态 cap 网格（grid.cap=50）在默认 cap=100 的 executor 上开→关，
+    # record 的 sz/total_pnl 必须按 50 计——pnl_ratio 分母是 LiveEquity.cap==grid.cap，
+    # 乘 executor 静态 cap 会整体错标（mainnet 2026-07-06 实证：低报 cap真/cap默认 倍）。
+    from gridtrade.exchanges.base import Balance
+    from gridtrade.execution.grid_executor import GridExecutor
+    from gridtrade.state.grids import GridRepository
+    ex, store, _ = _setup(store, price=100.0)
+    ex.fetch_balance = lambda: Balance(equity=500.0, cash=500.0)
+    gx = GridExecutor(ex, store, cap=100.0, leverage=5.0,
+                      cap_equity_frac=0.10, cap_min=20.0, cap_max=100000.0)
+    gid = gx.open(ex_exchange_name(), SYM, GP)
+    assert abs(GridRepository(store).get(gid).cap - 50.0) < 1e-9   # 前提：动态 cap 生效
+    ex.set_price(SYM, 100.6)    # 触发一笔卖单成交 → pnl_ratio 非零
+    gx.sync(gid, SYM)
+    gx.close(gid, SYM, '手动停止')
+    rec = gx.records.list_by_grid(gid)[0]
+    assert rec.pnl_ratio != 0.0
+    assert abs(rec.sz - 50.0) < 1e-9
+    assert abs(rec.total_pnl - rec.pnl_ratio * 50.0) < 1e-12
+
+
 def test_close_then_reopen_same_symbol_ok(store):
     ex, store, gx = _setup(store, price=100.0)
     gid = gx.open(ex_exchange_name(), SYM, GP)
