@@ -185,6 +185,7 @@ def test_run_scheduler_cycle_no_close_tag_only_opens(store):
 def test_monitor_cycle_resumes_stuck_closing_grid(store):
     # 模拟 close() 中途失败：网格停在 CLOSING、订单还挂、仓位还在。
     # monitor 循环应「续平」：撤单 + reduce + 落库 + 转 CLOSED（否则永远卡死、残仓无人认领）。
+    # grace=0 = 视为已超宽限（真卡死场景；宽限行为见 grace 差分测试）。
     from gridtrade.runtime.cycles import run_monitor_cycle
     ex, store, gx, mgr = _setup(store, 100.0)
     gid = mgr.open_proposals([_proposal()])[0]
@@ -192,10 +193,45 @@ def test_monitor_cycle_resumes_stuck_closing_grid(store):
     g = gx.grids.get(gid)
     gx.grids.transition_status(gid, 'CLOSING', expected_version=g.version)  # 卡住
     assert ex.fetch_positions(BTC).net_size > 0
-    run_monitor_cycle(Reconciler(gx), mgr)
+    run_monitor_cycle(Reconciler(gx), mgr, closing_grace_sec=0.0)
     assert gx.grids.get(gid).status == 'CLOSED'                 # 续平到 CLOSED
     assert abs(ex.fetch_positions(BTC).net_size) <= gx.min_amount   # 仓位平了
     assert len(gx.records.list_by_grid(gid)) == 1              # 落了一条关仓记录
+
+
+def test_monitor_cycle_leaves_fresh_closing_grid_to_initiator(store):
+    # 宽限内（刚进入 CLOSING = 发起方正在收尾）monitor 不得抢续平——双进程撤单/平仓/
+    # 转态三段撞车是 mainnet 轮换 4-6 条假 error 的根源（2026-07-06 实证）。
+    from gridtrade.runtime.cycles import run_monitor_cycle
+    ex, store, gx, mgr = _setup(store, 100.0)
+    gid = mgr.open_proposals([_proposal()])[0]
+    ex.set_price(BTC, 98.5); gx.sync(gid, BTC)
+    g = gx.grids.get(gid)
+    gx.grids.transition_status(gid, 'CLOSING', expected_version=g.version)  # 刚进入
+    out = run_monitor_cycle(Reconciler(gx), mgr)          # 默认宽限（180s）
+    assert gx.grids.get(gid).status == 'CLOSING'          # 不抢：留给发起方
+    assert out['resumed'] == [] and gid not in out['degraded']
+    assert ex.fetch_positions(BTC).net_size > 0           # 仓位未被动
+    assert gx.records.list_by_grid(gid) == []             # 未落库
+
+
+def test_monitor_cycle_rescues_closing_grid_past_grace(store):
+    # 超宽限的 CLOSING（发起方真死了）仍必须被救——宽限只延迟自愈，不取消自愈。
+    from gridtrade.runtime.cycles import run_monitor_cycle
+    from gridtrade.state.models import grids as grids_table, now_ms
+    from sqlalchemy import update
+    ex, store, gx, mgr = _setup(store, 100.0)
+    gid = mgr.open_proposals([_proposal()])[0]
+    ex.set_price(BTC, 98.5); gx.sync(gid, BTC)
+    g = gx.grids.get(gid)
+    gx.grids.transition_status(gid, 'CLOSING', expected_version=g.version)
+    with gx.grids.engine.begin() as c:                    # 把进入 CLOSING 的时刻拨老
+        c.execute(update(grids_table).where(grids_table.c.id == gid)
+                  .values(updated_at=now_ms() - 400_000))
+    out = run_monitor_cycle(Reconciler(gx), mgr)          # 默认宽限（180s）< 400s 龄
+    assert gx.grids.get(gid).status == 'CLOSED'
+    assert out['resumed'] == [gid]
+    assert len(gx.records.list_by_grid(gid)) == 1
 
 
 def test_finalize_close_does_not_duplicate_existing_record(store):

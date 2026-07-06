@@ -23,6 +23,12 @@ from gridtrade.state.models import ACTIVE, CLOSING, FAILED, OPENING, now_ms
 # 死网格（线上实证：testnet NEAR/gt06 卡 6h+，SymbolLockGate 因它锁死该币）。
 STUCK_OPENING_TIMEOUT_SEC = 900
 
+# CLOSING 续平宽限：健康关格（撤 ~40 挂单+平残仓）由发起方 1-2 分钟内完成；monitor
+# 零等待抢续平会与发起进程（scheduler 轮换/monitor 止损）竞态——撤单/平仓/转态三段
+# 撞车，每次轮换 4-6 条假 error（mainnet 2026-07-06 五次轮换全实证）。只救进入
+# CLOSING 超过宽限仍未落定的真卡死网格（与 OPENING 超时守卫同构）。
+STUCK_CLOSING_GRACE_SEC = 180.0
+
 
 def _active_grids(grids_repo):
     return [g for g in grids_repo.list_active() if g.status == ACTIVE]
@@ -96,10 +102,12 @@ def run_monitor_cycle(reconciler, manager, log=print, *,
                       flags=None, commands=None, audit=None, exchange='',
                       equity_repo=None, snapshot_interval_sec=300,
                       beat=None, parallel=1, unit_warn_sec=30.0,
-                      beat_every_sec=10.0) -> dict:
+                      beat_every_sec=10.0,
+                      closing_grace_sec=STUCK_CLOSING_GRACE_SEC) -> dict:
     """monitor 机循环体：逐网格隔离——单网格故障降级记录，不阻塞其他网格的对账/止损。
 
-    顺序：① 续平卡死的 CLOSING 网格（幂等自愈）①' 清死 OPENING（超时+零挂单→FAILED，
+    顺序：① 续平卡死的 CLOSING 网格（超 closing_grace_sec 宽限才动手，幂等自愈；
+    宽限内视为发起方仍在收尾，避免双进程抢关格竞态）①' 清死 OPENING（超时+零挂单→FAILED，
     释放 symbol 槽；有挂单/未超时不动）② 每个 ACTIVE 网格一个单元 _grid_unit
     （restore→sync→止损→reconcile），parallel>1 时线程池并发、=1 时原地串行（保底）。
 
@@ -128,6 +136,9 @@ def run_monitor_cycle(reconciler, manager, log=print, *,
 
     for grid in _closing_grids(ex.grids):     # close() 中途失败留下的卡死网格 -> 续平
         try:
+            age_s = (now_ms() - int(grid.updated_at or grid.created_at)) / 1000.0
+            if age_s < closing_grace_sec:
+                continue    # 关格进行中（发起方正在收尾）→ 勿抢；只救超宽限的真卡死
             if not ex.is_loaded(grid.id):
                 reconciler.restore(grid.id)
             ex.finalize_close(grid.id, grid.symbol, '平仓恢复')
