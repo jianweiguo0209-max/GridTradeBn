@@ -19,15 +19,20 @@ class Reconciler:
         g = ex.grids.get(grid_id)
         if g is None:
             raise ValueError('grid %s not found' % grid_id)
-        gi = grid_order_info(ex.cap, ex.leverage, g.low_price, g.high_price,
+        # cap 必须用网格行持久化的开仓真值（动态 cap 下 ex.cap 是 config 默认，会错）：
+        # mainnet 2026-07-06 实证——用 ex.cap($100) 重建 cap=$302 的网格 → order_num 缩 1/3
+        # （补单 $8.63<$10 被拒/静默 1/3 量成交）+ LiveEquity 分母错 → 止损止盈 3 倍提前。
+        grid_cap = g.cap if g.cap else ex.cap
+        gi = grid_order_info(grid_cap, ex.leverage, g.low_price, g.high_price,
                              int(g.grid_count), g.stop_low_price, g.stop_high_price,
                              min_amount=ex.min_amount, max_rate=ex.max_rate)
         price_array = [float(p) for p in gi['价格序列']]
-        order_num = float(gi['每笔数量'])
+        # order_num 优先取开仓持久化真值（与在场挂单/补单口径逐位一致）；老行缺失才回退重算
+        order_num = float(g.order_num) if g.order_num else float(gi['每笔数量'])
         ex._geom[grid_id] = {'price_array': price_array, 'order_num': order_num}
         ex._seq[grid_id] = itertools.count(10_000_000)  # 高位起，避免与历史 seq 相撞
 
-        live = LiveEquity(ex.cap, ex.fee, ex.c_rate_taker, entry_price=g.entry_price)
+        live = LiveEquity(grid_cap, ex.fee, ex.c_rate_taker, entry_price=g.entry_price)
         # 真中性：无 init 底仓（与 open 对称）；仅从持久化成交重建，否则重启后模型多出幻影多头。
         for f in ex.fills.list_by_grid(grid_id):   # 已按 ts 升序
             live.record_fill(f.price, f.side, f.size, f.ts, f.fee)

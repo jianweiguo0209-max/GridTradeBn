@@ -234,3 +234,24 @@ def test_restore_rebuilds_real_fee_from_persisted_fills(store):
     Reconciler(gx2).restore(gid)
     fee_after = gx2.live[gid].snapshot(ex.fetch_price(SYM))['fee_paid']
     assert abs(fee_after - fee_before) < 1e-9          # 重放自持久化 fee，不丢、与运行态一致
+
+
+def test_restore_uses_persisted_grid_cap_not_executor_default(store):
+    # mainnet 2026-07-06 实证 bug：动态 cap 开的网格（cap≠executor 默认），重启 restore 用
+    # ex.cap 重算 → order_num 缩小(302/100≈3×) → 补单 1/3 量($8.63<$10 被拒/静默小单)，
+    # LiveEquity cap 错 → pnl_ratio 虚大 3× → 止损/止盈 3 倍提前触发。
+    # 修复口径：geom.order_num 用网格行持久化的 order_num；LiveEquity 用网格行 cap。
+    ex = FakeExchange(instruments=[Instrument(SYM, 0.1, 0.001, 0.001, 'live', 0)], price=100.0)
+    ex.set_price(SYM, 100.0)
+    gx = _new_executor(ex, store)                      # executor 默认 cap=1000
+    gid = gx.open('fake', SYM, GP, cap=300.0)          # 实际开仓 cap=300（模拟动态 cap）
+    opened_order_num = gx._geom[gid]['order_num']
+    g = gx.grids.get(gid)
+    assert abs(g.order_num - opened_order_num) < 1e-9  # 前提：开仓已持久化真值
+
+    gx2 = _new_executor(ex, store)                     # 重启：默认 cap=1000 的新 executor
+    from gridtrade.execution.reconciler import Reconciler
+    Reconciler(gx2).restore(gid)
+    # 差分 load-bearing：旧逻辑用 ex.cap=1000 重算 → order_num 放大 1000/300≈3.3×，必红
+    assert abs(gx2._geom[gid]['order_num'] - opened_order_num) < 1e-9
+    assert abs(gx2.live[gid].cap - 300.0) < 1e-9       # pnl_ratio 分母 = 真实开仓 cap
