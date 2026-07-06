@@ -57,6 +57,85 @@ class HyperliquidAdapter(CcxtAdapter):
         out.sort(key=lambda p: p.ts)
         return out
 
+    # ---- builder-dex(HIP-3) 信息面适配（mainnet 2026-07-06 KIOXIA 实证）----
+    # HL 的下单/撤单 action 按全局 asset id 跨 dex 通用，但 info 查询
+    # （frontendOpenOrders/clearinghouseState）默认只查主 dex——builder 资产必须带
+    # dex 参数，否则挂单/持仓不可见（fuse 每轮误判被丢重挂堆积 166 张孤儿触发单、
+    # 净仓对账拿假 0）。userFills 例外（账户全局）。主 dex 路径保持逐字节不变。
+
+    def _dex_of(self, symbol):
+        """builder dex 名（如 'xyz'）；主 dex 返回 None。无 markets 的测试桩防御性回退主 dex。"""
+        if not hasattr(self.client, 'load_markets'):
+            return None
+        self.client.load_markets()
+        m = (getattr(self.client, 'markets', None) or {}).get(self.to_native(symbol)) or {}
+        return (m.get('info') or {}).get('dex') or None
+
+    def _dexes_for(self, symbols) -> set:
+        return {d for d in (self._dex_of(s) for s in symbols) if d}
+
+    def _raw_open_order_to_order(self, r):
+        """frontendOpenOrders 原始行 → Order（HL side: A=ask=卖 / B=bid=买）。"""
+        from gridtrade.exchanges.base import Order
+        coin = r.get('coin')
+        sym = self._coin_map().get(coin, coin)
+        oid = str(r.get('oid'))
+        return Order(id=oid, client_oid=oid, symbol=sym,
+                     side=('sell' if r.get('side') == 'A' else 'buy'),
+                     price=float(r.get('limitPx') or 0.0),
+                     size=float(r.get('sz') or 0.0), filled=0.0, status='open',
+                     reduce_only=bool(r.get('reduceOnly', False)))
+
+    def _dex_open_orders(self, dex):
+        rows = self.client.publicPostInfo({'type': 'frontendOpenOrders',
+                                           'user': self.client.walletAddress,
+                                           'dex': dex}) or []
+        return [self._raw_open_order_to_order(r) for r in rows]
+
+    def fetch_open_orders(self, symbol):
+        dex = self._dex_of(symbol)
+        if not dex:
+            return super().fetch_open_orders(symbol)     # 主 dex：ccxt 原路径零变化
+        return [o for o in self._dex_open_orders(dex) if o.symbol == symbol]
+
+    def fetch_positions(self, symbol):
+        dex = self._dex_of(symbol)
+        if not dex:
+            return super().fetch_positions(symbol)
+        from gridtrade.exchanges.base import Position
+        ch = self.client.publicPostInfo({'type': 'clearinghouseState',
+                                         'user': self.client.walletAddress,
+                                         'dex': dex}) or {}
+        cmap = self._coin_map()
+        for p in ch.get('assetPositions', []):
+            pos = p.get('position') or {}
+            if cmap.get(pos.get('coin')) == symbol:
+                return Position(symbol, float(pos.get('szi') or 0.0),
+                                float(pos.get('entryPx') or 0.0))
+        return Position(symbol, 0.0, 0.0)
+
+    def order_status(self, symbol, order_id) -> str:
+        """orderStatus 端点（weight 2；仅 fuse 三态判定的罕见分支调用）：
+        'open'/'filled'/'canceled'/'unknown'。"""
+        try:
+            resp = self.client.publicPostInfo({'type': 'orderStatus',
+                                               'user': self.client.walletAddress,
+                                               'oid': int(order_id)})
+        except Exception:
+            return 'unknown'
+        if not resp or resp.get('status') != 'order':
+            return 'unknown'
+        st = ((resp.get('order') or {}).get('status') or '').lower()
+        if st in ('open', 'resting'):
+            return 'open'
+        if st == 'filled':
+            return 'filled'
+        if st in ('canceled', 'cancelled', 'rejected', 'margincanceled',
+                  'reduceonlycanceled', 'triggered'):
+            # triggered=触发已转市价：对保险丝语义等同"已触发执行"
+            return 'filled' if st == 'triggered' else 'canceled'
+        return 'unknown'
+
     # ---- 账户级批量读（HL 原生：fills/orders/positions/funding 端点本就账户级）----
     def _coin_map(self):
         # HL 原生 coin 名（如 'kPEPE'）→ canonical symbol。必须经 ccxt markets 映射，
@@ -81,8 +160,11 @@ class HyperliquidAdapter(CcxtAdapter):
 
     def fetch_open_orders_all(self, symbols):
         want = set(symbols)
-        return [o for o in (self._to_order(r) for r in self.client.fetch_open_orders(None))
-                if o.symbol in want]
+        out = [o for o in (self._to_order(r) for r in self.client.fetch_open_orders(None))
+               if o.symbol in want]
+        for dex in sorted(self._dexes_for(symbols)):    # builder dex 逐个补查（info 默认只查主 dex）
+            out.extend(o for o in self._dex_open_orders(dex) if o.symbol in want)
+        return out
 
     def fetch_positions_all(self, symbols):
         want = set(symbols)
@@ -93,6 +175,16 @@ class HyperliquidAdapter(CcxtAdapter):
                 continue
             contracts = float(p.get('contracts') or 0.0)
             out[sym] = contracts if p.get('side') == 'long' else -contracts
+        cmap = self._coin_map()
+        for dex in sorted(self._dexes_for(symbols)):    # builder 持仓补查（否则拿假 0）
+            ch = self.client.publicPostInfo({'type': 'clearinghouseState',
+                                             'user': self.client.walletAddress,
+                                             'dex': dex}) or {}
+            for p in ch.get('assetPositions', []):
+                pos = p.get('position') or {}
+                sym = cmap.get(pos.get('coin'))
+                if sym in want:
+                    out[sym] = float(pos.get('szi') or 0.0)
         return out
 
     def fetch_prices_all(self, symbols):

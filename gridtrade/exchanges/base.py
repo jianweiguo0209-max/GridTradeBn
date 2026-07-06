@@ -152,6 +152,11 @@ class ExchangeAdapter(ABC):
                          start_ms: int, end_ms: int) -> pd.DataFrame:
         raise NotImplementedError
 
+    # ---- 可选：单订单状态（fuse 三态判定用；默认 unknown=调用方走 fills 后备）----
+    def order_status(self, symbol: str, order_id: str) -> str:
+        """'open'/'filled'/'canceled'/'unknown'。"""
+        return 'unknown'
+
     # ---- 可选：24h 成交额（用于流动性地板；默认空=上层跳过过滤）----
     def fetch_24h_quote_volumes(self) -> dict:
         """{canonical symbol: 24h 计价币成交额}。默认空 dict（无数据 → resolve_live_universe fail-open 跳过）。"""

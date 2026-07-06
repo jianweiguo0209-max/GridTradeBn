@@ -142,7 +142,12 @@ class Reconciler:
                    for t in self.ex.adapter.fetch_my_trades(symbol, since_ms=since_ms))
 
     def reconcile_fuses(self, grid_id, symbol, snapshot=None):
-        """灾难保险丝三态对账：在挂→无动作；被丢→重挂；已触发→撑网全拆。"""
+        """灾难保险丝三态对账：在挂→无动作；已触发→撑网全拆；被丢→撤旧+重挂。
+
+        三态主判升级（KIOXIA/XYZ-MSTR 事故根治 2026-07-06）：fuse 不在（我们可见的）
+        挂单簿时先问 orderStatus 权威状态——'open'=信息面盲区（如 builder-dex），不动；
+        'filled'=已触发；其余才重挂且**先撤旧 oid**（防不可见在挂单堆积成孤儿，
+        166 张实证）。orderStatus 不可用(unknown)时退回 fills 直查后备。"""
         ex = self.ex
         if not ex.stop_orders_enabled:
             return {'replaced': 0, 'fired': False}
@@ -156,10 +161,21 @@ class Reconciler:
         for key, side, trigger, oid in specs:
             if oid is not None and oid in on_exchange:
                 continue                                   # 在挂
-            if self._fuse_filled(symbol, oid, snapshot=snapshot):
+            status = (ex.adapter.order_status(symbol, oid)
+                      if oid is not None else 'canceled')
+            if status == 'open':
+                continue                                   # 权威在挂（信息面盲区）→ 不动
+            if status == 'filled' or (status == 'unknown'
+                                      and self._fuse_filled(symbol, oid,
+                                                            snapshot=snapshot)):
                 ex.close(grid_id, symbol, '保险丝触发')   # 已触发 -> 撑网全拆
                 return {'replaced': replaced, 'fired': True}
-            # 被丢（或迁移空 oid）-> (重)挂，回写新 oid
+            # 被丢/已撤（或迁移空 oid）-> 先撤旧（容错：已没则 no-op）再重挂，回写新 oid
+            if oid is not None:
+                try:
+                    ex.adapter.cancel_order(symbol, oid)
+                except Exception:
+                    pass
             worst = float(g.grid_count) * float(g.order_num)
             order = ex.adapter.create_stop_order(
                 symbol, side, worst, trigger, reduce_only=True,

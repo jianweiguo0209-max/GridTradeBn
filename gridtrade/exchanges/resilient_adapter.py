@@ -28,7 +28,7 @@ ACCOUNT_READ_METHODS = frozenset({
     'fetch_balance', 'fetch_positions', 'fetch_my_trades',
     'fetch_open_orders', 'fetch_funding_payments',
     'fetch_my_trades_all', 'fetch_open_orders_all', 'fetch_positions_all',
-    'fetch_funding_payments_all',   # fetch_prices_all 不列 = market_read
+    'fetch_funding_payments_all', 'order_status',   # fetch_prices_all 不列 = market_read
 })
 CATEGORIES = ('market_read', 'account_read', 'trade_write')
 
@@ -142,6 +142,9 @@ class ResilientAdapter(ExchangeAdapter):
     def fetch_funding_payments(self, symbol: str,
                                since_ms: Optional[int] = None) -> List[FundingPayment]:
         return self._call('fetch_funding_payments', symbol, since_ms=since_ms)
+
+    def order_status(self, symbol, order_id):
+        return self._call('order_status', symbol, order_id)
 
     # ---- 账户级批量读（monitor 快照）----
     def fetch_my_trades_all(self, symbols, since_ms=None):

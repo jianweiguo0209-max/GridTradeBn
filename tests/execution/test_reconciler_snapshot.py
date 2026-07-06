@@ -103,3 +103,57 @@ def test_fuse_truly_lost_still_replaced_after_direct_scan(store):
     out = rec.reconcile_fuses(gid, BTC, snapshot=snap)
     assert out == {'replaced': 1, 'fired': False}
     assert gx.grids.get(gid).status == 'ACTIVE'
+
+
+def test_fuse_missing_but_order_status_open_no_replace(store):
+    # builder-dex 可见性盲区的最终防线：fuse 不在（我们可见的）挂单簿，但 orderStatus
+    # 说仍在挂 → 不撤不重挂（KIOXIA 166 张孤儿单事故的根治兜底）。
+    ex, gx, gid = _setup(store, stop_orders=True)
+    rec = Reconciler(gx)
+    g = gx.grids.get(gid)
+
+    class _BlindBook:
+        """模拟 info 盲区：open_orders 看不见 fuse，但 orderStatus 查得到在挂。"""
+        def __init__(self, inner):
+            self._inner = inner
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+        def fetch_open_orders(self, symbol):
+            return [o for o in self._inner.fetch_open_orders(symbol)
+                    if o.id not in (g.fuse_low_oid, g.fuse_high_oid)]
+
+    gx.adapter = _BlindBook(ex)
+    out = rec.reconcile_fuses(gid, BTC)
+    assert out == {'replaced': 0, 'fired': False}          # 不重挂（orderStatus=open）
+
+
+def test_fuse_replace_cancels_old_oid_first(store):
+    # 重挂前先撤旧（D-fix 同款）：防"我们看不见但其实在挂"的旧单堆积成孤儿。
+    ex, gx, gid = _setup(store, stop_orders=True)
+    rec = Reconciler(gx)
+    g = gx.grids.get(gid)
+    old_low = g.fuse_low_oid
+    # 真丢单：从 book 移除且无成交 → order_status='canceled' → 撤旧(容错)+重挂
+    ex._stops[BTC] = [s for s in ex._stops[BTC] if s.id != old_low]
+    canceled = []
+    orig_cancel = ex.cancel_order
+    ex.cancel_order = lambda sym, oid: (canceled.append(oid), orig_cancel(sym, oid))[1]
+    out = rec.reconcile_fuses(gid, BTC)
+    assert out['replaced'] == 1
+    assert old_low in canceled                             # 撤旧先行
+
+
+def test_fuse_order_status_filled_fires_close(store):
+    # orderStatus 主判：成交在快照窗口外也能靠 filled 状态判定已触发 → 撑网全拆。
+    from gridtrade.exchanges.base import Trade
+    ex, gx, gid = _setup(store, stop_orders=True)
+    rec = Reconciler(gx)
+    g = gx.grids.get(gid)
+    ex._stops[BTC] = [s for s in ex._stops[BTC] if s.id != g.fuse_low_oid]
+    ex._trades.append(Trade(id='ff', client_oid='f', symbol=BTC, side='buy',
+                            price=97.0, size=4.0, fee=0.0, ts=1,
+                            order_id=g.fuse_low_oid))      # Fake.order_status → 'filled'
+    snap = build_account_snapshot(ex, [BTC], trade_since_ms=1_000_000)  # 快照窗口错过成交
+    out = rec.reconcile_fuses(gid, BTC, snapshot=snap)
+    assert out['fired'] is True
+    assert gx.grids.get(gid).status == 'CLOSED'
