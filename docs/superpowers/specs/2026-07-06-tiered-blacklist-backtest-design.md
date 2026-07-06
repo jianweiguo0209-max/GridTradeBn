@@ -116,8 +116,10 @@ scheduler 方案 A 剔锁与 dashboard control_compute 预览：held_counts 从 
 - **同源守卫**：scheduler 剔锁输出 ≡ 用 pick_first_allowed(cap=1) 对同一 DB 状态
   的判定（防两侧各写各的）。
 - 回测：K=1 逐位回归保真；K>1 行数≤K 且 rank 单调；分配器语义（tier1/OTHERS/
-  边界释放/K 耗尽空过/stats 数字）；e2e 恒等/包含（tier2_cap=0 ≡ 无锁基线；
-  cap=1 无 tier1 的选中集 ⊇ symbol_lock=True 选中集，差=递补命中）；缓存隔离
+  边界释放/K 耗尽空过/stats 数字）；e2e 恒等/对比（tier2_cap=0 ≡ 无锁基线；
+  cap=1 vs symbol_lock=True：**集合级包含均不成立**（分配路径依赖——递补币占用后续
+  名额、饱和期 tiers 贪心早填/lock 稀疏后补，轮次交错，皆正确语义，实测确认），
+  可比不变量=①总格数≥（贪心装箱不浪费名额）②产出同币锁窗无重叠）；缓存隔离
   （不同 K 不串）。
 - 实盘重表达回归：scheduler/control_compute 既有测试全绿（行为不变）。
 

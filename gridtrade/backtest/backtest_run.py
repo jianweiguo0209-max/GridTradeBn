@@ -34,6 +34,23 @@ HL_FACTORS = dict(DEFAULT_STRATEGY_CONFIG['factors'])
 BT_MIN_QUOTE_VOLUME_24H = float(os.environ.get('BT_MIN_QUOTE_VOLUME_24H', '1000000'))
 BT_BLACKLIST = tuple(s.strip() for s in os.environ.get('BT_BLACKLIST', '').split(',') if s.strip())
 
+
+def _tiers_from_env():
+    """三档评估 env（spec 2026-07-06-tiered-*）：显式设置任一 BT_TIER* 才启用
+    （默认 None=基线可比）；未给的档位回落 DEFAULT_TIER_POLICY（名单单源 config.py）。"""
+    t0v = os.environ.get('BT_TIER0')
+    t1v = os.environ.get('BT_TIER1_SYMBOLS')
+    t2v = os.environ.get('BT_TIER2_CAP')
+    if t0v is None and t1v is None and t2v is None:
+        return None
+    from gridtrade.config import DEFAULT_TIER_POLICY
+    from gridtrade.core.tier_policy import TierPolicy
+    _csv = lambda v: tuple(x.strip() for x in v.split(',') if x.strip())
+    return TierPolicy(
+        tier0=_csv(t0v) if t0v is not None else DEFAULT_TIER_POLICY.tier0,
+        tier1=_csv(t1v) if t1v is not None else DEFAULT_TIER_POLICY.tier1,
+        tier2_cap=int(t2v) if t2v is not None else DEFAULT_TIER_POLICY.tier2_cap)
+
 # 1h 选币数据源自动切换：HL API 1h 滚动 ~5000 根≈208 天；更早窗口自动改走 Reservoir 归档。
 RESERVOIR_START = pd.Timestamp('2025-07-31')   # Reservoir 1s 归档起点（实测列桶）
 _API_1H_MAX_DAYS = 200                          # API 滚动可达阈值（208 天留余量）
@@ -279,15 +296,39 @@ def allocate_with_tiers(ranked_picks, tiers, period='12H'):
 def run_backtest(cache, universe, window_start, window_end, strategy_config, factors,
                  *, timeframe='1h', sim_timeframe=None, fee_rate=0.0005,
                  max_rate=0.5, leverage=None, min_quote_volume=0.0, blacklist=(),
-                 workers=1, symbol_lock=False, log=print):
+                 workers=1, symbol_lock=False, tiers=None, tier_cand_k=5, log=print):
     """timeframe: 选币因子所用 K 线周期（换仓周期粒度，默认 1h）。
     sim_timeframe: 持仓成交仿真所用 K 线周期（None=沿用 timeframe）。传 '1m' 可解耦——
     选币仍在 1h 上（因子行为不变），持仓在 1m 上跑高保真触网/成交。
     workers: 网格仿真并行进程数（>1 用 ProcessPoolExecutor；结果与串行逐位一致）。
     symbol_lock: True=套用实盘 SymbolLockGate 同口径过滤（同币 period 锁窗内重选剔除，
     默认 False 保历史基线可比）。
+    tiers: TierPolicy 三档评估（spec 2026-07-06-tiered-*）——tier0 并入 blacklist
+    票池级剔除、top-K(tier_cand_k) 候选 + allocate_with_tiers 递补；与 symbol_lock
+    互斥（两套口径不叠加）；None=现状零变化。
     扫参请直接用 build_grid_tasks（一次）+ simulate_tasks（多次），避免重复选币。"""
+    if tiers is not None and symbol_lock:
+        raise ValueError('tiers 与 symbol_lock 互斥（两套口径不叠加）')
     lev = leverage if leverage is not None else strategy_config['leverage']
+    if tiers is not None:
+        from gridtrade.core.tier_policy import effective_blacklist
+        picks = select_grids(cache, universe, window_start, window_end, strategy_config,
+                             factors, timeframe=timeframe,
+                             min_quote_volume=min_quote_volume,
+                             blacklist=effective_blacklist(blacklist, tiers),
+                             workers=workers, candidates_per_rt=int(tier_cand_k), log=log)
+        picks, stats = allocate_with_tiers(picks, tiers,
+                                           period=strategy_config['period'])
+        log('[BT] tiers: rejected t1=%d t2=%d fallback=%s empty=%d'
+            % (stats['rejected_tier1'], stats['rejected_tier2'],
+               stats['fallback_hist'], stats['empty_rounds']))
+        tasks = assemble_grid_tasks(cache, picks, strategy_config,
+                                    sim_timeframe=sim_timeframe, timeframe=timeframe,
+                                    log=log)
+        return simulate_tasks(tasks, leverage=lev, fee_rate=fee_rate, max_rate=max_rate,
+                              stop_cfg=strategy_config['stop_loss_config'],
+                              active_stop_mode=strategy_config.get('active_stop_mode', 'pv'),
+                              pv_cfg=strategy_config.get('pv_config', {}), workers=workers)
     tasks = build_grid_tasks(cache, universe, window_start, window_end, strategy_config,
                              factors, timeframe=timeframe,
                              sim_timeframe=sim_timeframe, min_quote_volume=min_quote_volume,
@@ -417,8 +458,17 @@ def main(argv=None):
                             (RESERVOIR_START + pd.Timedelta(days=_WARMUP_DAYS)).date()))
     # phase1: 解析全市场票池(−黑名单) + 预热全市场 1h
     _adapter, _ds1h = _hl_datasource_1h(cache)
-    universe = resolve_universe(_ds1h, blacklist=BT_BLACKLIST)
-    print('[BT] 全市场票池 %d 币(−黑名单 %d)' % (len(universe), len(BT_BLACKLIST)))
+    tiers = _tiers_from_env()
+    if tiers is not None and os.environ.get('BT_SYMBOL_LOCK', '').lower() in ('1', 'true', 'on'):
+        raise SystemExit('BT_TIER* 与 BT_SYMBOL_LOCK 互斥（两套口径不叠加）')
+    bt_blacklist = BT_BLACKLIST
+    if tiers is not None:
+        from gridtrade.core.tier_policy import effective_blacklist
+        bt_blacklist = effective_blacklist(BT_BLACKLIST, tiers)
+        print('[BT] tiers 启用: tier0=%d tier1=%d cap=%d' %
+              (len(tiers.tier0), len(tiers.tier1), tiers.tier2_cap))
+    universe = resolve_universe(_ds1h, blacklist=bt_blacklist)
+    print('[BT] 全市场票池 %d 币(−黑名单 %d)' % (len(universe), len(bt_blacklist)))
     if source == 'reservoir':
         from gridtrade.backtest import reservoir as RV
         print('[BT] 1h+1m 预热@Reservoir: %s'
@@ -429,9 +479,16 @@ def main(argv=None):
         print('[BT] 1h 预热: %s' % PW.prewarm_ohlcv(_ds1h, universe, _ms(warm_start), _ms(win_end)))
 
     # 选币(1h + PIT $1M 地板 + 黑名单)——一次
+    _cand_k = int(os.environ.get('BT_TIER_CAND_K', 5)) if tiers is not None else 1
     grids = select_grids(cache, universe, win_start, win_end, HL_STRATEGY, HL_FACTORS,
                          timeframe='1h', min_quote_volume=BT_MIN_QUOTE_VOLUME_24H,
-                         blacklist=BT_BLACKLIST, workers=workers)
+                         blacklist=bt_blacklist, workers=workers,
+                         candidates_per_rt=_cand_k)
+    if tiers is not None:
+        grids, _ts = allocate_with_tiers(grids, tiers, period=HL_STRATEGY['period'])
+        print('[BT] tiers: rejected t1=%d t2=%d fallback=%s empty=%d'
+              % (_ts['rejected_tier1'], _ts['rejected_tier2'],
+                 _ts['fallback_hist'], _ts['empty_rounds']))
     selected = sorted({row['symbol'] for _, _, row in grids})
     print('[BT] 选中 %d 币' % len(selected))
 
