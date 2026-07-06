@@ -114,9 +114,14 @@ def _simulate_grid_task(payload):
 
 
 def select_grids(cache, universe, window_start, window_end, strategy_config, factors,
-                 *, timeframe='1h', min_quote_volume=0.0, blacklist=(), workers=1, log=print):
+                 *, timeframe='1h', min_quote_volume=0.0, blacklist=(), workers=1,
+                 candidates_per_rt=1, log=print):
     """只跑选币回放（1h + PIT 地板 + 黑名单），返回 [(rt, offset, row)]。offline。
-    结果按选币参数 + 每币缓存天范围数据指纹磁盘缓存（BT_SELECT_CACHE=off 旁路）。"""
+    结果按选币参数 + 每币缓存天范围数据指纹磁盘缓存（BT_SELECT_CACHE=off 旁路）。
+    candidates_per_rt>1：三档递补用 top-K 候选——放宽选币截断为 rank<=K（经
+    strategy_config.choose_symbols 覆盖，天然进缓存 key、不同 K 不串）；K=1 逐位恒等现状。"""
+    if candidates_per_rt and int(candidates_per_rt) > 1:
+        strategy_config = dict(strategy_config, choose_symbols=int(candidates_per_rt))
     from gridtrade.backtest import select_cache as SC
     use_cache = SC.enabled()
     key = params = None
