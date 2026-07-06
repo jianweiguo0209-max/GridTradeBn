@@ -30,7 +30,10 @@ primary_region = "nrt"
   MAX_CONCURRENT = "20"
   MIN_ORDER_NOTIONAL = "10"    # 开仓预检：单笔名义额 ≥ HL 最小下单额（testnet 同 mainnet 口径）
   SCHEDULER_RUN_ON_START = "true"   # testnet 调试：scheduler 启动即跑一次；稳定后置 "false"
-  # CAP / LEVERAGE / TOTAL_BUDGET / BLACKLIST_SYMBOLS 按需在此或 secrets 配置
+  # 档0 硬禁名单：与 mainnet（fly.prod.toml）同口径，legacy black_dict["0"] 移植；
+  # 手动 OPEN_GRID 指令不经票池、不受此限（testnet 实验自由度保留）。
+  BLACKLIST_SYMBOLS = "BTC/USDC:USDC,ETH/USDC:USDC,VINE/USDC:USDC,NEO/USDC:USDC,PEOPLE/USDC:USDC,KNEIRO/USDC:USDC,MOODENG/USDC:USDC,FARTCOIN/USDC:USDC,CFX/USDC:USDC"
+  # CAP / LEVERAGE / TOTAL_BUDGET 按需在此或 secrets 配置
 
 [processes]
   monitor = "python -m gridtrade.runtime.monitor"
