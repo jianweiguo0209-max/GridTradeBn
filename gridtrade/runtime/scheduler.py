@@ -5,11 +5,14 @@
 """
 import signal
 import time
+from collections import Counter
 
 import pandas as pd
 
-from gridtrade.config import DEFAULT_STRATEGY_CONFIG, load_deploy_config
+from gridtrade.config import (DEFAULT_STRATEGY_CONFIG, DEFAULT_TIER_POLICY,
+                              load_deploy_config)
 from gridtrade.core.selection import compute_offset
+from gridtrade.core.tier_policy import capped_symbols
 from gridtrade.execution.triggers import TriggerContext
 from gridtrade.runtime.cycles import run_scheduler_cycle
 from gridtrade.runtime.factory import build_runtime
@@ -68,18 +71,19 @@ def run_scheduler_once(runtime, *, now_fn=time.time,
     tag = '%s%d' % (DEFAULT_STRATEGY_CONFIG['strategy_tag'], offset)
     universe = resolve_live_universe(rt.adapter, rt.config.blacklist,
                                      rt.config.whitelist, rt.config.min_quote_volume_24h)
-    # 方案A（legacy 半拉黑档2 执行位对齐，用户批准 2026-07-06）：他 tag 持有的币在选币
-    # 入口剔出票池——连 K 线都不拉，因子排名自动落到次优币；否则榜一被 SymbolLockGate
-    # 拒后当轮开仓槽位空转（testnet SOL×2/HYPE 实证）。本轮换仓 tag 自己持有的币即将
-    # 被 close_tag 释放 → 不剔（允许连任，与换仓语义一致）。SymbolLockGate 保留作
-    # 选币→开仓窗口内的最终竞态守卫。
-    locked = {g.symbol for g in rt.manager.executor.grids.list_active()
-              if g.tag != tag}
-    held = sorted(s for s in universe if s in locked)
-    if held:
-        universe = [s for s in universe if s not in locked]
-        print('[scheduler] symbol-lock pre-filter: -%d held %s' % (len(held), held),
-              flush=True)
+    # 方案A（legacy 半拉黑档2 执行位对齐）经共享 tier_policy 表达（spec 同源性②，
+    # 与回测 allocate_with_tiers 同一判定源）：触顶币在选币入口剔出票池——连 K 线都
+    # 不拉，因子排名自动落次优币；否则榜一被 SymbolLockGate 拒后当轮开仓槽位空转
+    # （testnet SOL×2/HYPE 实证）。现配置 DEFAULT_TIER_POLICY.tier2_cap=1 行为与原
+    # 实现逐位相同。本轮换仓 tag 自己持有的币即将被 close_tag 释放 → 不计 held
+    # （允许连任，状态供给侧口径）。SymbolLockGate 保留作选币→开仓窗口的竞态守卫。
+    held = Counter(g.symbol for g in rt.manager.executor.grids.list_active()
+                   if g.tag != tag)
+    banned = capped_symbols(universe, held, DEFAULT_TIER_POLICY)
+    if banned:
+        universe = [s for s in universe if s not in banned]
+        print('[scheduler] symbol-lock pre-filter: -%d held %s'
+              % (len(banned), sorted(banned)), flush=True)
     candles = fetch_candles(rt.adapter, universe, run_time,
                             max_candle_num=DEFAULT_STRATEGY_CONFIG['max_candle_num'],
                             pace_ms=getattr(rt.config, 'scheduler_fetch_pace_ms', None))

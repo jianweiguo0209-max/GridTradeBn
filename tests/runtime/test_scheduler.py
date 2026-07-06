@@ -192,3 +192,13 @@ def test_run_scheduler_once_prefilters_locked_symbols_except_current_tag():
     assert 'BBB/USDC:USDC' not in seen['symbols']          # 他 tag 锁定 → 出票池
     assert 'AAA/USDC:USDC' in seen['symbols']              # 本 tag → 保留
     assert 'CCC/USDC:USDC' in seen['symbols']              # 自由币 → 保留
+
+
+def test_prefilter_equals_shared_tier_policy_semantics():
+    # 同源守卫（spec 同源性②）：scheduler 剔锁语义 ≡ 共享 capped_symbols 对同一状态
+    # 的判定（现配置 tier2_cap=1）。防止实盘/回测两侧各写各的悄悄漂移。
+    from collections import Counter
+    from gridtrade.core.tier_policy import TierPolicy, capped_symbols
+    held = Counter({'BBB/USDC:USDC': 1})
+    universe = ['AAA/USDC:USDC', 'BBB/USDC:USDC', 'CCC/USDC:USDC']
+    assert capped_symbols(universe, held, TierPolicy(tier2_cap=1)) == {'BBB/USDC:USDC'}
