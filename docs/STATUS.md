@@ -38,7 +38,7 @@ gridtrade/
 
 **设计模式**：Adapter（收敛交易所差异）、Strategy（Factor/StopRule/TriggerCondition/PositionOwnershipPolicy）、Factory+Registry、Repository、State Machine（PENDING→OPENING→ACTIVE→CLOSING→CLOSED/FAILED）、Chain of Responsibility（准入门）、Observer（事件总线）、Template Method（实盘/回测共用退出引擎）、DI（全构造注入→可测）。
 
-**关键不变量**：`core/` 不依赖任何交易所库；实盘与回测**共用同一套盈亏/退出引擎数学**（逐 bar 等价金标）；执行/对账靠 **exchange order id** 匹配（跨所通用）；成交幂等靠 `grid_fills.trade_id`。
+**关键不变量**：`core/` 不依赖任何交易所库；实盘与回测**共用同一套盈亏/退出引擎数学**（逐 bar 等价金标）；执行/对账靠 **exchange order id** 匹配（跨所通用）；成交幂等靠 `grid_fills.trade_id`。**三档半拉黑名单/判定单源共享（2026-07-06）**：名单=`config.DEFAULT_TIER_POLICY`（legacy 档0 移植 9 币，env 双侧只作覆盖）、判定=`core/tier_policy.py`（实盘方案A剔锁与回测递补同一函数+同源守卫测试）；回测评估经 `run_backtest(tiers=...)`/`BT_TIER*` env（top-K 递补+period 锁窗近似），标准跑法见 spec `2026-07-06-tiered-blacklist-backtest-design.md` §6，cap 调整须回测结论+用户批准。
 
 ---
 
