@@ -38,3 +38,27 @@ def test_migrate_is_idempotent():
     st.create_all()                       # 新库已含 fee 列（Task 1 后）
     assert add_grid_fills_fee(st) == 'skipped'
     assert add_grid_fills_fee(st) == 'skipped'
+
+
+def test_slotify_active_symbol_idempotent(store):
+    # 槽位迁移：旧格式 'SYM' → 'SYM#0'；已槽位化/NULL 不动；重跑 skipped。
+    import sqlalchemy as sa
+    from gridtrade.runtime.dbadmin import slotify_active_symbol
+    with store.engine.begin() as c:
+        c.execute(sa.text(
+            "INSERT INTO grids (id, exchange, symbol, status, offset, tag, direction,"
+            " active_symbol, created_at, updated_at, version)"
+            " VALUES ('m1', 'hl', 'BTC/USDC:USDC', 'ACTIVE', 0, 't', 'neutral',"
+            " 'BTC/USDC:USDC', 0, 0, 1)"))
+        c.execute(sa.text(
+            "INSERT INTO grids (id, exchange, symbol, status, offset, tag, direction,"
+            " active_symbol, created_at, updated_at, version)"
+            " VALUES ('m2', 'hl', 'ETH/USDC:USDC', 'CLOSED', 0, 't', 'neutral',"
+            " NULL, 0, 0, 1)"))
+    out = slotify_active_symbol(store)
+    assert out.startswith('updated 1')
+    with store.engine.connect() as c:
+        v = c.execute(sa.text("SELECT active_symbol FROM grids WHERE id='m1'")).scalar()
+        assert v == 'BTC/USDC:USDC#0'
+        assert c.execute(sa.text("SELECT active_symbol FROM grids WHERE id='m2'")).scalar() is None
+    assert slotify_active_symbol(store) == 'skipped'        # 幂等

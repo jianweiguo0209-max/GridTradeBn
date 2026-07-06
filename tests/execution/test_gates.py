@@ -98,9 +98,10 @@ def _grid_repo_with(store, *active_symbols, exchange='okx'):
     return repo
 
 
-def test_symbol_lock_blocks_when_active_grid_exists(store):
+def test_symbol_lock_blocks_at_cap(store):
+    # cap=2 语义校准（原为 1 格即拒）：达 cap 才拒（cap 单源 DEFAULT_TIER_POLICY）。
     from gridtrade.execution.gates import SymbolLockGate
-    repo = _grid_repo_with(store, 'BTC/USDT:USDT')
+    repo = _grid_repo_with(store, 'BTC/USDT:USDT', 'BTC/USDT:USDT')   # 2 格=触顶
     gate = SymbolLockGate(repo)
     r = gate.check(_proposal('BTC/USDT:USDT'))
     assert r.passed is False and r.gate == 'SymbolLockGate'
@@ -334,3 +335,19 @@ def test_margin_gate_without_executor_falls_back_to_default_cap():
     from gridtrade.execution.gates import MarginGate
     gate = MarginGate(_BalAdapter(250.0), default_cap=100.0)
     assert gate.check(_proposal()).passed is True       # 250 >= 100
+
+
+def test_symbol_lock_cap_aware_allows_second_blocks_third(store):
+    # cap=2 全套改造：SymbolLockGate 按 cap_for(DEFAULT_TIER_POLICY) 判定——
+    # 同币第 2 格放行、第 3 格拒（与 DB 槽位/选币剔锁同一 cap 单源）。
+    from gridtrade.config import DEFAULT_TIER_POLICY
+    from gridtrade.execution.gates import SymbolLockGate
+    assert DEFAULT_TIER_POLICY.tier2_cap == 2          # legacy 口径默认
+    repo = _grid_repo_with(store, 'BTC/USDT:USDT')     # 已 1 格
+    gate = SymbolLockGate(repo)
+    assert gate.check(_proposal('BTC/USDT:USDT')).passed is True    # 第 2 格放行
+    from gridtrade.state.models import Grid, ACTIVE
+    repo.create(Grid(id='', exchange='okx', symbol='BTC/USDT:USDT', status=ACTIVE))
+    r = gate.check(_proposal('BTC/USDT:USDT'))
+    assert r.passed is False and r.gate == 'SymbolLockGate'         # 第 3 格拒
+    assert '2/2' in r.reason                                        # 可观测：计数/上限

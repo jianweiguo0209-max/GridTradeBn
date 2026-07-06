@@ -134,7 +134,7 @@ DEFAULT_TIER_POLICY = TierPolicy(
     # 不猜译名（PI/DEGEN/ALCH/MAX/OL/MASK/ACT/SONIC/BR/RDNT/MAGIC/CSPR/LOOKS/MEW/
     # NEIROETH/IP），上市巡检再补。
     tier1=(),
-    tier2_cap=1,   # 当前实盘现实（SymbolLockGate 每币≤1）；回测评估后另批准再调
+    tier2_cap=2,   # legacy black_dict['2'] OTHERS≤2 口径（2026-07-06 用户决定全套跟进：SymbolLockGate cap 感知 + DB 槽位）
 )
 
 DEFAULT_STRATEGY_CONFIG = {

@@ -44,11 +44,13 @@ def test_open_proposals_opens_passing_and_returns_ids(store):
 
 
 def test_open_proposals_blocked_by_gate_not_opened(store):
+    # cap=2 语义校准：同币第 2 格放行（legacy 档2 口径），第 3 格才被 SymbolLockGate 拦。
     ex, store, gx = _setup(store)
     mgr = _manager(gx, store)
-    mgr.open_proposals([_proposal()])           # 先开一个 BTC 活跃网格
-    ids2 = mgr.open_proposals([_proposal()])     # 同币种再提议 -> SymbolLockGate 拦
-    assert ids2 == []
+    mgr.open_proposals([_proposal()])            # 第 1 格
+    assert len(mgr.open_proposals([_proposal()])) == 1   # 第 2 格：cap=2 放行
+    ids3 = mgr.open_proposals([_proposal()])     # 第 3 格 -> SymbolLockGate 拦
+    assert ids3 == []
 
 
 def test_open_proposals_empty_list_noop(store):

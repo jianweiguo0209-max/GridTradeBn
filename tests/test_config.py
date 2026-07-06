@@ -83,7 +83,7 @@ def test_default_tier_policy_content():
     assert 'FARTCOIN/USDC:USDC' in DEFAULT_TIER_POLICY.tier0     # legacy 档0 移植
     assert 'KNEIRO/USDC:USDC' in DEFAULT_TIER_POLICY.tier0       # NEIRO→HL k 前缀
     assert len(DEFAULT_TIER_POLICY.tier0) == 9
-    assert DEFAULT_TIER_POLICY.tier1 == () and DEFAULT_TIER_POLICY.tier2_cap == 1
+    assert DEFAULT_TIER_POLICY.tier1 == () and DEFAULT_TIER_POLICY.tier2_cap == 2  # legacy 档2 口径
 
 
 def test_whitelist_parsing():

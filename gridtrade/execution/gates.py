@@ -64,18 +64,25 @@ class GateChain:
 
 
 class SymbolLockGate(AdmissionGate):
-    """一期 SymbolExclusivePolicy：同 (exchange, symbol) 已有活跃网格则拒绝。"""
+    """同币并发 cap 门（cap=DEFAULT_TIER_POLICY 单源，与选币剔锁/DB 槽位同一 cap_for）。
+
+    三层防御中的"优雅拒绝层"：开仓前零副作用拒掉+结构化日志，其余提议继续过门；
+    竞态漏网由 GridRepository.create 的槽位 UNIQUE 兜底（ConcurrencyError）。"""
 
     def __init__(self, grids):
         self.grids = grids
 
     def check(self, proposal: GridProposal) -> GateResult:
-        existing = self.grids.get_active_by_symbol(proposal.exchange,
-                                                   proposal.symbol)
-        if existing is not None:
+        from gridtrade.config import DEFAULT_TIER_POLICY
+        from gridtrade.core.tier_policy import cap_for
+        cap = cap_for(proposal.symbol, DEFAULT_TIER_POLICY)
+        if cap is None:
+            return GateResult(True, 'SymbolLockGate')
+        n = self.grids.count_active_by_symbol(proposal.exchange, proposal.symbol)
+        if n >= cap:
             return GateResult(False, 'SymbolLockGate',
-                              'active grid already exists for %s on %s'
-                              % (proposal.symbol, proposal.exchange))
+                              'symbol at cap for %s on %s (%d/%d active)'
+                              % (proposal.symbol, proposal.exchange, n, cap))
         return GateResult(True, 'SymbolLockGate')
 
 

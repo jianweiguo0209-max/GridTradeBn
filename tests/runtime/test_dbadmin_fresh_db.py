@@ -20,4 +20,5 @@ def test_create_then_migrate_on_empty_db_is_clean():
     # create_all 已按当前模型建好含 fee/fuse 列的表 → migrate 全部 skipped、不抛错
     results = run('migrate', store_factory=lambda: st)
     assert results == [('add_grid_fills_fee', 'skipped'),
-                       ('add_grids_fuse_oids', 'skipped')]
+                       ('add_grids_fuse_oids', 'skipped'),
+                       ('slotify_active_symbol', 'skipped')]

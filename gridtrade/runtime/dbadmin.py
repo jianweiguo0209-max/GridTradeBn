@@ -42,10 +42,21 @@ def add_grids_fuse_oids(store) -> str:
     return 'added'
 
 
+def slotify_active_symbol(store) -> str:
+    """幂等：旧格式 active_symbol='SYM' 改写为槽位格式 'SYM#0'（cap=2 槽位方案，
+    spec 2026-07-06-tiered-*；UNIQUE(exchange,active_symbol) 不变，'||' 拼接 PG/SQLite 通用）。"""
+    with store.engine.begin() as c:
+        res = c.execute(sa.text(
+            "UPDATE grids SET active_symbol = active_symbol || '#0' "
+            "WHERE active_symbol IS NOT NULL AND active_symbol NOT LIKE '%#%'"))
+    return ('updated %d' % res.rowcount) if res.rowcount else 'skipped'
+
+
 def migrate(store) -> list:
     """跑所有增量迁移（幂等）。返回每步结果。"""
     return [('add_grid_fills_fee', add_grid_fills_fee(store)),
-            ('add_grids_fuse_oids', add_grids_fuse_oids(store))]
+            ('add_grids_fuse_oids', add_grids_fuse_oids(store)),
+            ('slotify_active_symbol', slotify_active_symbol(store))]
 
 
 def run(action, *, store_factory=None):
