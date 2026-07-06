@@ -11,8 +11,8 @@ import sqlalchemy as sa
 from sqlalchemy import func, insert, select, update
 
 from gridtrade.state.models import (ACTIVE_STATES, ConcurrencyError, Grid,
-                                    StateError, TERMINAL_STATES, can_transition,
-                                    grids, now_ms)
+                                    SlotExhausted, StateError, TERMINAL_STATES,
+                                    can_transition, grids, now_ms)
 
 _UNLIMITED_SLOT_BOUND = 64   # cap=不限(None) 时的槽位实际上界（防御性；现实并发远小于此）
 
@@ -61,7 +61,7 @@ class GridRepository:
                 return self.get(gid)
             except sa.exc.IntegrityError:
                 continue                      # 槽被占 → 试下一槽
-        raise ConcurrencyError('no free symbol slot for %s on %s (cap=%d)'
+        raise SlotExhausted('no free symbol slot for %s on %s (cap=%d)'
                                % (grid.symbol, grid.exchange, limit))
 
     def get(self, grid_id: str) -> Optional[Grid]:
@@ -79,7 +79,7 @@ class GridRepository:
         return _to_grid(row) if row is not None else None
 
     def count_active_by_symbol(self, exchange: str, symbol: str) -> int:
-        """本币活跃格数（SymbolLockGate cap 判定用）。"""
+        """本币活跃格数（选币剔锁/预览用）。"""
         with self.engine.connect() as c:
             n = c.execute(
                 select(func.count()).select_from(grids)

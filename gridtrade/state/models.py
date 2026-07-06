@@ -45,6 +45,11 @@ class ConcurrencyError(Exception):
     """乐观锁写入未命中预期 version（陈旧写）。"""
 
 
+class SlotExhausted(ConcurrencyError):
+    """同币活跃槽位全部占用（cap 触顶）——DB 级唯一裁决层的拒绝信号；
+    open_proposals 逐提议捕获并优雅跳过（SymbolLockGate 已删，spec 2026-07-06-tiered-*）。"""
+
+
 class StateError(Exception):
     """非法的网格状态跃迁。"""
 

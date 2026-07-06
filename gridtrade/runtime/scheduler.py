@@ -73,10 +73,10 @@ def run_scheduler_once(runtime, *, now_fn=time.time,
                                      rt.config.whitelist, rt.config.min_quote_volume_24h)
     # 方案A（legacy 半拉黑档2 执行位对齐）经共享 tier_policy 表达（spec 同源性②，
     # 与回测 allocate_with_tiers 同一判定源）：触顶币在选币入口剔出票池——连 K 线都
-    # 不拉，因子排名自动落次优币；否则榜一被 SymbolLockGate 拒后当轮开仓槽位空转
-    # （testnet SOL×2/HYPE 实证）。现配置 DEFAULT_TIER_POLICY.tier2_cap=1 行为与原
-    # 实现逐位相同。本轮换仓 tag 自己持有的币即将被 close_tag 释放 → 不计 held
-    # （允许连任，状态供给侧口径）。SymbolLockGate 保留作选币→开仓窗口的竞态守卫。
+    # 不拉，因子排名自动落次优币；否则榜一触顶会在开仓时被 DB 槽位拒、当轮空转
+    # （testnet SOL×2/HYPE 实证）。本轮换仓 tag 自己持有的币即将被 close_tag 释放
+    # → 不计 held（允许连任，状态供给侧口径）。竞态守卫=GridRepository 槽位 UNIQUE
+    # （SlotExhausted 由 open_proposals 逐提议捕获，SymbolLockGate 已删）。
     held = Counter(g.symbol for g in rt.manager.executor.grids.list_active()
                    if g.tag != tag)
     banned = capped_symbols(universe, held, DEFAULT_TIER_POLICY)

@@ -6,7 +6,7 @@
 """
 from typing import List
 
-from gridtrade.state.models import ACTIVE
+from gridtrade.state.models import ACTIVE, SlotExhausted
 from gridtrade.execution.events import GridOpened, GridClosed, OrderFilled
 from gridtrade.execution.monitor import monitor_grid
 
@@ -28,9 +28,17 @@ class GridManager:
     def open_proposals(self, proposals) -> List[str]:
         opened: List[str] = []
         for proposal in self.gates.filter(proposals):
-            gid = self.executor.open(
-                proposal.exchange, proposal.symbol, proposal.grid_params,
-                offset=proposal.offset, tag=proposal.tag)
+            try:
+                gid = self.executor.open(
+                    proposal.exchange, proposal.symbol, proposal.grid_params,
+                    offset=proposal.offset, tag=proposal.tag)
+            except SlotExhausted as exc:
+                # 同币并发 cap 的唯一裁决层=DB 槽位（SymbolLockGate 已删，spec
+                # 2026-07-06-tiered-*）：逐提议隔离——跳过本提议、其余照开；
+                # 可观测性沿用 [gate] 口径（该开未开必须留痕）。
+                print('[gate] rejected %s tag=%s by SlotCap: %s'
+                      % (proposal.symbol, proposal.tag, exc), flush=True)
+                continue
             opened.append(gid)
             self._publish(GridOpened(grid_id=gid, exchange=proposal.exchange,
                                      symbol=proposal.symbol, tag=proposal.tag))

@@ -2,7 +2,7 @@ from gridtrade.exchanges.fake import FakeExchange
 from gridtrade.exchanges.base import Instrument
 from gridtrade.execution.grid_executor import GridExecutor
 from gridtrade.execution.reconciler import Reconciler
-from gridtrade.execution.gates import GridProposal, GateChain, SymbolLockGate
+from gridtrade.execution.gates import GridProposal, GateChain
 from gridtrade.execution.manager import GridManager
 from gridtrade.execution.triggers import TriggerCondition, TriggerEngine, TriggerContext
 
@@ -19,7 +19,7 @@ def _setup(store, price=100.0):
     ex = FakeExchange(instruments=insts, price=price)
     ex.set_price(BTC, price); ex.set_price(ETH, price)
     gx = GridExecutor(ex, store, cap=1000.0, leverage=5.0)
-    chain = GateChain([SymbolLockGate(gx.grids)])
+    chain = GateChain([])
     mgr = GridManager(gx, chain, stop_cfg=STOP_CFG)
     return ex, store, gx, mgr
 
@@ -128,8 +128,7 @@ def test_monitor_cycle_lazy_restores_grid_opened_by_another_process(store):
     ex, store, gx, mgr = _setup(store, 100.0)
     mgr.open_proposals([_proposal()])
     gx2 = GridExecutor(ex, store, cap=1000.0, leverage=5.0)   # 新进程：空 _geom
-    from gridtrade.execution.gates import GateChain, SymbolLockGate
-    mgr2 = GridManager(gx2, GateChain([SymbolLockGate(gx2.grids)]), stop_cfg=STOP_CFG)
+    mgr2 = GridManager(gx2, GateChain([]), stop_cfg=STOP_CFG)
     out = run_monitor_cycle(Reconciler(gx2), mgr2)            # 不应 KeyError
     assert out['monitored'][0]['closed'] is False
     assert gx2.is_loaded(out['monitored'][0]['grid_id'])     # 已被惰性重建

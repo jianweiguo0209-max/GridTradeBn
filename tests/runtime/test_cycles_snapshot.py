@@ -4,7 +4,7 @@ from gridtrade.exchanges.fake import FakeExchange
 from gridtrade.exchanges.base import Instrument
 from gridtrade.execution.grid_executor import GridExecutor
 from gridtrade.execution.reconciler import Reconciler
-from gridtrade.execution.gates import GridProposal, GateChain, SymbolLockGate
+from gridtrade.execution.gates import GridProposal, GateChain
 from gridtrade.execution.manager import GridManager
 from gridtrade.runtime.cycles import run_monitor_cycle
 
@@ -55,7 +55,7 @@ def _setup(store):
     ex = FakeExchange(instruments=insts, price=100.0)
     ex.set_price(BTC, 100.0); ex.set_price(ETH, 100.0)
     gx = GridExecutor(ex, store, cap=1000.0, leverage=5.0)
-    mgr = GridManager(gx, GateChain([SymbolLockGate(gx.grids)]), stop_cfg=STOP_CFG)
+    mgr = GridManager(gx, GateChain([]), stop_cfg=STOP_CFG)
     mgr.open_proposals([
         GridProposal(exchange='fake', symbol=BTC, grid_params=dict(GP), offset=0, tag='t0', source='t'),
         GridProposal(exchange='fake', symbol=ETH, grid_params=dict(GP), offset=0, tag='t1', source='t')])

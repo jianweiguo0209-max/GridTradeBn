@@ -10,7 +10,7 @@ from gridtrade.exchanges.registry import build_adapter
 from gridtrade.exchanges.resilient_adapter import ResilientAdapter, default_breakers
 from gridtrade.execution.events import EventBus
 from gridtrade.execution.gates import (GateChain, MarginGate, MaxConcurrentGate,
-                                       MinNotionalGate, RiskBudgetGate, SymbolLockGate)
+                                       MinNotionalGate, RiskBudgetGate)
 from gridtrade.execution.grid_executor import GridExecutor
 from gridtrade.execution.manager import GridManager
 from gridtrade.execution.signals import LiveSignalProvider
@@ -64,7 +64,6 @@ def build_runtime(config) -> Runtime:
                             cap_equity_frac=config.cap_equity_frac,
                             cap_min=config.cap_min, cap_max=config.cap_max)
     gates = GateChain([
-        SymbolLockGate(executor.grids),
         MaxConcurrentGate(executor.grids, config.max_concurrent),
         RiskBudgetGate(executor.grids, config.total_budget, config.default_cap),
         MinNotionalGate(executor, config.min_order_notional, log=_flush_log),
