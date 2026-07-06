@@ -109,6 +109,16 @@ def _s3_cp(day, dest, *, log=print):
     return True
 
 
+def _day_1m_all_valid(cache, universe, day):
+    """该天所有币的缓存 1m 是否都过完整性校验（配合 warm 跳过判定）。
+    任一坏 → False（该天不跳过、重下修复）。"""
+    for s in universe:
+        ok, _ = validate_1m_cell(cache.read('1m', s, day), cache.read('1h', s, day))
+        if not ok:
+            return False
+    return True
+
+
 def warm_reservoir_ohlcv(cache, universe, start_ms, end_ms, *, timeframes=('1h', '1m'),
                          workdir=None, log=print):
     """把 [start,end] 每个 UTC 天的 1s 拉下→按 timeframes 重采样→写各命名空间（一次下载多周期同写）。
@@ -130,7 +140,8 @@ def warm_reservoir_ohlcv(cache, universe, start_ms, end_ms, *, timeframes=('1h',
         if day_end_ms > now_ms:
             stat['retry_later'] += 1
             continue
-        if all(cache.exists(tf, s, day) for tf in timeframes for s in universe):
+        if (all(cache.exists(tf, s, day) for tf in timeframes for s in universe)
+                and _day_1m_all_valid(cache, universe, day)):   # 自愈：坏 1m 不跳过、重下
             stat['skipped_cached'] += 1
             continue
         dest = os.path.join(tmpdir, '%s.parquet' % day)
