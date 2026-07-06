@@ -10,6 +10,7 @@
                               跑：TZ=Asia/Shanghai .venv/bin/python -m gridtrade.backtest.backtest_run [days] [sim_tf]
 网络依赖（ccxt/adapter/reservoir）全部在 prewarm_1h/prewarm_sim_and_funding/main 内**惰性导入**，保持核心离线可测。
 """
+import heapq
 import os
 
 import pandas as pd
@@ -226,6 +227,53 @@ def filter_tasks_symbol_lock(data_tasks, period='12H'):
         locked_until[sym] = rt + td
         kept.append(task)
     return kept, n_rejected
+
+
+def allocate_with_tiers(ranked_picks, tiers, period='12H'):
+    """三档分配（spec 2026-07-06-tiered-*）：按 run_time 升序，每轮候选按 rank 升序经
+    共享 pick_first_allowed 取第一个未触顶币（=实盘方案A 次优递补）；held 记账为
+    **固定 period 锁窗近似**（恰满边界=释放，与 filter_tasks_symbol_lock 同口径；
+    实盘止损早退会提前释放锁，四窗实测早退 ~4% 格，本近似偏保守）。排名在全池上算、
+    触顶后跳选（实盘为剔后再排，微小位移方向无偏——保选币向量化的既定取舍）。
+    返回 (picks 同形子集, stats)。"""
+    from gridtrade.core.tier_policy import pick_first_allowed
+    td = pd.to_timedelta(period)
+    by_round = {}
+    for rt, off, row in ranked_picks:
+        by_round.setdefault((rt, off), []).append((rt, off, row))
+    expiry = []          # [(release_ts, symbol)] 最小堆
+    held = {}
+    kept = []
+    stats = {'rejected_tier1': 0, 'rejected_tier2': 0,
+             'fallback_hist': {}, 'empty_rounds': 0}
+    for key in sorted(by_round):
+        rt = key[0]
+        while expiry and expiry[0][0] <= rt:                 # 恰满边界=释放
+            _, sym = heapq.heappop(expiry)
+            held[sym] -= 1
+            if not held[sym]:
+                del held[sym]
+        cands = sorted(by_round[key], key=lambda t: t[2]['rank'])
+        idx = pick_first_allowed([c[2]['symbol'] for c in cands], held, tiers)
+        for j, c in enumerate(cands):                        # idx 之前的候选=被拒（计档）
+            if idx is not None and j >= idx:
+                break
+            sym = c[2]['symbol']
+            if sym in tiers.tier1:
+                stats['rejected_tier1'] += 1
+            else:
+                stats['rejected_tier2'] += 1
+        if idx is None:
+            stats['empty_rounds'] += 1
+            continue
+        if idx > 0:
+            stats['fallback_hist'][idx] = stats['fallback_hist'].get(idx, 0) + 1
+        chosen = cands[idx]
+        sym = chosen[2]['symbol']
+        held[sym] = held.get(sym, 0) + 1
+        heapq.heappush(expiry, (rt + td, sym))
+        kept.append(chosen)
+    return kept, stats
 
 
 def run_backtest(cache, universe, window_start, window_end, strategy_config, factors,
