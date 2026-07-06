@@ -72,6 +72,32 @@ def candles_1s_to_1m(df, symbol_map):
     return candles_1s_resample(df, symbol_map, '1min')
 
 
+def validate_1m_cell(m_df, h_df, *, range_tol=0.05):
+    """判定 (币,天) 的缓存 1m 是否可信（spec 2026-07-07-1m-cache-integrity）。
+    返回 (ok, reason)，reason ∈ {'ok','no_1h_ref','range_mismatch','hour_gap'}。
+
+    1h 缺/空 → 无基准，视合法（真·不成交或无参照）；
+    振幅：|1m 日高低幅 − 1h 日高低幅|/入场价 > range_tol → range_mismatch（TRUMP 型）；
+    完整性：1h 有 bar 的每个整点小时，1m 该小时窗零 bar → hour_gap（GMX 残缺型）。
+    合法稀疏（分钟级缺但每小时都有 bar）判 ok。"""
+    if h_df is None or len(h_df) == 0:
+        return True, 'no_1h_ref'
+    entry = float(h_df['close'].iloc[0])
+    if entry <= 0:
+        return True, 'no_1h_ref'
+    if m_df is None or len(m_df) == 0:
+        return False, 'hour_gap'          # 1h 有数据但 1m 空 = 该交易的天缺 1m
+    h_hi = float(h_df['high'].max()); h_lo = float(h_df['low'].min())
+    m_hi = float(m_df['high'].max()); m_lo = float(m_df['low'].min())
+    if abs((m_hi - m_lo) - (h_hi - h_lo)) / entry > range_tol:
+        return False, 'range_mismatch'
+    m_hours = set(pd.to_datetime(m_df['candle_begin_time']).dt.floor('H'))
+    for ht in pd.to_datetime(h_df['candle_begin_time']).dt.floor('H'):
+        if ht not in m_hours:
+            return False, 'hour_gap'
+    return True, 'ok'
+
+
 def _s3_cp(day, dest, *, log=print):
     """aws s3 cp（requester-pays）。返回 True=成功；文件不存在/失败=False。"""
     src = '%s/%s' % (S3_BUCKET, S3_KEY_FMT % day)
