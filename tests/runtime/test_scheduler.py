@@ -157,3 +157,38 @@ def test_fetch_universe_candles_pace_zero_disables_sleep():
                                  pd.Timestamp('2025-06-24 14:00:00'),
                                  pace_ms=0, sleep=sleeps.append)
     assert len(out) == 2 and sleeps == []
+
+
+def test_run_scheduler_once_prefilters_locked_symbols_except_current_tag():
+    # 方案A（legacy 半拉黑档2 执行位对齐）：他 tag 持有的币在选币入口剔出票池
+    # （连 K 线都不拉，排名自动落次优币）；本轮换仓 tag 自己的币即将释放 → 不剔（允许连任）。
+    import pandas as pd
+    from gridtrade.core.selection import compute_offset
+    from gridtrade.config import DEFAULT_STRATEGY_CONFIG
+    from gridtrade.exchanges.base import Instrument
+    from gridtrade.state.models import Grid, ACTIVE
+    from gridtrade.runtime.scheduler import run_scheduler_once
+
+    rt = _rt()
+    now = 1_750_000_000.0
+    run_time = pd.Timestamp(now, unit='s').floor('H')
+    cur_tag = '%s%d' % (DEFAULT_STRATEGY_CONFIG['strategy_tag'],
+                        compute_offset(run_time, rt.config.scheduler_period))
+    syms = ['AAA/USDC:USDC', 'BBB/USDC:USDC', 'CCC/USDC:USDC']
+    rt.adapter._inner._instruments = [Instrument(s, 0.1, 0.001, 0.001, 'live', 0)
+                                      for s in syms]
+    grids = rt.manager.executor.grids
+    gp = dict(entry_price=100.0, low_price=98.0, high_price=102.0, grid_count=8,
+              stop_low_price=97.0, stop_high_price=103.0, cap=100.0, leverage=5.0)
+    grids.create(Grid(id='', exchange='fake', symbol='AAA/USDC:USDC',
+                      status=ACTIVE, tag=cur_tag, **gp))   # 本 tag：不剔（会被换仓真实关闭，需可 restore）
+    grids.create(Grid(id='', exchange='fake', symbol='BBB/USDC:USDC',
+                      status=ACTIVE, tag='gt99', **gp))    # 他 tag：剔
+    seen = {}
+    def _fake_fetch(adapter, symbols, run_time, **kw):
+        seen['symbols'] = list(symbols)
+        return {}
+    run_scheduler_once(rt, now_fn=lambda: now, fetch_candles=_fake_fetch)
+    assert 'BBB/USDC:USDC' not in seen['symbols']          # 他 tag 锁定 → 出票池
+    assert 'AAA/USDC:USDC' in seen['symbols']              # 本 tag → 保留
+    assert 'CCC/USDC:USDC' in seen['symbols']              # 自由币 → 保留

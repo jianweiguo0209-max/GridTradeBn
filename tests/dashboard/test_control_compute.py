@@ -61,3 +61,29 @@ def test_defaults_for_symbol_filters(monkeypatch):
     d = defaults_for_symbol(rt, 'ETH/USDT:USDT', now_fn=lambda: 0.0, fetch_candles=_fake_fetch)
     assert d['symbol'] == 'ETH/USDT:USDT' and d['grid_params']['low_price'] == 2
     assert defaults_for_symbol(rt, 'NOPE', now_fn=lambda: 0.0, fetch_candles=_fake_fetch) is None
+
+
+def test_compute_proposals_prefilters_locked_symbols(monkeypatch):
+    # 方案A 同口径：dashboard 候选池预览也剔除已被活跃网格锁定的币（无换仓 tag 豁免——
+    # 预览语境下没有"正在关"的 tag），预览结果与此刻真正能开的集合一致。
+    import gridtrade.dashboard.control_compute as m
+    monkeypatch.setattr(m, 'resolve_live_universe',
+                        lambda *a, **k: ['AAA/USDT:USDT', 'BBB/USDT:USDT'])
+
+    class _Grid:
+        symbol = 'BBB/USDT:USDT'; tag = 'gtX'
+    class _Grids:
+        def list_active(self): return [_Grid()]
+    class _Ex:
+        grids = _Grids()
+    class _Mgr:
+        executor = _Ex()
+
+    rt = _RT([])
+    rt.manager = _Mgr()
+    seen = {}
+    def _capture(adapter, universe, run_time, **kw):
+        seen['universe'] = list(universe)
+        return {}
+    compute_proposals(rt, now_fn=lambda: 1_750_000_000.0, fetch_candles=_capture)
+    assert seen['universe'] == ['AAA/USDT:USDT']            # BBB 被锁 → 出票池
