@@ -125,3 +125,35 @@ def test_builder_prices_via_dex_allmids_not_ticker():
     assert out == {BTC: 50000.5, KIO: 571.2}
     assert ('info', 'allMids', 'xyz') in ad.client.calls
     assert ad.fetch_price(KIO) == 571.2                    # 单币路径同样走 dex allMids
+
+
+def test_main_dex_price_via_allmids_not_ticker():
+    # 主 dex 单币价对称走 allMids：ccxt fetchTicker 多 dex 时代扫全部 dex meta，
+    # 实测恒定 ~12s/次（2026-07-08 dashboard 首页 73.6s 事故根因）。
+    class _ClientP(_Client):
+        def publicPostInfo(self, params):
+            self.calls.append(('info', params.get('type'), params.get('dex')))
+            if params.get('type') == 'allMids' and not params.get('dex'):
+                return {'BTC': '50000.5'}
+            return _Client.publicPostInfo(self, params)
+        def fetch_ticker(self, symbol):
+            raise AssertionError('主 dex 价不得走 fetchTicker（12s 慢路径）')
+
+    ad = HyperliquidAdapter(_ClientP())
+    assert ad.fetch_price(BTC) == 50000.5
+    assert ('info', 'allMids', None) in ad.client.calls
+
+
+def test_main_dex_price_falls_back_when_allmids_missing():
+    # allMids 查不到（罕见新币/映射缺失）→ 回退 ccxt 原路径，不抛错。
+    class _ClientP(_Client):
+        def publicPostInfo(self, params):
+            self.calls.append(('info', params.get('type'), params.get('dex')))
+            if params.get('type') == 'allMids':
+                return {}
+            return _Client.publicPostInfo(self, params)
+        def fetch_ticker(self, symbol):
+            return {'last': 49999.0}
+
+    ad = HyperliquidAdapter(_ClientP())
+    assert ad.fetch_price(BTC) == 49999.0

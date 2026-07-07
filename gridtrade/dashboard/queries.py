@@ -95,8 +95,18 @@ def build_overview(store, adapter) -> List[GridOverviewRow]:
     grids = GridRepository(store)
     accs = AccountingRepository(store)
     orders = OrderRepository(store)
+    actives = sorted(grids.list_active(), key=lambda x: x.symbol)
+    # 批量取价（allMids：主 dex 一次 + builder dex 各一次）。逐格 fetch_price 串行
+    # 曾把首页拖到 73.6s/9 格（2026-07-08 实证）；批量缺币才逐格回退（原路径兜底）。
+    prices = {}
+    fp_all = getattr(adapter, 'fetch_prices_all', None)
+    if fp_all is not None:
+        try:
+            prices = fp_all(sorted({g.symbol for g in actives})) or {}
+        except Exception:
+            prices = {}
     rows: List[GridOverviewRow] = []
-    for g in sorted(grids.list_active(), key=lambda x: x.symbol):
+    for g in actives:
         acc = accs.get(g.id)
         net = acc.net_position if acc else 0.0
         avg = acc.avg_price if acc else 0.0
@@ -108,7 +118,9 @@ def build_overview(store, adapter) -> List[GridOverviewRow]:
         price_error = None
         low_dist = high_dist = None
         try:
-            fetched = adapter.fetch_price(g.symbol)
+            fetched = prices.get(g.symbol)
+            if fetched is None:
+                fetched = adapter.fetch_price(g.symbol)
             if fetched is None or fetched <= 0:
                 price_error = 'non-positive price: %r' % (fetched,)
             else:

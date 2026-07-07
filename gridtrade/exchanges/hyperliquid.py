@@ -200,14 +200,23 @@ class HyperliquidAdapter(CcxtAdapter):
         cmap = self._coin_map()
         return {cmap[c]: float(px) for c, px in mids.items() if c in cmap}
 
+    def _main_mids(self):
+        """主 dex allMids（0.1s/权重2）→ {canonical: mid}。无该端点的测试桩回退空。"""
+        if not hasattr(self.client, 'publicPostInfo'):
+            return {}
+        mids = self.client.publicPostInfo({'type': 'allMids'}) or {}
+        cmap = self._coin_map()
+        return {cmap[c]: float(px) for c, px in mids.items() if c in cmap}
+
     def fetch_price(self, symbol) -> float:
         # builder 资产：fetchTicker 实测 ~10s/次（曾把 mainnet 轮长 2.4s 拖到 13.6s），
-        # 改走 dex 版 allMids（0.1s）；主 dex 原路径不变。
+        # 改走 dex 版 allMids（0.1s）。主 dex 对称同治：ccxt fetchTicker 在多 dex 时代
+        # 扫全部 dex meta，实测恒定 ~12s/次（2026-07-08 dashboard 首页 73.6s + 开格/
+        # 平仓取价卡顿实证）；allMids 查不到（罕见）才回退 ccxt 原路径。
         dex = self._dex_of(symbol)
-        if dex:
-            px = self._dex_mids(dex).get(symbol)
-            if px is not None:
-                return px
+        px = (self._dex_mids(dex) if dex else self._main_mids()).get(symbol)
+        if px is not None:
+            return px
         return super().fetch_price(symbol)
 
     def fetch_prices_all(self, symbols):
