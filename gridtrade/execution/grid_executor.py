@@ -310,4 +310,8 @@ class GridExecutor:
                                     pnl_ratio=snap['pnl_ratio'], exit_reason=reason))
         g2 = self.grids.get(grid_id)
         self.grids.transition_status(grid_id, CLOSED, expected_version=g2.version)
+        # 平仓可观测性：止损/PV/轮换关格此前零日志（mainnet 5+ 例靠 DB 反推），
+        # 一行结构化日志供事件监控实时捕获（reason 含 止损/止盈/再平衡 关键词）。
+        print('[close] grid %s %s tag=%s reason=%s pnl_ratio=%+.6f'
+              % (grid_id, symbol, grid.tag, reason, snap['pnl_ratio']), flush=True)
         return {'reason': reason, 'pnl_ratio': snap['pnl_ratio']}

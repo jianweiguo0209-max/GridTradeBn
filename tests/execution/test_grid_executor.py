@@ -228,6 +228,16 @@ def test_close_persists_reason_and_record_unchanged(store):
     assert gx.records.list_by_grid(gid)[0].exit_reason == '固定止损'
 
 
+def test_close_emits_structured_log_line(store, capsys):
+    # 平仓可观测性：关格必须打一行 [close] 结构化日志（止损/PV/轮换全路径共用此点）。
+    ex, store, gx = _setup(store, price=100.0)
+    gid = gx.open(ex_exchange_name(), SYM, GP)
+    gx.close(gid, SYM, '固定止损')
+    out = capsys.readouterr().out
+    line = [l for l in out.splitlines() if l.startswith('[close] grid %s' % gid)]
+    assert line and 'reason=固定止损' in line[0] and 'pnl_ratio=' in line[0]
+
+
 def test_close_then_reopen_same_symbol_ok(store):
     ex, store, gx = _setup(store, price=100.0)
     gid = gx.open(ex_exchange_name(), SYM, GP)
