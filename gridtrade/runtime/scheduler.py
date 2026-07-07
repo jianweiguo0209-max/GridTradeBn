@@ -14,6 +14,7 @@ from gridtrade.config import (DEFAULT_STRATEGY_CONFIG, DEFAULT_TIER_POLICY,
 from gridtrade.core.selection import compute_offset
 from gridtrade.core.tier_policy import capped_symbols
 from gridtrade.execution.triggers import TriggerContext
+from gridtrade.runtime.shock import cross_median_k
 from gridtrade.runtime.cycles import run_scheduler_cycle
 from gridtrade.runtime.factory import build_runtime
 from gridtrade.runtime.introspect import adapter_endpoint
@@ -87,9 +88,31 @@ def run_scheduler_once(runtime, *, now_fn=time.time,
     candles = fetch_candles(rt.adapter, universe, run_time,
                             max_candle_num=DEFAULT_STRATEGY_CONFIG['max_candle_num'],
                             pace_ms=getattr(rt.config, 'scheduler_fetch_pace_ms', None))
+    # MarketShockBrake(spec 2026-07-08):|票池中位数 k 小时收益|≥thr → 本轮只关不开,
+    # 并暂停 pause 小时;状态进程内(信号自持 ~k 小时,重启自愈,约束 pause<=k)。
+    open_enabled = True
+    thr = float(getattr(rt.config, 'shock_thr', 0.0) or 0.0)
+    if thr > 0:
+        k = int(getattr(rt.config, 'shock_k_hours', 4))
+        pause = int(getattr(rt.config, 'shock_pause_hours', 2))
+        if pause > k:
+            print('[shock] WARN pause(%dh)>k(%dh):重启窗口可能漏暂停' % (pause, k), flush=True)
+        med = cross_median_k(candles, run_time, k)
+        until = getattr(rt, '_shock_until', None)
+        if med is not None and abs(med) >= thr:
+            new_until = run_time + pd.Timedelta(hours=pause)
+            if until is None or new_until > until:
+                until = new_until
+                setattr(rt, '_shock_until', until)
+            print('[shock] med_%dh=%+.1f%% |>=%.1f%%| -> 暂停开格至 %s'
+                  % (k, 100 * med, 100 * thr, until), flush=True)
+        if until is not None and run_time < until:
+            open_enabled = False
+            if med is None or abs(med) < thr:
+                print('[shock] braked until %s(信号已回落,窗口内继续暂停)' % until, flush=True)
     ctx = TriggerContext(rt.config.exchange, run_time, candles)
     result = run_scheduler_cycle(rt.manager, rt.trigger_engine, rt.reconciler,
-                                 ctx, close_tag=tag)
+                                 ctx, close_tag=tag, open_enabled=open_enabled)
     rt.heartbeats.beat('scheduler')
     return result
 

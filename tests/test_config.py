@@ -163,3 +163,10 @@ def test_legacy_keys_raise_loudly():
         load_deploy_config({'LEVERAGE': '5'})
     with pytest.raises(RuntimeError, match='ACCOUNT_LEVERAGE'):
         load_deploy_config({'CAP_EQUITY_FRAC': '0.10'})
+
+
+def test_shock_brake_config():
+    cfg = load_deploy_config(env={})
+    assert cfg.shock_thr == 0.04 and cfg.shock_k_hours == 4 and cfg.shock_pause_hours == 2
+    cfg2 = load_deploy_config(env={'SHOCK_THR': '0', 'SHOCK_K_HOURS': '2', 'SHOCK_PAUSE_HOURS': '6'})
+    assert cfg2.shock_thr == 0.0 and cfg2.shock_k_hours == 2 and cfg2.shock_pause_hours == 6

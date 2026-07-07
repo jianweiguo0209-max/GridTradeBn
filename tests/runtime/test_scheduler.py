@@ -205,3 +205,71 @@ def test_prefilter_equals_shared_tier_policy_semantics():
     held = Counter({'BBB/USDC:USDC': 1})
     universe = ['AAA/USDC:USDC', 'BBB/USDC:USDC', 'CCC/USDC:USDC']
     assert capped_symbols(universe, held, TierPolicy(tier2_cap=1)) == {'BBB/USDC:USDC'}
+
+
+def _shock_candles(ret_4h, n=6):
+    import pandas as pd
+    rt_hour = pd.Timestamp(1_750_000_000.0, unit='s').floor('H')
+    out = {}
+    for i in range(n):
+        idx = pd.date_range(rt_hour - pd.Timedelta(hours=8), periods=8, freq='1H')
+        close = [100.0] * 4 + [100.0 * (1 + ret_4h)] * 4
+        out['S%d/USDC:USDC' % i] = __import__('pandas').DataFrame(
+            {'candle_begin_time': idx, 'close': close})
+    return out
+
+
+def test_shock_brake_blocks_opens_then_recovers():
+    """MarketShockBrake 集成(spec 2026-07-08):冲击→只关不开+置暂停窗;窗内平静仍暂停;过窗恢复。"""
+    from gridtrade.runtime.scheduler import run_scheduler_once
+    rt = _rt()                                            # fake 空币池;信号 candles 注入
+    t0 = 1_750_000_000.0
+
+    out = run_scheduler_once(rt, now_fn=lambda: t0,
+                             fetch_candles=lambda *a, **k: _shock_candles(-0.06))
+    assert out['opened'] == [] and out.get('shock_braked') is True     # 冲击→拦
+    assert getattr(rt, '_shock_until', None) is not None
+
+    out2 = run_scheduler_once(rt, now_fn=lambda: t0 + 3600,
+                              fetch_candles=lambda *a, **k: _shock_candles(0.0))
+    assert out2.get('shock_braked') is True               # 窗内(X=2h)平静仍暂停
+
+    out3 = run_scheduler_once(rt, now_fn=lambda: t0 + 3 * 3600,
+                              fetch_candles=lambda *a, **k: _shock_candles(0.0))
+    assert 'shock_braked' not in out3                     # 过窗恢复
+
+
+def test_shock_brake_disabled_and_fail_open():
+    from gridtrade.runtime.scheduler import run_scheduler_once
+    rt = _rt(SHOCK_THR='0')                               # 停用:冲击也不拦
+    out = run_scheduler_once(rt, now_fn=lambda: 1_750_000_000.0,
+                             fetch_candles=lambda *a, **k: _shock_candles(-0.10))
+    assert 'shock_braked' not in out
+    rt2 = _rt()                                           # 篮子不足(<5 币) fail-open
+    out2 = run_scheduler_once(rt2, now_fn=lambda: 1_750_000_000.0,
+                              fetch_candles=lambda *a, **k: _shock_candles(-0.10, n=3))
+    assert 'shock_braked' not in out2
+
+
+def test_cycle_open_disabled_still_closes():
+    """open_enabled=False:trigger 不被调用、开格为空;close_by_tag 照常。"""
+    from gridtrade.runtime.cycles import run_scheduler_cycle
+
+    class _Grids:
+        def list_active(self): return []
+    class _Ex:
+        grids = _Grids()
+    class _Mgr:
+        executor = _Ex()
+        def close_by_tag(self, tag, reason): self.closed_tag = tag; return ['g1']
+        def open_proposals(self, ps): raise AssertionError('braked 时不应开仓')
+    class _Trig:
+        def collect(self, ctx): raise AssertionError('braked 时不应触发选币')
+    class _Rec:
+        def restore(self, gid): pass
+
+    mgr = _Mgr()
+    out = run_scheduler_cycle(mgr, _Trig(), _Rec(), ctx=None,
+                              close_tag='gt3', open_enabled=False)
+    assert out == {'closed': ['g1'], 'opened': [], 'shock_braked': True}
+    assert mgr.closed_tag == 'gt3'

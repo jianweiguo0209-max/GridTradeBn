@@ -76,6 +76,11 @@ class DeployConfig:
     scheduler_fetch_pace_ms: float = 2000.0   # 选币取数币间间隔（HL 权重制推导，见 scheduler.py）；0=关
     monitor_parallel: int = 4           # monitor per-grid 并行 worker 数；1=退回全串行（保底开关）
     monitor_unit_warn_sec: float = 30.0  # 单网格监控单元耗时告警阈值（病态格日志指名道姓）
+    # MarketShockBrake(spec 2026-07-08)：|票池中位数 k 小时收益|≥thr → 暂停开格 pause 小时(只关不开)。
+    # 回测 GO 配置 k4/4%/X2(shock-brake-verdict)。thr<=0=停用;约束 pause<=k(重启自愈依赖信号自持)。
+    shock_thr: float = 0.04
+    shock_k_hours: int = 4
+    shock_pause_hours: int = 2
 
 
 def compute_cap(equity, frac, cap_min, cap_max):
@@ -136,6 +141,9 @@ def load_deploy_config(env=None) -> DeployConfig:
         scheduler_fetch_pace_ms=_f(env, 'SCHEDULER_FETCH_PACE_MS', 2000.0),
         monitor_parallel=_i(env, 'MONITOR_PARALLEL', 4),
         monitor_unit_warn_sec=_f(env, 'MONITOR_UNIT_WARN_SEC', 30.0),
+        shock_thr=_f(env, 'SHOCK_THR', 0.04),
+        shock_k_hours=_i(env, 'SHOCK_K_HOURS', 4),
+        shock_pause_hours=_i(env, 'SHOCK_PAUSE_HOURS', 2),
     )
 
 
