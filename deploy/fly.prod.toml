@@ -27,6 +27,10 @@ primary_region = "nrt"
   # 仓位参数体系(spec 2026-07-07-account-leverage-gearing):frac=AL/(N×gearing/2)=3.5/20.4≈0.1716
   GRID_GEARING = "3.4"
   ACCOUNT_LEVERAGE = "3.5"
+  # MarketShockBrake(spec 2026-07-08):|票池中位数4h收益|≥4% → 暂停开格2h(只关不开);THR=0 停用
+  SHOCK_THR = "0.04"
+  SHOCK_K_HOURS = "4"
+  SHOCK_PAUSE_HOURS = "2"
   SCHEDULER_RUN_ON_START = "false"  # ← 生产：避免每次自动部署把网格中途关开、烧真手续费
   # 币池：全市场动态（2026-07-04 起已去 UNIVERSE_WHITELIST，无该项即走此模式）。
   # resolve_live_universe = 全部 live 永续 swap（list_instruments 只留 swap + canonical

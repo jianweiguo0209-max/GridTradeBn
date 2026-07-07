@@ -31,6 +31,10 @@ primary_region = "nrt"
   # 仓位参数体系(spec 2026-07-07-account-leverage-gearing):frac=AL/(N×gearing/2)=3.5/20.4≈0.1716
   GRID_GEARING = "3.4"
   ACCOUNT_LEVERAGE = "3.5"
+  # MarketShockBrake(spec 2026-07-08):|票池中位数4h收益|≥4% → 暂停开格2h(只关不开);THR=0 停用
+  SHOCK_THR = "0.04"
+  SHOCK_K_HOURS = "4"
+  SHOCK_PAUSE_HOURS = "2"
   MIN_ORDER_NOTIONAL = "10"    # 开仓预检：单笔名义额 ≥ HL 最小下单额（testnet 同 mainnet 口径）
   SCHEDULER_RUN_ON_START = "true"   # testnet 调试：scheduler 启动即跑一次；稳定后置 "false"
   # 档0 硬禁名单单源在 gridtrade/config.py DEFAULT_TIER_POLICY.tier0（与 mainnet 同口径）；
