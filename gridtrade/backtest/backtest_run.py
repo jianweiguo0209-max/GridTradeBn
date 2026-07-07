@@ -228,7 +228,7 @@ def build_grid_tasks(cache, universe, window_start, window_end, strategy_config,
 
 
 def simulate_tasks(data_tasks, *, leverage, fee_rate=0.00015, taker_rate=0.00045,
-                   max_rate=0.5, stop_cfg=None,
+                   max_rate=0.68, stop_cfg=None,
                    active_stop_mode='pv', pv_cfg=None, workers=1):
     """对已组装的 data_tasks 跑仿真（可并行）→ 明细 DataFrame。仿真配置在此传入，故同一批
     data_tasks 可反复用不同 (active_stop_mode/pv_cfg/stop_cfg) 仿真——扫参提速的关键。
@@ -315,7 +315,7 @@ def allocate_with_tiers(ranked_picks, tiers, period='12H'):
 
 def run_backtest(cache, universe, window_start, window_end, strategy_config, factors,
                  *, timeframe='1h', sim_timeframe=None, fee_rate=0.00015, taker_rate=0.00045,
-                 max_rate=0.5, leverage=None, min_quote_volume=0.0, blacklist=(),
+                 max_rate=0.68, leverage=None, min_quote_volume=0.0, blacklist=(),
                  workers=1, symbol_lock=False, tiers=None, tier_cand_k=5, log=print):
     """timeframe: 选币因子所用 K 线周期（换仓周期粒度，默认 1h）。
     sim_timeframe: 持仓成交仿真所用 K 线周期（None=沿用 timeframe）。传 '1m' 可解耦——
