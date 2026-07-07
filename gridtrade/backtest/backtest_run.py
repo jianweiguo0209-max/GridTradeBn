@@ -316,7 +316,8 @@ def allocate_with_tiers(ranked_picks, tiers, period='12H'):
 def run_backtest(cache, universe, window_start, window_end, strategy_config, factors,
                  *, timeframe='1h', sim_timeframe=None, fee_rate=0.00015, taker_rate=0.00045,
                  max_rate=0.68, leverage=None, min_quote_volume=0.0, blacklist=(),
-                 workers=1, symbol_lock=False, tiers=None, tier_cand_k=5, log=print):
+                 workers=1, symbol_lock=False, tiers=None, tier_cand_k=5,
+                 shock_brake=None, log=print):
     """timeframe: 选币因子所用 K 线周期（换仓周期粒度，默认 1h）。
     sim_timeframe: 持仓成交仿真所用 K 线周期（None=沿用 timeframe）。传 '1m' 可解耦——
     选币仍在 1h 上（因子行为不变），持仓在 1m 上跑高保真触网/成交。
@@ -326,10 +327,23 @@ def run_backtest(cache, universe, window_start, window_end, strategy_config, fac
     tiers: TierPolicy 三档评估（spec 2026-07-06-tiered-*）——tier0 并入 blacklist
     票池级剔除、top-K(tier_cand_k) 候选 + allocate_with_tiers 递补；与 symbol_lock
     互斥（两套口径不叠加）；None=现状零变化。
+    shock_brake: None=关（默认,历史基线可比）;(k_hours, thr, pause_hours) 开启——
+    与实盘 MarketShockBrake（spec 2026-07-08）同语义:blocked rt 的候选整轮剔除
+    （只影响开格,信号数学与实盘同源,守卫测试见 test_shock_replay）。对齐实盘现配置
+    传 (4, 0.04, 2)。
     扫参请直接用 build_grid_tasks（一次）+ simulate_tasks（多次），避免重复选币。"""
     if tiers is not None and symbol_lock:
         raise ValueError('tiers 与 symbol_lock 互斥（两套口径不叠加）')
     lev = leverage if leverage is not None else strategy_config['leverage']
+    shock_blocked = None
+    if shock_brake is not None:
+        from gridtrade.backtest.shock_replay import blocked_rts
+        k_h, thr, pause = shock_brake
+        shock_blocked = blocked_rts(cache, universe, window_start, window_end, timeframe,
+                                    k_h, thr, pause, min_quote_volume=min_quote_volume)
+        log('[BT] shock_brake(k=%sh thr=%s X=%sh): blocked %d/%d rts'
+            % (k_h, thr, pause, len(shock_blocked),
+               len(pd.date_range(window_start, window_end, freq='1H'))))
     if tiers is not None:
         from gridtrade.core.tier_policy import effective_blacklist
         picks = select_grids(cache, universe, window_start, window_end, strategy_config,
@@ -337,6 +351,8 @@ def run_backtest(cache, universe, window_start, window_end, strategy_config, fac
                              min_quote_volume=min_quote_volume,
                              blacklist=effective_blacklist(blacklist, tiers),
                              workers=workers, candidates_per_rt=int(tier_cand_k), log=log)
+        if shock_blocked is not None:      # 刹车:blocked rt 整轮剔除(该轮空过,不递补,同实盘)
+            picks = [p for p in picks if p[0] not in shock_blocked]
         picks, stats = allocate_with_tiers(picks, tiers,
                                            period=strategy_config['period'])
         log('[BT] tiers: rejected t1=%d t2=%d fallback=%s empty=%d'
@@ -354,6 +370,8 @@ def run_backtest(cache, universe, window_start, window_end, strategy_config, fac
                              factors, timeframe=timeframe,
                              sim_timeframe=sim_timeframe, min_quote_volume=min_quote_volume,
                              blacklist=blacklist, workers=workers, log=log)
+    if shock_blocked is not None:          # 刹车:blocked rt 的任务剔除(只影响开格)
+        tasks = [t for t in tasks if t[0] not in shock_blocked]
     if symbol_lock:
         tasks, n_rej = filter_tasks_symbol_lock(tasks, period=strategy_config['period'])
         log('[BT] symbol_lock: rejected %d tasks (每币≤1，与实盘 SymbolLockGate 同口径)' % n_rej)

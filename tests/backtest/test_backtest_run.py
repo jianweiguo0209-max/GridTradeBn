@@ -161,3 +161,27 @@ def test_weights_from_env_override(monkeypatch):
     monkeypatch.setenv('BT_SGCZ_DESC', '1')
     sc, fac = _weights_from_env(sc0, fac0)
     assert fac['Sgcz_5'] is False and fac0['Sgcz_5'] is True
+
+
+def test_run_backtest_shock_brake_wiring(tmp_path):
+    """shock_brake 接线差分(spec 2026-07-08 回测同步):None=逐位基线;
+    极低 thr(全程 fired)=全 rt 被拦→零格;正常 thr 下 blocked rt 无格。"""
+    from gridtrade.backtest.backtest_run import run_backtest
+    syms = ['AAA/USDT:USDT', 'BBB/USDT:USDT', 'CCC/USDT:USDT', 'DDD/USDT:USDT']
+    cache = _seed_cache(tmp_path, syms)
+    ws, we = pd.Timestamp('2024-01-10 00:00:00'), pd.Timestamp('2024-01-11 00:00:00')
+    base = run_backtest(cache, syms, ws, we, _strategy(), FACTORS, timeframe='1h')
+    off = run_backtest(cache, syms, ws, we, _strategy(), FACTORS, timeframe='1h',
+                       shock_brake=None)
+    pd.testing.assert_frame_equal(base.reset_index(drop=True), off.reset_index(drop=True))
+
+    allblk = run_backtest(cache, syms, ws, we, _strategy(), FACTORS, timeframe='1h',
+                          shock_brake=(4, 1e-9, 6))       # thr≈0 → 全程 fired → 全拦
+    assert len(allblk) == 0
+
+    brk = run_backtest(cache, syms, ws, we, _strategy(), FACTORS, timeframe='1h',
+                       shock_brake=(4, 0.04, 2))
+    from gridtrade.backtest.shock_replay import blocked_rts
+    blocked = blocked_rts(cache, syms, ws, we, '1h', 4, 0.04, 2)
+    assert not set(pd.to_datetime(brk['run_time'])) & blocked   # 被拦 rt 上无格
+    assert len(brk) <= len(base)
