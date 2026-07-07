@@ -30,6 +30,7 @@ class FakeAdapter:
 
     def fetch_ohlcv(self, symbol, timeframe, start_ms, end_ms):
         self.ohlcv_calls += 1
+        self.last_ohlcv = (symbol, timeframe, int(start_ms), int(end_ms))
         if self.raise_ohlcv:
             raise RuntimeError('boom')
         return self._bars
@@ -87,3 +88,39 @@ def test_evict_removes_cache_entry():
     prov.evict('g1')
     assert 'g1' not in prov._cache
     prov.evict('missing')            # 缺失也安全、不抛
+
+
+def _bars_15m(n=108, base_qv=1e5, last_qv=None):
+    t = pd.date_range('2026-06-01', periods=n, freq='15min')
+    qv = np.full(n, base_qv, dtype=float)
+    if last_qv is not None:
+        qv[-1] = last_qv
+    return pd.DataFrame({'candle_begin_time': t, 'open': 100.0, 'high': 100.0,
+                         'low': 100.0, 'close': 100.0, 'quote_volume': qv})
+
+
+def test_fetch_window_is_15m_lookback_decoupled_from_open_ms():
+    """legacy 满窗语义:取数=原生 15m、窗口=now−(n+8)×15min,与 open_ms 解耦
+    (spec 2026-07-07-pv-legacy-semantics-live)。"""
+    adp = FakeAdapter(bars=_bars_15m(), funding=_funding([0.001]))
+    prov = LiveSignalProvider(adp, mult=3, period='15min', n=100, now_fn=lambda: 1_000_000.0)
+    now_ms = 1_000_000_000
+    prov.get('g1', 'X', open_ms=now_ms - 60_000)      # 开格才 1 分钟
+    sym, tf, start, end = adp.last_ohlcv
+    assert tf == '15m'
+    assert end == now_ms
+    assert start == now_ms - 108 * 900_000            # (n+8)×15min,与 open_ms 无关
+
+    prov2 = LiveSignalProvider(adp, mult=3, period='15min', n=100, now_fn=lambda: 1_000_000.0)
+    prov2.get('g2', 'X', open_ms=0)                   # 开格很久
+    assert adp.last_ohlcv[2] == now_ms - 108 * 900_000  # 窗口不随 open_ms 变
+
+
+def test_full_window_baseline_detects_spike_vs_long_history():
+    """满窗行为差分:107 根低量历史 + 最后一根 5×爆量 → rolling(100) 满窗基线判尖峰。
+    (旧实现开格 1 分钟只有 1 根 bar,expanding 基线=自身,永远判不出尖峰。)"""
+    bars = _bars_15m(n=108, base_qv=1e5, last_qv=5e5)   # 5×基线 > mult=3
+    adp = FakeAdapter(bars=bars, funding=_funding([0.001]))
+    prov = LiveSignalProvider(adp, mult=3, period='15min', n=100, now_fn=lambda: 1_000_000.0)
+    pv, _ = prov.get('g1', 'X', open_ms=999_940_000)    # 开格才 1 分钟,旧语义必 0
+    assert pv == 1

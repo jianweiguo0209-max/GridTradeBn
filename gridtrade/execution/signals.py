@@ -1,9 +1,10 @@
 """实盘退出信号提供者：pv_spike（量能尖峰）+ funding_rate（HL 真实资金费率）。
 
 设计要点：
-- **口径对齐回测**：pv_spike 复用 core.grid_engine.calc_pv_spike（同一函数、同一 15min 重采样），
-  数据取「开网时刻→现在」的 1m bars（≤持仓窗，HL 1m 近期够用），基线在窗口内即 expanding，
-  与回测逐位一致。
+- **legacy 满窗语义（2026-07-07）**：pv_spike 复用 core.grid_engine.calc_pv_spike（同一函数、
+  同一 15min 粒度），数据取原生 15m K线 n+8 根（n=100 → 108 根 ≈ 27h），rolling(n) 为
+  真滑动基线——对齐 legacy（OKX 时代 15m×rolling 满窗）语义；取数窗口与开格时刻解耦。
+  （此前取「开网时刻→现在」1m，基线退化为开格以来 expanding，系移植漂移，已修。）
 - **按 grid 节流缓存**：pv 是 15min 粒度、funding 是小时粒度，无需每 5s tick 打接口；
   每 grid 每 refresh_sec（默认 900s=15min）刷新一次，其余 tick 用缓存。
 - **失败降级**：任一取数异常→返回该项安全默认（pv_spike=0 / funding_rate=0.0）+ 日志，
@@ -44,7 +45,10 @@ class LiveSignalProvider:
 
     def _pv_spike(self, symbol, open_ms, now_ms):
         try:
-            bars = self.adapter.fetch_ohlcv(symbol, '1m', open_ms, now_ms)
+            # legacy 满窗语义（spec 2026-07-07-pv-legacy-semantics-live）：原生 15m 取 n+8 根
+            # （n=100→108 根≈27h），rolling(n) 为真滑动基线；窗口与 open_ms 解耦（open_ms 仅留签名兼容）。
+            since_ms = now_ms - (self.n + 8) * 900_000
+            bars = self.adapter.fetch_ohlcv(symbol, '15m', since_ms, now_ms)
             if bars is None or len(bars) == 0 or 'quote_volume' not in bars.columns:
                 return 0
             sp = calc_pv_spike(bars, active_period=self.period, mult=self.mult, n=self.n)
