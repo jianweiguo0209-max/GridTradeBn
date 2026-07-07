@@ -67,7 +67,7 @@ class DeployConfig:
     # gearing = 单格名义部署倍数(挂单总名义额 = gearing×cap)，吸收旧 leverage(5)×max_rate(0.68) 冗余对；
     # account_leverage = 账户最坏净敞口倍数(N 格同侧扫穿上限)；cap_equity_frac 为推导值(勿从 env 读)。
     grid_gearing: float = 3.4
-    account_leverage: float = 2.0
+    account_leverage: float = 3.5
     cap_equity_frac: float = 0.10   # 推导值 = derive_frac(account_leverage, max_concurrent, gearing)；>0 → cap=clamp(equity×frac,min,max)
     cap_min: float = 20.0
     cap_max: float = 100000.0
@@ -125,8 +125,8 @@ def load_deploy_config(env=None) -> DeployConfig:
         stop_orders_enabled=_b(env, 'STOP_ORDERS_ENABLED', True),
         stop_slippage=_f(env, 'STOP_SLIPPAGE', 0.15),
         grid_gearing=_f(env, 'GRID_GEARING', 3.4),
-        account_leverage=_f(env, 'ACCOUNT_LEVERAGE', 2.0),
-        cap_equity_frac=derive_frac(_f(env, 'ACCOUNT_LEVERAGE', 2.0),
+        account_leverage=_f(env, 'ACCOUNT_LEVERAGE', 3.5),
+        cap_equity_frac=derive_frac(_f(env, 'ACCOUNT_LEVERAGE', 3.5),
                                     _i(env, 'MAX_CONCURRENT', 12),
                                     _f(env, 'GRID_GEARING', 3.4)),
         cap_min=_f(env, 'CAP_MIN', 20.0),
