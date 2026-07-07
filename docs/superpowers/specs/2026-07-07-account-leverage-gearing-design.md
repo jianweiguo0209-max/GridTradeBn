@@ -22,7 +22,7 @@ frac = ACCOUNT_LEVERAGE / (MAX_CONCURRENT × GRID_GEARING / 2)
 cap  = clamp(equity × frac, CAP_MIN, CAP_MAX)          # compute_cap 不变
 ```
 
-例:ACCOUNT_LEVERAGE=5, MAX_CONCURRENT=12, gearing=3.4 → frac = 5/20.4 = 0.245。
+例:ACCOUNT_LEVERAGE=3.5, MAX_CONCURRENT=12, gearing=3.4 → frac = 3.5/20.4 = 0.1716。
 
 注:gearing/2 的 /2 = 中性网格双侧梯子、最坏只能吃到单侧(价格不能同时在带两端;来回震荡时反向成交互相抵消)。等比网格上侧名义额略大(~52-55%),/2 为近似,误差在锁定率不确定度内;止损体系(固定止损/PV/破网保险丝)会在扫穿前截断,该口径本身即保守上限。
 
@@ -41,12 +41,16 @@ cap  = clamp(equity × frac, CAP_MIN, CAP_MAX)          # compute_cap 不变
 | `gridtrade/execution/gates.py` | MinNotionalGate 读 executor sizing 表面:`leverage×max_rate` → `gearing` |
 | `gridtrade/dashboard/gridchart.py` | `grid_order_info(grid.cap, _effective_gearing(grid.leverage), ..., max_rate=1.0)`;`_effective_gearing(v) = v×0.68 if v>4.5 else v`(共享小助手,兜住未迁移的历史 CLOSED 行——迁移只动非 CLOSED,旧关闭格图表仍按原口径重算) |
 | `gridtrade/runtime/dbadmin.py` | 一次性数据迁移 `normalize_grid_leverage_to_gearing`:`UPDATE grids SET leverage = leverage × 0.68 WHERE leverage > 4.5 AND status != 'CLOSED'`(幂等:gearing≈3.4<4.5、旧值恒 5.0>4.5;CLOSED 行只作历史展示不参与重算,不动) |
-| `deploy/fly.toml` + `fly.prod.toml` | 去 `CAP_EQUITY_FRAC`;加 `GRID_GEARING="3.4"`、`ACCOUNT_LEVERAGE="5"`、`MAX_CONCURRENT="12"`(部署值=用户 5× 预算) |
+| `deploy/fly.toml` + `fly.prod.toml` | 去 `CAP_EQUITY_FRAC`;加 `GRID_GEARING="3.4"`、`ACCOUNT_LEVERAGE="3.5"`、`MAX_CONCURRENT="12"`(部署值=用户定 3.5×,见下节权衡) |
 | 测试 | ①换元等价:新 (gearing=3.4, max_rate=1.0) 与旧 (5, 0.68) 的 order_num 逐位相等;②derive_frac 纯函数(5/12/3.4→0.245);③旧 env 键报错;④迁移幂等差分(5.0→3.4,重跑不再动);⑤MinNotional/图表口径回归;全套 |
 
-## 部署值与风险声明(用户 5× 预算)
+## 部署值与风险声明(用户定 AL=3.5,不加杠杆池过滤)
 
-`ACCOUNT_LEVERAGE=5 × MAX_CONCURRENT=12` → frac=0.245,cap≈$744(equity $3,035)。账户级回测(pv_frac_equity.csv,实盘口径格集):串联 10 月 +59.2%、最差窗已实现 MDD −5.5%、实测峰值敞口 5.13×。**风险如实**:已实现口径低估真 MDD(格内浮亏不可见);格集无币锁、绝对值偏乐观;深尾(满敞口+10% 跳空)理论 −50% equity;PV 换形前向验证尚未积累。执行者建议(留档):先 ACCOUNT_LEVERAGE=2.5~3 过前向验证再升 5;**部署值按用户预算 5 执行**。
+`ACCOUNT_LEVERAGE=3.5 × MAX_CONCURRENT=12` → frac=0.1716,cap≈$521(equity $3,035)。账户级回测(实盘口径格集 mr68_*):W1 +2.98/W2 +10.13/OOS +7.57/IS +13.65,**串联 10 月 +38.7%**、最差窗已实现 MDD −3.87%、实测峰值敞口 3.53×(≈设计 3.5 ✓)。
+
+**HL 资产杠杆约束(2026-07-07 实测定案)**:HL 每资产 maxLeverage(池内分布 3×:9 / 5×:20 / 10×:28 / ≥20×:4)决定持仓保证金 = 名义额/杠杆,不影响 sizing/pnl。曾评估 `maxLev<10` 池过滤配 AL=5:会剔 48% 币(29/61,含四窗验证赢家 WLFI/TAO/LIT/VVV/ZRO 等)→ 回测验证作废,**否决**。改为不过滤 + AL=3.5:池内混合 E[1/lev]≈0.164 → 最坏保证金 ≈ 3.5×0.164 ≈ **0.57×equity**(可容纳,留浮亏余量);若未来要升 AL≥5,须先重跑过滤池四窗回测再议。
+
+**风险如实**:已实现口径低估真 MDD(格内浮亏不可见);格集无币锁、绝对值偏乐观;深尾(满敞口+10% 跳空)理论 ≈ −35% equity;PV 换形前向验证尚未积累。
 
 ## 上线路径
 
@@ -60,4 +64,5 @@ cap  = clamp(equity × frac, CAP_MIN, CAP_MAX)          # compute_cap 不变
 - 引擎/回测参数化(保持 leverage×max_rate 显式传参,已对齐);
 - 混合保底 `min(equity×frac, cash×0.95)`(保证金非瓶颈,YAGNI);
 - `set_leverage` 调用(维持不设仓位杠杆的现状);
+- **maxLeverage 池过滤**(评估后否决:剔 48% 币含验证赢家;以 AL=3.5 控保证金尾部替代,升 AL≥5 前须过滤池重回测);
 - funding/滑点建模改进。
