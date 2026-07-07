@@ -125,7 +125,9 @@ def test_strategy_defaults_mirror_legacy():
     assert DEFAULT_STOP_CFG['trailing_k'] == 0.3
     assert DEFAULT_STOP_CFG['trailing_floor'] == 0.00618
     assert DEFAULT_STOP_CFG['fundingRate_stop_loss'] == 0.0015
-    assert DEFAULT_STOP_CFG['pv_pnl_thr'] == -0.02
+    assert DEFAULT_STOP_CFG['pv_pnl_thr'] == 0.005    # 尖峰时浮盈<+0.5%即撤(2026-07-07 PV研究)
+    assert DEFAULT_STOP_CFG['pv_mult'] == 3
+    assert DEFAULT_STOP_CFG['pv_n'] == 100            # 量能基线 25h 真滚动窗(n 扫描甜点档)
     assert DEFAULT_STOP_CFG['pv_period'] == '15min'   # 非 '15m'（pandas 会当成月）
 
 
