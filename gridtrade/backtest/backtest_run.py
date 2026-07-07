@@ -127,6 +127,7 @@ def _simulate_grid_task(payload):
     (rt, offset, sym, entry, gp, bars_df, funding_df), cfg = payload
     pv_cfg = cfg['pv_cfg']
     sim = simulate_grid_engine(bars_df, gp, cap=1000.0, leverage=cfg['lev'], fee=cfg['fee_rate'],
+                               c_rate_taker=cfg.get('taker_rate', 0.00045),
                                max_rate=cfg['max_rate'], min_amount=0.0, stop_cfg=cfg['stop_cfg'],
                                funding_df=funding_df, neutral_init=False,
                                active_stop_mode=cfg['active_stop_mode'],
@@ -226,11 +227,15 @@ def build_grid_tasks(cache, universe, window_start, window_end, strategy_config,
                                sim_timeframe=sim_timeframe, timeframe=timeframe, log=log)
 
 
-def simulate_tasks(data_tasks, *, leverage, fee_rate=0.0005, max_rate=0.5, stop_cfg=None,
+def simulate_tasks(data_tasks, *, leverage, fee_rate=0.00015, taker_rate=0.00045,
+                   max_rate=0.5, stop_cfg=None,
                    active_stop_mode='pv', pv_cfg=None, workers=1):
     """对已组装的 data_tasks 跑仿真（可并行）→ 明细 DataFrame。仿真配置在此传入，故同一批
-    data_tasks 可反复用不同 (active_stop_mode/pv_cfg/stop_cfg) 仿真——扫参提速的关键。"""
-    cfg = {'lev': leverage, 'fee_rate': fee_rate, 'max_rate': max_rate, 'stop_cfg': stop_cfg,
+    data_tasks 可反复用不同 (active_stop_mode/pv_cfg/stop_cfg) 仿真——扫参提速的关键。
+    fee_rate=maker（网格挂单成交，默认 1.5bps）、taker_rate=taker（平仓/止损/破网，默认
+    4.5bps）——对齐 HL base 档实盘费率（见 memory backtest-fee-overcharge）。"""
+    cfg = {'lev': leverage, 'fee_rate': fee_rate, 'taker_rate': taker_rate,
+           'max_rate': max_rate, 'stop_cfg': stop_cfg,
            'active_stop_mode': active_stop_mode, 'pv_cfg': pv_cfg or {}}
     payloads = [(dt, cfg) for dt in data_tasks]
     if workers and workers > 1 and len(payloads) > 1:
@@ -309,7 +314,7 @@ def allocate_with_tiers(ranked_picks, tiers, period='12H'):
 
 
 def run_backtest(cache, universe, window_start, window_end, strategy_config, factors,
-                 *, timeframe='1h', sim_timeframe=None, fee_rate=0.0005,
+                 *, timeframe='1h', sim_timeframe=None, fee_rate=0.00015, taker_rate=0.00045,
                  max_rate=0.5, leverage=None, min_quote_volume=0.0, blacklist=(),
                  workers=1, symbol_lock=False, tiers=None, tier_cand_k=5, log=print):
     """timeframe: 选币因子所用 K 线周期（换仓周期粒度，默认 1h）。
@@ -340,7 +345,8 @@ def run_backtest(cache, universe, window_start, window_end, strategy_config, fac
         tasks = assemble_grid_tasks(cache, picks, strategy_config,
                                     sim_timeframe=sim_timeframe, timeframe=timeframe,
                                     log=log)
-        return simulate_tasks(tasks, leverage=lev, fee_rate=fee_rate, max_rate=max_rate,
+        return simulate_tasks(tasks, leverage=lev, fee_rate=fee_rate, taker_rate=taker_rate,
+                              max_rate=max_rate,
                               stop_cfg=strategy_config['stop_loss_config'],
                               active_stop_mode=strategy_config.get('active_stop_mode', 'pv'),
                               pv_cfg=strategy_config.get('pv_config', {}), workers=workers)
@@ -351,7 +357,8 @@ def run_backtest(cache, universe, window_start, window_end, strategy_config, fac
     if symbol_lock:
         tasks, n_rej = filter_tasks_symbol_lock(tasks, period=strategy_config['period'])
         log('[BT] symbol_lock: rejected %d tasks (每币≤1，与实盘 SymbolLockGate 同口径)' % n_rej)
-    return simulate_tasks(tasks, leverage=lev, fee_rate=fee_rate, max_rate=max_rate,
+    return simulate_tasks(tasks, leverage=lev, fee_rate=fee_rate, taker_rate=taker_rate,
+                          max_rate=max_rate,
                           stop_cfg=strategy_config['stop_loss_config'],
                           active_stop_mode=strategy_config.get('active_stop_mode', 'pv'),
                           pv_cfg=strategy_config.get('pv_config', {}), workers=workers)
