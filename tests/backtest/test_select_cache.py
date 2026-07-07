@@ -45,16 +45,28 @@ def test_load_rejects_param_mismatch(tmp_path):
     assert SC.load(cache, key, tampered) is None
 
 
-def test_fingerprint_changes_with_new_day(tmp_path):
+def test_fingerprint_scoped_to_window(tmp_path):
+    """指纹只覆盖 [window_start−回看, window_end]：追加 window_end 之后的天不翻 key
+    （修复'例行追加近期数据打翻历史窗缓存'）；范围内新增天仍翻 key（正确失效）。"""
     from gridtrade.backtest import select_cache as SC
+    from gridtrade.backtest.cache import ParquetCache
     syms = ['AAA/USDT:USDT']
-    cache = _seed_cache(tmp_path, syms)
-    ws, we = pd.Timestamp('2024-01-10'), pd.Timestamp('2024-01-11')
-    k1, _ = SC.compute_key(cache, syms, ws, we, '1h', 0.0, (), STRAT, FACTORS)
-    cache.write('1h', 'AAA/USDT:USDT', '2024-02-01',
-                _bars('AAA/USDT:USDT', n=5, start='2024-02-01'))   # 新增一天 → 指纹变
-    k2, _ = SC.compute_key(cache, syms, ws, we, '1h', 0.0, (), STRAT, FACTORS)
-    assert k2 != k1
+    cache = ParquetCache(str(tmp_path))
+    df = _bars(syms[0], n=192, start='2024-01-01')          # 192h = 01-01..01-08，都在回看范围内
+    for day, g in df.groupby(df['candle_begin_time'].dt.strftime('%Y-%m-%d')):
+        cache.write('1h', syms[0], day, g.reset_index(drop=True))
+    ws, we = pd.Timestamp('2024-01-10'), pd.Timestamp('2024-01-12')
+    k0, _ = SC.compute_key(cache, syms, ws, we, '1h', 0.0, (), STRAT, FACTORS)
+
+    # (1) 追加 window_end 之后的天 → 范围外 → key 不变（核心修复）
+    cache.write('1h', syms[0], '2024-01-20', _bars(syms[0], n=24, start='2024-01-20'))
+    k_future, _ = SC.compute_key(cache, syms, ws, we, '1h', 0.0, (), STRAT, FACTORS)
+    assert k_future == k0, '追加 window_end 之后的天不应翻 key'
+
+    # (2) 追加窗口范围内的天（≤ window_end 且 ≥ 回看下界）→ key 变（正确失效）
+    cache.write('1h', syms[0], '2024-01-11', _bars(syms[0], n=24, start='2024-01-11'))
+    k_inrange, _ = SC.compute_key(cache, syms, ws, we, '1h', 0.0, (), STRAT, FACTORS)
+    assert k_inrange != k0, '范围内新增天应翻 key'
 
 
 def test_enabled_env(monkeypatch):
