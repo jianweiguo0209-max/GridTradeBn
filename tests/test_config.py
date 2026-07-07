@@ -4,10 +4,10 @@ from gridtrade.config import (load_deploy_config, DeployConfig, compute_cap,
 
 def test_cap_equity_frac_defaults_and_parsing():
     cfg = load_deploy_config(env={})
-    assert cfg.cap_equity_frac == 0.10          # 默认按权益 10% 动态定 cap
+    assert abs(cfg.cap_equity_frac - 0.09804) < 1e-4   # 推导值:AL2.0/(12×1.7)≈旧默认0.10
     assert cfg.cap_min == 20.0 and cfg.cap_max == 100000.0
-    cfg2 = load_deploy_config(env={'CAP_EQUITY_FRAC': '0.065', 'CAP_MIN': '30', 'CAP_MAX': '500'})
-    assert cfg2.cap_equity_frac == 0.065 and cfg2.cap_min == 30.0 and cfg2.cap_max == 500.0
+    cfg2 = load_deploy_config(env={'CAP_MIN': '30', 'CAP_MAX': '500'})
+    assert cfg2.cap_min == 30.0 and cfg2.cap_max == 500.0
 
 
 def test_compute_cap_clamps():
@@ -23,10 +23,10 @@ def test_defaults_when_env_empty():
     assert cfg.exchange == 'hyperliquid'
     assert cfg.testnet is False
     assert cfg.cap == 100.0
-    assert cfg.leverage == 5.0
+    assert cfg.grid_gearing == 3.4 and cfg.account_leverage == 2.0
     assert cfg.monitor_interval_sec == 5.0
     assert cfg.scheduler_period == '12H'
-    assert cfg.max_concurrent == 20
+    assert cfg.max_concurrent == 12
     assert cfg.wallet_address == '' and cfg.private_key == ''
 
 
@@ -38,7 +38,7 @@ def test_parses_env_with_type_coercion():
         'HL_TESTNET': 'true',
         'DATABASE_URL': 'postgresql+psycopg2://u:p@h/db',
         'CAP': '250.5',
-        'LEVERAGE': '3',
+        'GRID_GEARING': '2.0',
         'MONITOR_INTERVAL_SEC': '3.5',
         'SCHEDULER_PERIOD': '6H',
         'MAX_CONCURRENT': '10',
@@ -50,7 +50,7 @@ def test_parses_env_with_type_coercion():
     assert cfg.wallet_address == '0xabc' and cfg.private_key == 'deadbeef'
     assert cfg.testnet is True
     assert cfg.database_url == 'postgresql+psycopg2://u:p@h/db'
-    assert cfg.cap == 250.5 and cfg.leverage == 3.0
+    assert cfg.cap == 250.5 and cfg.grid_gearing == 2.0
     assert cfg.monitor_interval_sec == 3.5 and cfg.scheduler_period == '6H'
     assert cfg.max_concurrent == 10 and cfg.total_budget == 5000.0
     assert cfg.default_cap == 200.0
@@ -144,3 +144,22 @@ def test_monitor_parallel_config():
     cfg = load_deploy_config(env={'MONITOR_PARALLEL': '1',
                                   'MONITOR_UNIT_WARN_SEC': '10'})
     assert cfg.monitor_parallel == 1 and cfg.monitor_unit_warn_sec == 10.0
+
+
+def test_derive_frac_and_new_keys():
+    from gridtrade.config import derive_frac, load_deploy_config
+    assert abs(derive_frac(3.5, 12, 3.4) - 0.17157) < 1e-4     # 部署值(spec 2026-07-07)
+    assert abs(derive_frac(2.0, 12, 3.4) - 0.09804) < 1e-4     # 代码默认≈旧 0.10
+    env = {'ACCOUNT_LEVERAGE': '3.5', 'MAX_CONCURRENT': '12', 'GRID_GEARING': '3.4'}
+    cfg = load_deploy_config(env)
+    assert abs(cfg.cap_equity_frac - 0.17157) < 1e-4            # frac 是推导值,不再来自 env
+    assert cfg.grid_gearing == 3.4 and cfg.account_leverage == 3.5
+
+
+def test_legacy_keys_raise_loudly():
+    import pytest
+    from gridtrade.config import load_deploy_config
+    with pytest.raises(RuntimeError, match='GRID_GEARING'):
+        load_deploy_config({'LEVERAGE': '5'})
+    with pytest.raises(RuntimeError, match='ACCOUNT_LEVERAGE'):
+        load_deploy_config({'CAP_EQUITY_FRAC': '0.10'})

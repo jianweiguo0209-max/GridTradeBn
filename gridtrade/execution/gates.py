@@ -109,8 +109,7 @@ class MinNotionalGate(AdmissionGate):
     cap×lev×max_rate 摊到每档后单笔 < $10 → 开仓首单即被拒 → 留零挂单死 OPENING（靠
     stuck-OPENING 自愈清理但整轮漏开仓）。在门链预检直接拒提案：不建死网格、拒因可观测。
 
-    口径与 executor.open 同源：grid_order_info(cap, lev, low, high, grid_count, ...,
-    min_amount, max_rate)，cap 用 executor._resolve_cap()（与真实开仓同一动态 cap）；
+    口径与 executor.open 同源：grid_order_info(cap, gearing, low, high, grid_count, ...,    min_amount, max_rate)，cap 用 executor._resolve_cap()（与真实开仓同一动态 cap）；
     最低档名义额 = 每笔数量 × low_price（等量挂单，最低价档名义额最小）。
     min_notional<=0 = 停用（默认，向后兼容：无此约束的交易所不受影响）。"""
 
@@ -126,11 +125,11 @@ class MinNotionalGate(AdmissionGate):
         gp = proposal.grid_params
         cap = (proposal.cap if proposal.cap is not None
                else self.executor._resolve_cap())
-        gi = grid_order_info(cap, self.executor.leverage, gp['low_price'],
+        gi = grid_order_info(cap, self.executor.gearing, gp['low_price'],
                              gp['high_price'], int(gp['grid_count']),
                              gp['stop_low_price'], gp['stop_high_price'],
                              min_amount=self.executor.min_amount,
-                             max_rate=self.executor.max_rate)
+                             max_rate=1.0)
         if gi is None:
             return GateResult(False, 'MinNotionalGate',
                               'cap %.2f 无法建网（每笔数量<=0）' % cap)

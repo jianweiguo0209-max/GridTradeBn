@@ -20,8 +20,8 @@ _TRADE_REFETCH_OVERLAP_MS = 5 * 60 * 1000
 
 
 class GridExecutor:
-    def __init__(self, adapter, store, *, cap, leverage, fee=0.0002,
-                 c_rate_taker=0.0005, max_rate=0.68, min_amount=0.0,
+    def __init__(self, adapter, store, *, cap, gearing=None, leverage=None, fee=0.0002,
+                 c_rate_taker=0.0005, max_rate=None, min_amount=0.0,
                  stop_orders_enabled=False, stop_slippage=0.15,
                  cap_equity_frac=0.0, cap_min=0.0, cap_max=float('inf')):
         self.adapter = adapter
@@ -31,10 +31,14 @@ class GridExecutor:
         self.records = RecordRepository(store)
         self.fills = FillRepository(store)
         self.cap = float(cap)
-        self.leverage = float(leverage)
+        # gearing(单格名义部署倍数,挂单总名义额=gearing×cap)= 旧 leverage×max_rate;
+        # 旧参数保留向后兼容(spec 2026-07-07-account-leverage-gearing),折算后行为逐位不变。
+        if gearing is None:
+            gearing = float(leverage if leverage is not None else 5.0) \
+                      * float(max_rate if max_rate is not None else 0.68)
+        self.gearing = float(gearing)
         self.fee = float(fee)
         self.c_rate_taker = float(c_rate_taker)
-        self.max_rate = float(max_rate)
         self.min_amount = float(min_amount)
         self.stop_orders_enabled = bool(stop_orders_enabled)
         self.stop_slippage = float(stop_slippage)
@@ -70,10 +74,10 @@ class GridExecutor:
     def open(self, exchange, symbol, grid_params, *, offset=0, tag='', cap=None):
         if cap is None:
             cap = self._resolve_cap()
-        gi = grid_order_info(cap, self.leverage, grid_params['low_price'],
+        gi = grid_order_info(cap, self.gearing, grid_params['low_price'],
                              grid_params['high_price'], int(grid_params['grid_count']),
                              grid_params['stop_low_price'], grid_params['stop_high_price'],
-                             min_amount=self.min_amount, max_rate=self.max_rate)
+                             min_amount=self.min_amount, max_rate=1.0)
         if gi is None:
             raise RuntimeError('建网失败：保证金不足')
         price_array = [float(p) for p in gi['价格序列']]
@@ -85,7 +89,7 @@ class GridExecutor:
             entry_price=entry, low_price=grid_params['low_price'], high_price=grid_params['high_price'],
             stop_low_price=grid_params['stop_low_price'], stop_high_price=grid_params['stop_high_price'],
             grid_count=int(grid_params['grid_count']), order_num=order_num,
-            leverage=self.leverage, cap=cap))
+            leverage=self.gearing, cap=cap))   # 列名沿用,语义=gearing(审计;行为惰性,见 DB 影响矩阵)
         gid = grid.id
         self.accounting.init(gid)
         self._geom[gid] = {'price_array': price_array, 'order_num': order_num}

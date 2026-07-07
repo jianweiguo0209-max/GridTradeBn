@@ -23,9 +23,9 @@ class Reconciler:
         # mainnet 2026-07-06 实证——用 ex.cap($100) 重建 cap=$302 的网格 → order_num 缩 1/3
         # （补单 $8.63<$10 被拒/静默 1/3 量成交）+ LiveEquity 分母错 → 止损止盈 3 倍提前。
         grid_cap = g.cap if g.cap else ex.cap
-        gi = grid_order_info(grid_cap, ex.leverage, g.low_price, g.high_price,
+        gi = grid_order_info(grid_cap, ex.gearing, g.low_price, g.high_price,
                              int(g.grid_count), g.stop_low_price, g.stop_high_price,
-                             min_amount=ex.min_amount, max_rate=ex.max_rate)
+                             min_amount=ex.min_amount, max_rate=1.0)
         price_array = [float(p) for p in gi['价格序列']]
         # order_num 优先取开仓持久化真值（与在场挂单/补单口径逐位一致）；老行缺失才回退重算
         order_num = float(g.order_num) if g.order_num else float(gi['每笔数量'])

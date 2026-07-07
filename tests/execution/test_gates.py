@@ -256,11 +256,10 @@ def test_margin_gate_in_chain_filter_cumulative_and_per_batch_snapshot():
 
 
 class _SizerStub:
-    """MinNotionalGate 只依赖 executor 的 sizing 表面：_resolve_cap()/leverage/max_rate/min_amount。"""
-    def __init__(self, cap=102.0, leverage=5.0, max_rate=0.5, min_amount=0.0):
+    """MinNotionalGate 只依赖 executor 的 sizing 表面：_resolve_cap()/gearing/min_amount。"""
+    def __init__(self, cap=102.0, gearing=2.5, min_amount=0.0):   # 2.5=旧 lev5×max_rate0.5
         self._cap = cap
-        self.leverage = leverage
-        self.max_rate = max_rate
+        self.gearing = gearing
         self.min_amount = min_amount
 
     def _resolve_cap(self):

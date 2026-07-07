@@ -47,7 +47,6 @@ class DeployConfig:
     quote_currency: str  # 计价/结算币覆写；'' -> 用适配器类默认（HL=USDC / OKX=USDT）
     database_url: str
     cap: float
-    leverage: float
     monitor_interval_sec: float
     scheduler_period: str
     max_concurrent: int
@@ -64,7 +63,12 @@ class DeployConfig:
     display_tz: str = 'UTC'   # IANA 时区名，仅影响面板显示；策略侧永远存/算 UTC
     stop_orders_enabled: bool = True
     stop_slippage: float = 0.15
-    cap_equity_frac: float = 0.10   # >0 → 每网格 cap 按当前权益动态定 = clamp(equity×frac, min, max)；0=停用用固定 cap
+    # 仓位参数体系(spec 2026-07-07-account-leverage-gearing)：
+    # gearing = 单格名义部署倍数(挂单总名义额 = gearing×cap)，吸收旧 leverage(5)×max_rate(0.68) 冗余对；
+    # account_leverage = 账户最坏净敞口倍数(N 格同侧扫穿上限)；cap_equity_frac 为推导值(勿从 env 读)。
+    grid_gearing: float = 3.4
+    account_leverage: float = 2.0
+    cap_equity_frac: float = 0.10   # 推导值 = derive_frac(account_leverage, max_concurrent, gearing)；>0 → cap=clamp(equity×frac,min,max)
     cap_min: float = 20.0
     cap_max: float = 100000.0
     min_quote_volume_24h: float = 0.0   # >0 → 24h 成交额绝对地板（0=停用）；生产由 fly.prod.toml 设 $1M
@@ -82,8 +86,19 @@ def compute_cap(equity, frac, cap_min, cap_max):
     return max(float(cap_min), min(float(cap_max), float(equity) * float(frac)))
 
 
+def derive_frac(account_leverage, max_concurrent, gearing):
+    """cap 占权益比例 = 账户杠杆 / (最大仓数 × 单格最坏净敞口倍数 gearing/2)。
+    中性网格双侧梯子最坏只吃单侧,故 /2(spec 2026-07-07-account-leverage-gearing)。"""
+    return float(account_leverage) / (int(max_concurrent) * float(gearing) / 2.0)
+
+
 def load_deploy_config(env=None) -> DeployConfig:
     env = os.environ if env is None else env
+    # 退役键守卫(spec 2026-07-07-account-leverage-gearing)：语义变更,禁止静默映射。
+    for legacy, repl in (('LEVERAGE', 'GRID_GEARING(=旧LEVERAGE×0.68,默认3.4)'),
+                         ('CAP_EQUITY_FRAC', 'ACCOUNT_LEVERAGE(frac=AL/(N×gearing/2))')):
+        if legacy in env:
+            raise RuntimeError('env %s 已退役,请改用 %s' % (legacy, repl))
     cap = _f(env, 'CAP', 100.0)
     return DeployConfig(
         exchange=_s(env, 'EXCHANGE', 'hyperliquid'),
@@ -93,10 +108,9 @@ def load_deploy_config(env=None) -> DeployConfig:
         quote_currency=_s(env, 'QUOTE_CURRENCY', ''),
         database_url=_s(env, 'DATABASE_URL', ''),
         cap=cap,
-        leverage=_f(env, 'LEVERAGE', 5.0),
         monitor_interval_sec=_f(env, 'MONITOR_INTERVAL_SEC', 5.0),
         scheduler_period=_s(env, 'SCHEDULER_PERIOD', '12H'),
-        max_concurrent=_i(env, 'MAX_CONCURRENT', 20),
+        max_concurrent=_i(env, 'MAX_CONCURRENT', 12),
         total_budget=_f(env, 'TOTAL_BUDGET', 1_000_000.0),
         default_cap=_f(env, 'DEFAULT_CAP', cap),   # 未设 -> 用 cap
         blacklist=_csv(env, 'BLACKLIST_SYMBOLS') or DEFAULT_TIER_POLICY.tier0,
@@ -110,7 +124,11 @@ def load_deploy_config(env=None) -> DeployConfig:
         equity_snapshot_interval_sec=_f(env, 'EQUITY_SNAPSHOT_INTERVAL_SEC', 300.0),
         stop_orders_enabled=_b(env, 'STOP_ORDERS_ENABLED', True),
         stop_slippage=_f(env, 'STOP_SLIPPAGE', 0.15),
-        cap_equity_frac=_f(env, 'CAP_EQUITY_FRAC', 0.10),
+        grid_gearing=_f(env, 'GRID_GEARING', 3.4),
+        account_leverage=_f(env, 'ACCOUNT_LEVERAGE', 2.0),
+        cap_equity_frac=derive_frac(_f(env, 'ACCOUNT_LEVERAGE', 2.0),
+                                    _i(env, 'MAX_CONCURRENT', 12),
+                                    _f(env, 'GRID_GEARING', 3.4)),
         cap_min=_f(env, 'CAP_MIN', 20.0),
         cap_max=_f(env, 'CAP_MAX', 100000.0),
         min_quote_volume_24h=_f(env, 'MIN_QUOTE_VOLUME_24H', 0.0),

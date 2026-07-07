@@ -58,7 +58,7 @@ def build_runtime(config) -> Runtime:
     store.create_all()
 
     executor = GridExecutor(adapter, store, cap=config.cap,
-                            leverage=config.leverage,
+                            gearing=config.grid_gearing,
                             stop_orders_enabled=config.stop_orders_enabled,
                             stop_slippage=config.stop_slippage,
                             cap_equity_frac=config.cap_equity_frac,

@@ -16,7 +16,7 @@ def test_build_runtime_wires_all_components():
     from gridtrade.execution.reconciler import Reconciler
     from gridtrade.state.heartbeats import HeartbeatRepository
 
-    rt = build_runtime(_cfg(CAP='500', LEVERAGE='4', MAX_CONCURRENT='7'))
+    rt = build_runtime(_cfg(CAP='500', GRID_GEARING='2.72', MAX_CONCURRENT='7'))
     assert isinstance(rt, Runtime)
     assert isinstance(rt.adapter, ResilientAdapter)
     assert isinstance(rt.executor, GridExecutor)
@@ -25,7 +25,7 @@ def test_build_runtime_wires_all_components():
     assert isinstance(rt.reconciler, Reconciler)
     assert isinstance(rt.heartbeats, HeartbeatRepository)
     # config 透传到执行器
-    assert rt.executor.cap == 500.0 and rt.executor.leverage == 4.0
+    assert rt.executor.cap == 500.0 and rt.executor.gearing == 2.72   # =旧 lev4×0.68
 
 
 def test_build_runtime_gate_chain_has_four_gates_margin_last():
