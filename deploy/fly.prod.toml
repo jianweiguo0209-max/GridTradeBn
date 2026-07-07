@@ -23,7 +23,10 @@ primary_region = "nrt"
   MONITOR_INTERVAL_SEC = "5"
   MONITOR_PARALLEL = "4"            # per-grid 并行监控（2026-07-06 快照版验证后回 4：读路径 AccountSnapshot 化，权重与格数/并发解耦、429 根因已除；1=串行保底）
   SCHEDULER_PERIOD = "12H"
-  MAX_CONCURRENT = "20"
+  MAX_CONCURRENT = "12"
+  # 仓位参数体系(spec 2026-07-07-account-leverage-gearing):frac=AL/(N×gearing/2)=3.5/20.4≈0.1716
+  GRID_GEARING = "3.4"
+  ACCOUNT_LEVERAGE = "3.5"
   SCHEDULER_RUN_ON_START = "false"  # ← 生产：避免每次自动部署把网格中途关开、烧真手续费
   # 币池：全市场动态（2026-07-04 起已去 UNIVERSE_WHITELIST，无该项即走此模式）。
   # resolve_live_universe = 全部 live 永续 swap（list_instruments 只留 swap + canonical
@@ -35,17 +38,13 @@ primary_region = "nrt"
   # 档0 硬禁名单单源在 gridtrade/config.py DEFAULT_TIER_POLICY.tier0（legacy 移植 9 币，
   # spec 2026-07-06-tiered-*）；此处 env 仅作运维紧急覆盖（非空才生效），名单变更走代码
   # commit 两侧（实盘/回测）原子同步。已持有的被禁币不强平，随 12H 换仓自然退出。
-  # 风控项（CAP / CAP_MIN / CAP_MAX / LEVERAGE）沿用 config.py 默认或按需 fly secrets 覆盖。
-  # 单网格 cap = clamp(equity×CAP_EQUITY_FRAC, CAP_MIN, CAP_MAX)；每笔挂单 notional ≈
-  #   cap×LEVERAGE×max_rate/(档数+1)，须 ≥ HL mainnet 全市场 $10 最小下单额（cost.min=10）。
-  # CAP_EQUITY_FRAC=0.10（config.py 默认）：本金已增至 ~$1000+（2026-07-04 追加 800→equity~$1021）
-  #   → cap≈$102，正是 testnet 验证过的 ~$98-100 量级，普通币（~20 档）单笔 $10-14 稳过 $10，
-  #   MarginGate(default_cap=$100) 可放行 ~10 个并发网格（回到"多小网格分散"设计）。
-  # 历史：上线时本金仅 ~$220，0.10→cap≈$22→单笔≈$3<$10 首批全被拒；曾临时覆写 0.50（cap≈$110）
-  #   作小账户 band-aid（见记忆 mainnet-order-min-notional）；本金充足后回调默认 0.10。
+  # 风控项（CAP / CAP_MIN / CAP_MAX）沿用 config.py 默认或按需 fly secrets 覆盖。
+  # 单网格 cap = clamp(equity×frac, CAP_MIN, CAP_MAX)，frac=ACCOUNT_LEVERAGE/(MAX_CONCURRENT×GRID_GEARING/2)
+  #   =3.5/20.4≈0.1716(equity $3k→cap≈$521)；每笔挂单 notional≈cap×gearing/(档数+1) 须≥$10(cost.min)。
+  # 旧键 LEVERAGE/CAP_EQUITY_FRAC 已退役——设置即 boot 报错(语义变更禁静默映射)。
+  # 历史(CAP_EQUITY_FRAC 时代)：$220 本金 0.10→单笔$3<$10 全拒、临时 0.50 band-aid(记忆 mainnet-order-min-notional)。
   # ⚠ 与 frac 无关的独立局限：高档数币（如 LIT 51 档，需 cap≥$335）用任何现实 cap 都够不着 $10、
   #   开仓安全失败留 stuck OPENING（不损资金）；根治须给 grid_order_info 接入 cost.min 自适应封顶档数。
-  CAP_EQUITY_FRAC = "0.10"
 
 [processes]
   monitor = "python -m gridtrade.runtime.monitor"
