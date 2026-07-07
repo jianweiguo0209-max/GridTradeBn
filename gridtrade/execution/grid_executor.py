@@ -242,7 +242,22 @@ class GridExecutor:
         # 触发原因，裸写会盖掉真因（mainnet 实证 SPX 轮换关格被记成平仓恢复）。
         if reason == '平仓恢复' and grid.close_reason:
             reason = '%s(续平)' % grid.close_reason
-        self.adapter.cancel_all(symbol)
+        # 同币兄弟格感知（cap=2 双格）：symbol 级撤单/全净仓 reduce 会误伤幸存格——
+        # mainnet 2026-07-07 NBIS 实证：关 gt06 撤光并平掉 gt08 的 0.44 → 幸存格
+        # 永久幻影账簿（平仓成交挂发起格 oid，兄弟 sync 永不摄入）。有兄弟 → 格级
+        # 收敛（只撤自己的单、只平自己的模型份额）；无兄弟 → 保留 symbol 级扫除
+        # （孤儿单/孤儿仓卫生，旧行为不变）。
+        siblings = [g for g in self.grids.list_active()
+                    if g.symbol == symbol and g.id != grid_id]
+        if siblings:
+            for o in self.orders.list_open_by_grid(grid_id):
+                if o.status == 'open' and o.exchange_order_id:
+                    try:
+                        self.adapter.cancel_order(symbol, o.exchange_order_id)
+                    except Exception:
+                        pass        # 已成交/已撤 → 目标态已达
+        else:
+            self.adapter.cancel_all(symbol)
         # 撤掉未触发的另一张保险丝（cancel_all 在多数所已覆盖触发单，这里再 best-effort 补刀，跨所稳妥）。
         for oid in (grid.fuse_low_oid, grid.fuse_high_oid):
             if oid:
@@ -257,13 +272,29 @@ class GridExecutor:
         # reduce 市价单可能部分成交（HL 滑点/薄盘）；重拉持仓、补 reduce 直至 <= min_amount。
         pos = self.adapter.fetch_positions(symbol)
         attempt = 0
-        while abs(pos.net_size) > self.min_amount and attempt < 3:
-            side = 'sell' if pos.net_size > 0 else 'buy'
-            self.adapter.create_market_order(symbol, side, abs(pos.net_size),
-                                             reduce_only=True,
-                                             client_oid='%s:close:%d' % (grid_id, attempt))
-            attempt += 1
-            pos = self.adapter.fetch_positions(symbol)
+        if siblings:
+            # 只平自己的模型份额（accounting=最后一次 sync 的净仓，与 live 快照同源）；
+            # 份额未知宁可不平——残仓并入兄弟世界由漂移告警接手，绝不误杀兄弟仓位。
+            # 交易所净仓与自身份额符号相反=兄弟已对冲掉我们的份额 → 无可平。
+            acc0 = self.accounting.get(grid_id)
+            remaining = float(acc0.net_position or 0.0) if acc0 is not None else 0.0
+            while (abs(remaining) > self.min_amount and pos.net_size * remaining > 0
+                   and attempt < 3):
+                qty = min(abs(remaining), abs(pos.net_size))
+                side = 'sell' if remaining > 0 else 'buy'
+                self.adapter.create_market_order(symbol, side, qty, reduce_only=True,
+                                                 client_oid='%s:close:%d' % (grid_id, attempt))
+                remaining -= qty if remaining > 0 else -qty
+                attempt += 1
+                pos = self.adapter.fetch_positions(symbol)
+        else:
+            while abs(pos.net_size) > self.min_amount and attempt < 3:
+                side = 'sell' if pos.net_size > 0 else 'buy'
+                self.adapter.create_market_order(symbol, side, abs(pos.net_size),
+                                                 reduce_only=True,
+                                                 client_oid='%s:close:%d' % (grid_id, attempt))
+                attempt += 1
+                pos = self.adapter.fetch_positions(symbol)
         snap = self.live[grid_id].snapshot(float(self.adapter.fetch_price(symbol)))
         # 记录按该格真实资金计钱：pnl_ratio 分母是 LiveEquity.cap==grid.cap（动态 cap），
         # 乘 executor 静态默认 cap 会整体错标（restore-cap 同族，mainnet 2026-07-06 实证低报 3x）。
