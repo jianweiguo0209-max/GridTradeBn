@@ -39,10 +39,10 @@ cap  = clamp(equity × frac, CAP_MIN, CAP_MAX)          # compute_cap 不变
 | `gridtrade/config.py` | DeployConfig:去 `leverage` 字段、加 `grid_gearing`/`account_leverage`;`load_deploy_config` 读新键 + 旧键报错;新增 `derive_frac(account_leverage, max_concurrent, gearing)` 纯函数 |
 | `gridtrade/execution/grid_executor.py` | `(leverage, max_rate)` 属性 → `gearing`;`grid_order_info(cap, self.gearing, ..., max_rate=1.0)`;`_resolve_cap` 用推导 frac;开格落库 `grids.leverage` 列**存 gearing**(列名不改,语义文档化) |
 | `gridtrade/execution/gates.py` | MinNotionalGate 读 executor sizing 表面:`leverage×max_rate` → `gearing` |
-| `gridtrade/dashboard/gridchart.py` | `grid_order_info(grid.cap, _effective_gearing(grid.leverage), ..., max_rate=1.0)`;`_effective_gearing(v) = v×0.68 if v>4.5 else v`(共享小助手,兜住未迁移的历史 CLOSED 行——迁移只动非 CLOSED,旧关闭格图表仍按原口径重算) |
-| `gridtrade/runtime/dbadmin.py` | 一次性数据迁移 `normalize_grid_leverage_to_gearing`:`UPDATE grids SET leverage = leverage × 0.68 WHERE leverage > 4.5 AND status != 'CLOSED'`(幂等:gearing≈3.4<4.5、旧值恒 5.0>4.5;CLOSED 行只作历史展示不参与重算,不动) |
+| `gridtrade/dashboard/gridchart.py` | **不改**(实读代码证实:只消费 `gi['价格序列']`,价格档位仅由 low/high/grid_count 决定、与杠杆无关;旧行 5.0/新行 3.4 渲染逐位一致) |
+| ~~`gridtrade/runtime/dbadmin.py` 数据迁移~~ | **撤销(2026-07-07 实读代码后)**:`grids.leverage` 列行为惰性——restore 的 `order_num` 优先取持久化真值(restore-cap 修复既有设计)、重算兜底用 executor 配置而非 DB 列;图表只用杠杆无关的价格档。**无需任何数据迁移**;新行照常写列(存 gearing=3.4,审计用),旧行保留 5.0。以「DB 影响验证矩阵」(见测试)证明惰性替代迁移 |
 | `deploy/fly.toml` + `fly.prod.toml` | 去 `CAP_EQUITY_FRAC`;加 `GRID_GEARING="3.4"`、`ACCOUNT_LEVERAGE="3.5"`、`MAX_CONCURRENT="12"`(部署值=用户定 3.5×,见下节权衡) |
-| 测试 | ①换元等价:新 (gearing=3.4, max_rate=1.0) 与旧 (5, 0.68) 的 order_num 逐位相等;②derive_frac 纯函数(5/12/3.4→0.245);③旧 env 键报错;④迁移幂等差分(5.0→3.4,重跑不再动);⑤MinNotional/图表口径回归;全套 |
+| 测试 | ①换元等价:新 (gearing=3.4, max_rate=1.0) 与旧 (5, 0.68) 的 order_num 逐位相等;②derive_frac 纯函数(3.5/12/3.4→0.1716);③旧 env 键报错;④**DB 影响验证矩阵**(专文件,用户点名):旧行(leverage=5.0,带 order_num)restore 后 order_num/price_array/补单尺寸逐位不变;旧行**缺 order_num**(回退重算路径)新旧代码重算逐位相等;旧行 leverage=NULL 图表不崩(现行为保持);新行落库 leverage=3.4 且 restore 连续;图表旧行(5.0)/新行(3.4)价格档逐位一致;⑤MinNotional 口径回归;全套 |
 
 ## 部署值与风险声明(用户定 AL=3.5,不加杠杆池过滤)
 
@@ -54,10 +54,10 @@ cap  = clamp(equity × frac, CAP_MIN, CAP_MAX)          # compute_cap 不变
 
 ## 上线路径
 
-1. 实现+全套测试绿 → 用户批 push main → testnet 部署(release_command 跑迁移);
-2. testnet 核验:启动无旧键报错、新格 cap≈frac×equity、存量格迁移后补单尺寸连续、MinNotional 正常;
-3. 用户批 production push(真钱,5× 预算生效)。
-4. 回滚:revert + toml 还原 + 迁移逆操作(leverage ÷0.68 WHERE <4.5,或等格自然轮换)。
+1. 实现+全套测试绿 → 用户批 push main → testnet 部署(无 DB 迁移,零 release_command 变更);
+2. testnet 核验:启动无旧键报错、新格 cap≈0.1716×equity(≈$169@testnet equity $983)、存量格补单尺寸连续(order_num 持久化真值)、MinNotional 正常、图表新旧格渲染正常;
+3. 用户批 production push(真钱,AL=3.5 生效,cap $304→$521);
+4. 回滚:revert + toml 还原(无数据逆操作——DB 未动)。
 
 ## 非目标
 
