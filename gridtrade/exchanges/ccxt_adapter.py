@@ -26,12 +26,18 @@ class CcxtAdapter(ExchangeAdapter):
         return native
 
     # ---- 行情 ----
+    def _include_market(self, m) -> bool:
+        """universe 收录谓词(子类可覆写做交易所特有过滤;默认全收)。"""
+        return True
+
     def list_instruments(self) -> List[Instrument]:
         self.client.load_markets()
         out = []
         seen = set()
         for sym, m in self.client.markets.items():
             if m.get('swap') is not True:          # 只留永续合约，丢 spot/其它类型
+                continue
+            if not self._include_market(m):        # 交易所特有剔除(如 HL builder-dex)
                 continue
             canonical = self.to_canonical(sym)
             if canonical in seen:                   # 同 canonical 去重（HL spot+swap/多键折叠）

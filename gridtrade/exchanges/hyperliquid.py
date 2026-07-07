@@ -11,6 +11,13 @@ class HyperliquidAdapter(CcxtAdapter):
     def __init__(self, client):
         super().__init__(client, name='hyperliquid')
 
+    def _include_market(self, m) -> bool:
+        """剔除 builder-dex(HIP-3)资产:回测不可复现(Reservoir 归档无 builder 数据、
+        assemble 静默丢格)+ 部分 dex 非 USDC 保证金(hyna=USDE)+ allMids/signals 盲窗事故史
+        (memory builder-dex-backtest-blindspot)。判据=市场 info.dex 非空(主 dex 为 None)。
+        只影响 universe 候选;已持有的 builder 格监控/平仓路径不受影响。"""
+        return not (m.get('info') or {}).get('dex')
+
     # 规范符号如实反映结算币：HL 恒 USDC -> 'BTC/USDC:USDC'（由 self.quote_currency 派生，
     # 单一事实源）。None 原样返回：HL createOrder 响应不带 symbol，ccxt 解析出 None，
     # 勿在其上 .split 崩溃。
