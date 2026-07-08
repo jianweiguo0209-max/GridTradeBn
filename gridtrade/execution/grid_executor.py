@@ -7,6 +7,7 @@ import itertools
 from gridtrade.config import compute_cap
 from gridtrade.core.grid_engine import grid_order_info
 from gridtrade.execution.live_equity import LiveEquity
+from gridtrade.execution.position_ledger import PositionLedger
 from gridtrade.state.accounting import AccountingRepository
 from gridtrade.state.fills import FillRepository
 from gridtrade.state.grids import GridRepository
@@ -51,6 +52,8 @@ class GridExecutor:
         self._seq = {}        # grid_id -> itertools.count
         self._trade_cursor = {}
         self._funding_cursor = {}
+        # 同币多格内部净额化(spec 2026-07-08-position-ledger):按仓位操作经账本净差额
+        self.ledger = PositionLedger(self)
 
     def _next_oid(self, grid_id, line_index):
         return '%s:%d:%d' % (grid_id, line_index, next(self._seq[grid_id]))
