@@ -36,7 +36,11 @@ class FillRepository:
         return [_to_fill(r) for r in rows]
 
     def max_ts(self, grid_id: str) -> int:
+        # 排除合成行(ledger: 前缀,内部转仓/关格 reduce 记账):max_ts 是 fetch_my_trades
+        # 的 since 游标源(sync+restore),合成行 ts=now 会把游标推过未摄入的真实成交。
+        # list_by_grid(restore 重放)不排除——重放正是 claims 恢复机制。
         with self.engine.connect() as c:
             v = c.execute(select(sa.func.max(grid_fills.c.ts))
-                          .where(grid_fills.c.grid_id == grid_id)).scalar()
+                          .where(grid_fills.c.grid_id == grid_id)
+                          .where(~grid_fills.c.trade_id.like('ledger:%'))).scalar()
         return int(v) if v is not None else 0

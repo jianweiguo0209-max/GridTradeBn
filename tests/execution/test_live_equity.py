@@ -186,3 +186,15 @@ def test_avg_cost_weighted_add_and_flip_reset():
     assert abs(le._avg_cost() - 99.0) < 1e-9              # 部分减仓成本不变
     le.record_fill(103.0, 'sell', 2.5, 240_000)           # 过零翻空 1.0
     assert abs(le._avg_cost() - 103.0) < 1e-9             # 翻向价重置
+
+
+def test_net_position_property_matches_snapshot():
+    """net_position property = Σ(order_dir×order_num),与 snapshot['net_position'] 同源同值
+    (ledger claims 的真相源,勿走整条引擎重放)。"""
+    le = LiveEquity(1000.0)
+    assert le.net_position == 0.0
+    le.record_fill(100.0, 'buy', 5.0, 1000)
+    assert abs(le.net_position - 5.0) < 1e-12
+    le.record_fill(101.0, 'sell', 2.0, 2000)
+    assert abs(le.net_position - 3.0) < 1e-12
+    assert abs(le.net_position - le.snapshot(102.0)['net_position']) < 1e-9

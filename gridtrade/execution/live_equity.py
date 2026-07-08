@@ -44,6 +44,12 @@ class LiveEquity:
     def add_funding(self, amount):
         self.funding_paid += float(amount)
 
+    @property
+    def net_position(self):
+        """当前净仓 = Σ(order_dir×order_num),与引擎 hold_num(累计带符号量)同源。
+        PositionLedger 的 claim 真相源——O(n) 直算,不走整条引擎重放。"""
+        return float(sum(f['order_dir'] * f['order_num'] for f in self._fills))
+
     def _avg_cost(self):
         """当前净仓的精确加权平均成本（逐笔回放：同向加权、减仓成本不变、过零重置为翻向价）。
         引擎 avg 是均匀 lot 阶梯近似（回测语义）；实盘非均匀 size 用真实成交直算——
