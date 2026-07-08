@@ -175,11 +175,20 @@ class GridExecutor:
                                       'price': float(t.price), 'size': float(t.size),
                                       'fee': float(t.fee), 'ts': int(t.ts)})
             self.live[grid_id].record_fill(t.price, t.side, t.size, t.ts, float(t.fee))
-            # 标记成交订单 closed
-            self.orders.upsert(GridOrder(client_oid=go.client_oid, grid_id=grid_id,
-                                         line_index=line_index, side=t.side, price=t.price,
-                                         size=t.size, status='closed'))
-            open_lines.discard((line_index, t.side))   # 成交单离场，其 (line,side) 腾空
+            # 部分成交生命周期(spec 2026-07-09,mainnet GRAM 实证):累计 filled、吃满才
+            # closed;行字段保真——旧代码首笔部分成交即 closed 且抹掉 exchange_order_id、
+            # size 被 t.size 覆写 → 跨轮后续部分成交无从匹配被静默丢(幻影仓)。
+            new_filled = float(go.filled or 0.0) + float(t.size)
+            fully = new_filled >= float(go.size) - max(1e-9, float(go.size) * 1e-6)
+            go = GridOrder(client_oid=go.client_oid, grid_id=grid_id,
+                           line_index=line_index, side=go.side, price=go.price,
+                           size=go.size, status='closed' if fully else 'open',
+                           exchange_order_id=go.exchange_order_id, filled=new_filled)
+            self.orders.upsert(go)
+            by_oid[t.order_id] = go        # 同轮多笔部分成交累计正确
+            if not fully:
+                continue                   # 未吃满:线仍占用、不补单,等后续部分成交
+            open_lines.discard((line_index, t.side))   # 吃满离场，其 (line,side) 腾空
             # 补对侧单（halt 时跳过：fills/记账/止损仍正常，但不挂新单）
             if not skip_replenish:
                 opp_line = line_index - 1 if t.side == 'sell' else line_index + 1
