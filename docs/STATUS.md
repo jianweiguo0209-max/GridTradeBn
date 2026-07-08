@@ -183,7 +183,7 @@ gridtrade/
 - ✅ ~~MarginGate（保证金门）~~ —— 已实现（准入门链 4/4：cash≥cap 保守口径 + 同轮累计扣减 + fail-closed，置链尾）。
 - ✅ ~~真并发 TOCTOU 测试~~ —— 已补（`tests/state/test_transition_concurrency.py` 真线程+Barrier 在本地 PG 验证版本守卫只放一个赢家；CI 仍 SQLite，CI PG job 待多监控机阶段）。
 - ✅ ~~OrderFilled 事件~~ —— 已实现（GridManager.monitor_all 逐笔成交发布，带 fee）。
-- **同币种多网格**（二期 LogicalAttributionPolicy / 子账户）。
+- ✅ ~~**同币种多网格**（二期 LogicalAttributionPolicy / 子账户）~~ —— **PositionLedger 内部净额化已实现（2026-07-08，spec `2026-07-08-position-ledger-design.md`）**：核心不变量 Σclaims=交易所净仓;合成成交(`ledger:` 前缀,line_index=-1)结算——关格残余转仓(根治 v23 对冲残留)、丝成交摄入触发格账本(顺带根治"丝成交不入 record pnl")、funding 签名权重分摊(根治同币双格双计潜伏 bug);max_ts 游标排除合成行;dashboard fills 标注「内部转仓/保险丝」;零新表零新 env。710 passed。待部署 testnet 双格验收。
 - 详见记忆 `p4-deferred-items`、`deferred-toctou-concurrency-test`。
 
 ---
