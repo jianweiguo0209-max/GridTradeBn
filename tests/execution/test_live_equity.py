@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 
 from gridtrade.core.grid_engine import cal_equity_curve
+from gridtrade.execution.live_equity import LiveEquity
 
 
 CAP = 1000.0
@@ -160,3 +161,28 @@ def test_replay_accepts_fee_tuples():
     fills = [(99.0, 'buy', 0.5, 60_000, 0.4), (98.0, 'buy', 0.5, 120_000, 0.6)]
     rep = _le(entry=100.0).replay(fills)
     assert abs(rep.snapshot(100.0)['fee_paid'] - 1.0) < 1e-12
+
+
+def test_nonuniform_partial_reduce_avg_not_zero():
+    # mainnet ADA 2026-07-08 实证序列：买469 + 卖60(非均匀 size,方向计数归零但净仓 409)。
+    # 旧引擎 avg 分级键用计数 → 丢档填 0 → 幻影浮盈 +13.5%(409×mark/cap)。
+    # 修后:快照 avg=精确加权成本 0.17192;pnl_ratio 回到理智带(|·|<1%)。
+    le = LiveEquity(521.0, entry_price=0.1719)
+    le.record_fill(0.171920, 'buy', 469.0, 1_000_000, fee=0.04)
+    le.record_fill(0.175640, 'sell', 60.0, 2_000_000, fee=0.005)
+    snap = le.snapshot(0.171365)
+    assert abs(snap['net_position'] - 409.0) < 1e-9
+    assert abs(snap['avg_price'] - 0.171920) < 1e-9      # 真实成本,绝不为 0
+    assert abs(snap['pnl_ratio']) < 0.01                  # 旧 bug 此处 +0.135
+    assert abs(snap['realized_pnl'] - 0.2232) < 1e-3      # 60×(0.17564−0.17192)
+
+
+def test_avg_cost_weighted_add_and_flip_reset():
+    le = LiveEquity(1000.0, entry_price=100.0)
+    le.record_fill(100.0, 'buy', 1.0, 60_000)
+    le.record_fill(98.0, 'buy', 1.0, 120_000)
+    assert abs(le._avg_cost() - 99.0) < 1e-9              # 同向加权
+    le.record_fill(101.0, 'sell', 0.5, 180_000)
+    assert abs(le._avg_cost() - 99.0) < 1e-9              # 部分减仓成本不变
+    le.record_fill(103.0, 'sell', 2.5, 240_000)           # 过零翻空 1.0
+    assert abs(le._avg_cost() - 103.0) < 1e-9             # 翻向价重置

@@ -44,6 +44,26 @@ class LiveEquity:
     def add_funding(self, amount):
         self.funding_paid += float(amount)
 
+    def _avg_cost(self):
+        """当前净仓的精确加权平均成本（逐笔回放：同向加权、减仓成本不变、过零重置为翻向价）。
+        引擎 avg 是均匀 lot 阶梯近似（回测语义）；实盘非均匀 size 用真实成交直算——
+        mainnet ADA 2026-07-08 实证近似路径产出 avg=0 → 幻影浮盈 +13.5%。"""
+        pos = 0.0
+        avg = 0.0
+        for f in self._fills:
+            signed = f['order_dir'] * f['order_num']
+            px = f['touch']
+            new = pos + signed
+            if pos == 0.0 or pos * signed > 0:          # 开新/同向加仓 → 加权
+                avg = px if pos == 0.0 else (avg * abs(pos) + px * abs(signed)) / abs(new)
+            elif pos * new < 0:                          # 穿越翻向 → 成本=本笔价
+                avg = px
+            elif new == 0.0:                             # 恰好平净
+                avg = 0.0
+            # 部分减仓：成本不变
+            pos = new
+        return avg
+
     def replay(self, fills) -> 'LiveEquity':
         """fills: 可迭代的 (price, side, size, ts_ms) 或 (price, side, size, ts_ms, fee)。
         供 reconciler 从持久化成交重建。"""
@@ -76,6 +96,6 @@ class LiveEquity:
                      + (est_fee - self.real_fee_paid) / self.cap
                      - self.funding_paid / self.cap)
         return {'net_value': net_value, 'pnl_ratio': net_value - 1.0,
-                'net_position': float(last['hold_num']), 'avg_price': float(last['avg_price']),
+                'net_position': float(last['hold_num']), 'avg_price': self._avg_cost(),
                 'realized_pnl': float(last['real_profit']), 'fee_paid': self.real_fee_paid,
                 'funding_paid': self.funding_paid}

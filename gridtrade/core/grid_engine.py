@@ -291,17 +291,22 @@ def cal_equity_curve(candle_df, trade_df, fee, cap, c_rate_taker=0.0005, funding
     # 净持仓 = 累计带符号成交量 Σ(order_dir×order_num)。均匀 lot（回测）下
     # 恒等于 net_dir×order_num；实盘逐笔 size 非均匀（部分成交）时后者失效，故用累计量。
     trade_data['hold_num'] = (trade_data['order_dir'] * trade_data['order_num']).expanding().sum()
-    price_df = trade_data[['touch', 'net_dir']].drop_duplicates(subset=['net_dir']).copy()
-    pos = price_df[price_df['net_dir'] > 0].sort_values('net_dir', ascending=True)
-    neg = price_df[price_df['net_dir'] < 0].sort_values('net_dir', ascending=False)
+    # avg_price 分级键用按量 hold_num（勿用计数 net_dir）：非均匀 size 下计数归零 ≠ 真平仓
+    # （mainnet ADA 2026-07-08 实证：买469+卖60 计数=0 → avg 丢档填 0 → 幻影浮盈 +13.5%、
+    # 追踪止盈以假峰运作）。均匀 lot 下 hold_num=net_dir×lot 与计数一一对应=金标恒等；
+    # round(9) 抹 cumsum 浮点 ulp 漂移，保证同级重访能 merge 命中。
+    trade_data['_lvl'] = trade_data['hold_num'].round(9)
+    price_df = trade_data[['touch', '_lvl']].drop_duplicates(subset=['_lvl']).copy()
+    pos = price_df[price_df['_lvl'] > 0].sort_values('_lvl', ascending=True)
+    neg = price_df[price_df['_lvl'] < 0].sort_values('_lvl', ascending=False)
     if not pos.empty:
         pos['avg_price'] = pos['touch'].expanding().mean()
     if not neg.empty:
         neg['avg_price'] = neg['touch'].expanding().mean()
     price_df = pd.concat([pos, neg], ignore_index=True)
-    trade_data = pd.merge(left=trade_data, right=price_df[['net_dir', 'avg_price']], on='net_dir', how='left')
+    trade_data = pd.merge(left=trade_data, right=price_df[['_lvl', 'avg_price']], on='_lvl', how='left')
     trade_data['avg_price'].fillna(value=0, inplace=True)
-    del trade_data['touch'], trade_data['order_dir'], trade_data['order_num']
+    del trade_data['touch'], trade_data['order_dir'], trade_data['order_num'], trade_data['_lvl']
 
     df = pd.merge(left=candle_data, right=trade_data, on=['candle_begin_time'], how='outer', sort=True)
     for col in ['close', 'open', 'net_dir', 'hold_num', 'avg_price', 'symbol']:
