@@ -280,24 +280,13 @@ class GridExecutor:
                                          line_index=o.line_index, side=o.side, price=o.price,
                                          size=o.size, status='canceled'))
         # reduce 市价单可能部分成交（HL 滑点/薄盘）；重拉持仓、补 reduce 直至 <= min_amount。
-        pos = self.adapter.fetch_positions(symbol)
-        attempt = 0
         if siblings:
-            # 只平自己的模型份额（accounting=最后一次 sync 的净仓，与 live 快照同源）；
-            # 份额未知宁可不平——残仓并入兄弟世界由漂移告警接手，绝不误杀兄弟仓位。
-            # 交易所净仓与自身份额符号相反=兄弟已对冲掉我们的份额 → 无可平。
-            acc0 = self.accounting.get(grid_id)
-            remaining = float(acc0.net_position or 0.0) if acc0 is not None else 0.0
-            while (abs(remaining) > self.min_amount and pos.net_size * remaining > 0
-                   and attempt < 3):
-                qty = min(abs(remaining), abs(pos.net_size))
-                side = 'sell' if remaining > 0 else 'buy'
-                self.adapter.create_market_order(symbol, side, qty, reduce_only=True,
-                                                 client_oid='%s:close:%d' % (grid_id, attempt))
-                remaining -= qty if remaining > 0 else -qty
-                attempt += 1
-                pos = self.adapter.fetch_positions(symbol)
+            # 净额化关格(spec 2026-07-08-position-ledger):reduce 自己份额(claim 真相源
+            # = live 账本) + 残余按 mark 价转仓给幸存格,双方模型与交易所对齐。
+            self.ledger.close_share(grid_id, symbol)
         else:
+            pos = self.adapter.fetch_positions(symbol)
+            attempt = 0
             while abs(pos.net_size) > self.min_amount and attempt < 3:
                 side = 'sell' if pos.net_size > 0 else 'buy'
                 self.adapter.create_market_order(symbol, side, abs(pos.net_size),

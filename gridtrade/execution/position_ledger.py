@@ -77,6 +77,48 @@ class PositionLedger:
         print('[ledger] transfer %s: %s -> %s qty=%+.8g @ %.8g (event=%s)'
               % (symbol, from_gid, to_gid, qty, float(mark_px), event), flush=True)
 
+    # ── 关格净额化 ──
+
+    def close_share(self, grid_id, symbol):
+        """关格净额化(finalize_close 兄弟分支收编):
+        ① clamp reduce 自己份额(v23 语义:只平交易所净仓同号部分,≤3 次);每次 reduce
+           写 ledger:reduce 合成行入本格账本——账本始终反映"还剩多少没平",崩溃续平时
+           restore 重放即恢复,不会二次转仓(claim 真相源是 live 账本,非 accounting 快照);
+        ② 残余(被兄弟对冲的部分)按 mark 价转给反号 claim 幸存格 → 双方模型与交易所对齐
+           (v23 残留根治:此前正确不动手但幸存格永久带差);
+        ③ 无幸存格接收(同轮全关竞态)→ 留差给漂移告警(概率极低,不越权动仓)。"""
+        ex = self.ex
+        remaining = self.claim(grid_id)
+        if abs(remaining) <= ex.min_amount:
+            return
+        pos = ex.adapter.fetch_positions(symbol)
+        attempt = 0
+        while (abs(remaining) > ex.min_amount and pos.net_size * remaining > 0
+               and attempt < 3):
+            qty = min(abs(remaining), abs(pos.net_size))
+            side = 'sell' if remaining > 0 else 'buy'
+            ex.adapter.create_market_order(symbol, side, qty, reduce_only=True,
+                                           client_oid='%s:close:%d' % (grid_id, attempt))
+            self._record_synthetic(grid_id, side, qty,
+                                   float(ex.adapter.fetch_price(symbol)), 'reduce')
+            remaining -= qty if remaining > 0 else -qty
+            attempt += 1
+            pos = ex.adapter.fetch_positions(symbol)
+        if abs(remaining) <= ex.min_amount:
+            return
+        g = ex.grids.get(grid_id)
+        sibs = [s for s in ex.grids.list_active()
+                if s.symbol == symbol and s.exchange == g.exchange and s.id != grid_id]
+        if not sibs:
+            return
+        # 优先反号 claim 幸存格(正是对冲掉我们份额的一方);cap=2 至多一个兄弟
+        target = next((s for s in sibs if self.claim(s.id) * remaining < 0), sibs[0])
+        if len(sibs) > 1:
+            print('[ledger] WARN close_share %s: %d survivors (cap=2 设计外) target=%s'
+                  % (grid_id, len(sibs), target.id), flush=True)
+        self.settle_transfer(grid_id, target.id, symbol, remaining,
+                             float(ex.adapter.fetch_price(symbol)), 'closeshare')
+
     # ── 丝成交摄入 ──
 
     def ingest_fuse_fills(self, grid_id, symbol, fuse_oid):
