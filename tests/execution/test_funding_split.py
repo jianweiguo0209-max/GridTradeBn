@@ -23,6 +23,8 @@ def _setup(store, n_grids=2):
 def test_two_grids_funding_sums_to_payment(store):
     ex, gx, (ga, gb) = _setup(store)
     ex.set_price(BTC, 98.5)                    # 双格买线成交 → 同号净多
+    gx.sync(ga, BTC)                           # 建仓轮:双方账本先暖(线上稳态时序;
+    gx.sync(gb, BTC)                           # 冷启动首轮权重偏差是 spec 已知豁免)
     opened = gx.grids.get(ga).created_at
     ex.seed_funding_payments(BTC, [(opened + 10, -1.0)])   # 账户实收一笔 -1.0
     gx.sync(ga, BTC)
