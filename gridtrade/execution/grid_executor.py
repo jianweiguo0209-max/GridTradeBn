@@ -205,12 +205,15 @@ class GridExecutor:
                                                      exchange_order_id=getattr(order, 'id', None)))
                         open_lines.add((opp_line, opp_side))
 
-        # 资金费流水
+        # 资金费流水:按签名权重分摊(同币双格曾各记 100% → 双计;交易所只按净仓收一次)。
+        # 各格仍用自己的游标摄入同批行、各乘权重;单格 w=1 与旧行为逐位一致。
         fcur = self._funding_cursor.get(grid_id, 0)
         pays = (snapshot.funding_for(symbol, since_ms=fcur) if snapshot is not None
                 else self.adapter.fetch_funding_payments(symbol, since_ms=fcur))
-        for p in pays:
-            self.live[grid_id].add_funding(p.amount)
+        if pays:
+            w = self.ledger.funding_weight(grid_id, symbol)
+            for p in pays:
+                self.live[grid_id].add_funding(p.amount * w)
         if pays:
             self._funding_cursor[grid_id] = pays[-1].ts + 1
 
