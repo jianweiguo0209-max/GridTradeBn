@@ -25,7 +25,9 @@ def test_two_grids_funding_sums_to_payment(store):
     ex.set_price(BTC, 98.5)                    # 双格买线成交 → 同号净多
     gx.sync(ga, BTC)                           # 建仓轮:双方账本先暖(线上稳态时序;
     gx.sync(gb, BTC)                           # 冷启动首轮权重偏差是 spec 已知豁免)
-    opened = gx.grids.get(ga).created_at
+    # 支付 ts 必须 ≥ 两格游标(=各自 created_at):CI 慢机上 gb 建格可晚 >10ms,
+    # 用 ga.created_at+10 会被 gb 的游标过滤 → gb 零摄入(CI 实证 flake)
+    opened = max(gx.grids.get(ga).created_at, gx.grids.get(gb).created_at)
     ex.seed_funding_payments(BTC, [(opened + 10, -1.0)])   # 账户实收一笔 -1.0
     gx.sync(ga, BTC)
     gx.sync(gb, BTC)
