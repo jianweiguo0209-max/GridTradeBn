@@ -36,7 +36,8 @@ def create_app(store, adapter, *, username: str, password_hash: str,
                        ('age_human', fmt.age_human),
                        ('fmt_num', fmt.fmt_num), ('fmt_pct', fmt.fmt_pct),
                        ('fmt_size', fmt.fmt_size), ('fmt_fee', fmt.fmt_fee),
-                       ('fmt_price', fmt.fmt_price), ('pnl_class', fmt.pnl_class)):
+                       ('fmt_price', fmt.fmt_price), ('pnl_class', fmt.pnl_class),
+                       ('fill_line', fmt.fill_line)):
         templates.env.filters[name] = func
     app.mount('/static', StaticFiles(directory=str(_DIR / 'static')), name='static')
 

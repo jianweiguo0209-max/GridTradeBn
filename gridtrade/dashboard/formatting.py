@@ -87,3 +87,16 @@ def pnl_class(x: Optional[float]) -> str:
     if x is None or x == 0:
         return 'zero'
     return 'pos' if x > 0 else 'neg'
+
+
+def fill_line(f) -> str:
+    """成交行的 line 列:普通网格线成交显示 line_index;line_index=-1 的两类特殊行
+    (spec 2026-07-08-position-ledger)按 trade_id 区分——'ledger:' 前缀=内部转仓
+    (同币双格净额化的合成行,fee=0/mark 价),其余=保险丝成交(真实成交,不属于网格线)。"""
+    li = getattr(f, 'line_index', None)
+    if li is None:
+        return '-'
+    if int(li) >= 0:
+        return str(int(li))
+    tid = str(getattr(f, 'trade_id', '') or '')
+    return '内部转仓' if tid.startswith('ledger:') else '保险丝'

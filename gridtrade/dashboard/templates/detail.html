@@ -58,7 +58,7 @@
 </tbody></table>
 <h2>Recent Fills</h2>
 <table><thead><tr><th>ts</th><th>line</th><th>side</th><th>price</th><th>size</th><th>fee</th></tr></thead><tbody>
-{% for f in d.fills %}<tr><td>{{ f.ts | ms_to_human }}</td><td>{{ f.line_index }}</td>
+{% for f in d.fills %}<tr><td>{{ f.ts | ms_to_human }}</td><td>{{ f | fill_line }}</td>
 <td>{{ f.side }}</td><td>{{ f.price | fmt_price }}</td><td>{{ f.size | fmt_size }}</td><td>{{ f.fee | fmt_fee }}</td></tr>{% endfor %}
 </tbody></table>
 {% endblock %}

@@ -84,3 +84,14 @@ def test_pnl_class():
     assert pnl_class(-3.0) == 'neg'
     assert pnl_class(0.0) == 'zero'
     assert pnl_class(None) == 'zero'
+
+
+def test_fill_line_three_states():
+    """line 列三态(spec 2026-07-08-position-ledger):普通线显示序号;
+    line_index=-1 按 trade_id 分内部转仓(ledger:)/保险丝(真实成交)。"""
+    from types import SimpleNamespace as NS
+    from gridtrade.dashboard.formatting import fill_line
+    assert fill_line(NS(line_index=7, trade_id='12345')) == '7'
+    assert fill_line(NS(line_index=-1, trade_id='ledger:closeshare:g1:99:0')) == '内部转仓'
+    assert fill_line(NS(line_index=-1, trade_id='987654')) == '保险丝'
+    assert fill_line(NS(line_index=None, trade_id='')) == '-'

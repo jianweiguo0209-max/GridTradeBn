@@ -195,6 +195,7 @@ class RecentFill:
     size: float
     ts: int
     fee: float = 0.0
+    trade_id: str = ''    # fill_line 标注判据(ledger: 前缀=内部转仓)
 
 
 @dataclass
@@ -241,7 +242,8 @@ def build_records(store, *, records_limit: int = 200,
                                line_index=f._mapping['line_index'],
                                side=f._mapping['side'], price=f._mapping['price'],
                                size=f._mapping['size'], ts=f._mapping['ts'],
-                               fee=f._mapping['fee'])
+                               fee=f._mapping['fee'],
+                               trade_id=f._mapping['trade_id'])
                     for f in fill_rows]
     return RecordsDTO(records=records, tag_summaries=tag_summaries,
                       recent_fills=recent_fills)
