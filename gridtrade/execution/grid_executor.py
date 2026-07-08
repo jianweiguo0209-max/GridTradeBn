@@ -52,6 +52,7 @@ class GridExecutor:
         self._seq = {}        # grid_id -> itertools.count
         self._trade_cursor = {}
         self._funding_cursor = {}
+        self._book_ids = {}   # grid_id -> 已入内存账本的 trade_id 集合(账本↔DB 对齐)
         # 同币多格内部净额化(spec 2026-07-08-position-ledger):按仓位操作经账本净差额
         self.ledger = PositionLedger(self)
 
@@ -99,6 +100,7 @@ class GridExecutor:
         self._seq[gid] = itertools.count()
         self.live[gid] = LiveEquity(cap, self.fee, self.c_rate_taker, entry_price=entry)
         self._trade_cursor[gid] = 0
+        self._book_ids[gid] = set()
         # 资金费游标从开仓时刻起算（而非 0），否则会把开仓前的历史 funding 计入本网格。
         self._funding_cursor[gid] = grid.created_at
 
@@ -178,6 +180,7 @@ class GridExecutor:
                                       'price': float(t.price), 'size': float(t.size),
                                       'fee': float(t.fee), 'ts': int(t.ts)})
             self.live[grid_id].record_fill(t.price, t.side, t.size, t.ts, float(t.fee))
+            self._book_ids.setdefault(grid_id, set()).add(fill.trade_id)
             # 部分成交生命周期(spec 2026-07-09,mainnet GRAM 实证):累计 filled、吃满才
             # closed;行字段保真——旧代码首笔部分成交即 closed 且抹掉 exchange_order_id、
             # size 被 t.size 覆写 → 跨轮后续部分成交无从匹配被静默丢(幻影仓)。
@@ -229,6 +232,34 @@ class GridExecutor:
                 self.live[grid_id].add_funding(p.amount * w)
         if pays:
             self._funding_cursor[grid_id] = pays[-1].ts + 1
+
+        # 账本↔DB 对齐(spec 2026-07-09-book-db-alignment):grid_fills 是第三方可写的
+        # 真相源(scheduler 转仓合成行/手工修复补摄入),跨进程写入不经交易所、上面的摄入
+        # 循环拉不到(mainnet GRAM 转仓首样本实证:幸存格 acc 停旧值直到重启)→ 每轮把
+        # 内存账本收敛到 DB 集合。顺序新行追加;乱序(补历史成交)整本重建——LiveEquity
+        # 平均成本路径依赖,乱序追加必错。单进程常规流:自己写的行都在集合里,此步空转。
+        known = self._book_ids.setdefault(grid_id, set())
+        db_fills = self.fills.list_by_grid(grid_id)          # 已按 ts 升序
+        missing = [f for f in db_fills if f.trade_id not in known]
+        if missing:
+            live = self.live[grid_id]
+            last_ts = live.last_fill_ts
+            if last_ts is None or all(f.ts >= last_ts for f in missing):
+                for f in missing:
+                    live.record_fill(f.price, f.side, f.size, f.ts, f.fee)
+                    known.add(f.trade_id)
+                rebuilt = False
+            else:
+                fresh = LiveEquity(live.cap, self.fee, self.c_rate_taker,
+                                   entry_price=live.entry_price)
+                for f in db_fills:
+                    fresh.record_fill(f.price, f.side, f.size, f.ts, f.fee)
+                fresh.funding_paid = live.funding_paid       # funding 与 fills 分账
+                self.live[grid_id] = fresh
+                self._book_ids[grid_id] = {f.trade_id for f in db_fills}
+                rebuilt = True
+            print('[ledger] book catch-up grid=%s rows=%d rebuild=%s'
+                  % (grid_id, len(missing), rebuilt), flush=True)
 
         if snapshot is not None:
             px = snapshot.price(symbol)

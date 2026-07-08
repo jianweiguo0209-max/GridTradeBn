@@ -64,6 +64,7 @@ class PositionLedger:
             live = self.ex.live.get(grid_id)
             if live is not None:
                 live.record_fill(fill.price, fill.side, fill.size, fill.ts, 0.0)
+                self.ex._book_ids.setdefault(grid_id, set()).add(fill.trade_id)
 
     def settle_transfer(self, from_gid, to_gid, symbol, qty, mark_px, event):
         """内部转仓:from 格转出带符号份额 qty(>0=多头)给 to 格,按 mark 价、零费。
@@ -140,6 +141,7 @@ class PositionLedger:
                 live = ex.live.get(grid_id)
                 if live is not None:
                     live.record_fill(t.price, t.side, t.size, t.ts, float(t.fee))
+                    ex._book_ids.setdefault(grid_id, set()).add(fill.trade_id)
                 n += 1
         if n:
             print('[ledger] fuse fills ingested grid=%s %s oid=%s n=%d'

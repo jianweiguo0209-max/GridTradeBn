@@ -34,8 +34,11 @@ class Reconciler:
 
         live = LiveEquity(grid_cap, ex.fee, ex.c_rate_taker, entry_price=g.entry_price)
         # 真中性：无 init 底仓（与 open 对称）；仅从持久化成交重建，否则重启后模型多出幻影多头。
+        book_ids = set()
         for f in ex.fills.list_by_grid(grid_id):   # 已按 ts 升序
             live.record_fill(f.price, f.side, f.size, f.ts, f.fee)
+            book_ids.add(f.trade_id)
+        ex._book_ids[grid_id] = book_ids           # 账本↔DB 对齐基线(spec 2026-07-09)
         acc = ex.accounting.get(grid_id)
         if acc is not None:
             live.funding_paid = acc.funding_paid      # recover cumulative funding (durable)

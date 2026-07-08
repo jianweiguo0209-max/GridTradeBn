@@ -50,6 +50,11 @@ class LiveEquity:
         PositionLedger 的 claim 真相源——O(n) 直算,不走整条引擎重放。"""
         return float(sum(f['order_dir'] * f['order_num'] for f in self._fills))
 
+    @property
+    def last_fill_ts(self):
+        """最后成交 ts(ms);无成交 None。账本↔DB 对齐判定顺序/乱序用。"""
+        return self._last_ts
+
     def _avg_cost(self):
         """当前净仓的精确加权平均成本（逐笔回放：同向加权、减仓成本不变、过零重置为翻向价）。
         引擎 avg 是均匀 lot 阶梯近似（回测语义）；实盘非均匀 size 用真实成交直算——
