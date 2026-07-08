@@ -96,6 +96,8 @@ grid_orders = Table(
     Column('price', Float, nullable=False),
     Column('size', Float, nullable=False),
     Column('status', String, nullable=False),  # open/closed/canceled
+    # 累计成交量:吃满(≈size)才 closed(部分成交生命周期,spec 2026-07-09)
+    Column('filled', Float, nullable=False, server_default='0'),
     Column('created_at', BigInteger, nullable=False),
     Column('updated_at', BigInteger, nullable=False),
     Index('ix_grid_orders_grid', 'grid_id'),
@@ -241,6 +243,7 @@ class GridOrder:
     size: float
     status: str = 'open'
     exchange_order_id: Optional[str] = None
+    filled: float = 0.0    # 累计成交量;吃满(≈size)才 closed(部分成交生命周期)
     created_at: int = 0
     updated_at: int = 0
 

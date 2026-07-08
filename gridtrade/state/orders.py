@@ -6,7 +6,7 @@ from sqlalchemy import insert, select, update
 from gridtrade.state.models import GridOrder, grid_orders, now_ms
 
 _FIELDS = ('client_oid', 'grid_id', 'line_index', 'exchange_order_id', 'side',
-           'price', 'size', 'status', 'created_at', 'updated_at')
+           'price', 'size', 'status', 'filled', 'created_at', 'updated_at')
 
 
 def _to_order(row) -> GridOrder:
@@ -36,7 +36,7 @@ class OrderRepository:
                     .values(grid_id=order.grid_id, line_index=order.line_index,
                             exchange_order_id=order.exchange_order_id,
                             side=order.side, price=order.price, size=order.size,
-                            status=order.status, updated_at=ts)
+                            status=order.status, filled=order.filled, updated_at=ts)
                 )
         return self.get(order.client_oid)
 

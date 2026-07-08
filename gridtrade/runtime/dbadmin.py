@@ -62,12 +62,26 @@ def slotify_active_symbol(store) -> str:
     return ('updated %d' % res.rowcount) if res.rowcount else 'skipped'
 
 
+def add_grid_orders_filled(store) -> str:
+    """幂等：grid_orders 缺 filled 列则加上（DEFAULT 0）——部分成交生命周期
+    (spec 2026-07-09)。存量行 0 正确：旧代码下部分成交立即 closed，
+    不存在 open 且已部分摄入的行。"""
+    cols = {c['name'] for c in sa.inspect(store.engine).get_columns('grid_orders')}
+    if 'filled' in cols:
+        return 'skipped'
+    with store.engine.begin() as c:
+        c.execute(sa.text(
+            'ALTER TABLE grid_orders ADD COLUMN filled DOUBLE PRECISION NOT NULL DEFAULT 0'))
+    return 'added'
+
+
 def migrate(store) -> list:
     """跑所有增量迁移（幂等）。返回每步结果。"""
     return [('add_grid_fills_fee', add_grid_fills_fee(store)),
             ('add_grids_fuse_oids', add_grids_fuse_oids(store)),
             ('add_grids_close_reason', add_grids_close_reason(store)),
-            ('slotify_active_symbol', slotify_active_symbol(store))]
+            ('slotify_active_symbol', slotify_active_symbol(store)),
+            ('add_grid_orders_filled', add_grid_orders_filled(store))]
 
 
 def validate_1m_cache(cache, *, dry_run=False, warm_fn=None, log=print):
