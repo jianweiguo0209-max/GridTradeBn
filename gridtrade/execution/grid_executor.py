@@ -117,8 +117,11 @@ class GridExecutor:
             oid = self._next_oid(gid, i)
             order = self.adapter.create_limit_order(symbol, side, p, order_num,
                                                     post_only=False, client_oid=oid)
+            # 行 size 存交易所量化后的量(回传 amount)：吃满判定(filled>=size)基准
+            # 必须与真实可成交量一致,否则量化缩量的单永远闭合不了(spec 2026-07-09)
+            placed = float(getattr(order, 'size', 0.0) or 0.0) or order_num
             self.orders.upsert(GridOrder(client_oid=oid, grid_id=gid, line_index=i,
-                                         side=side, price=p, size=order_num, status='open',
+                                         side=side, price=p, size=placed, status='open',
                                          exchange_order_id=getattr(order, 'id', None)))
 
         # 灾难保险丝：两张 reduce-only 触发市价单，破网价触发（reduce_only 封顶到真实仓）。
@@ -209,8 +212,9 @@ class GridExecutor:
                                 'replenish %s %s line=%d px=%.8g sz=%.8g notional=%.2f: %s'
                                 % (symbol, opp_side, opp_line, p, order_num,
                                    p * order_num, exc)) from exc
+                        placed = float(getattr(order, 'size', 0.0) or 0.0) or order_num
                         self.orders.upsert(GridOrder(client_oid=oid, grid_id=grid_id, line_index=opp_line,
-                                                     side=opp_side, price=p, size=order_num, status='open',
+                                                     side=opp_side, price=p, size=placed, status='open',
                                                      exchange_order_id=getattr(order, 'id', None)))
                         open_lines.add((opp_line, opp_side))
 
@@ -285,9 +289,12 @@ class GridExecutor:
                 except Exception:
                     pass
         for o in self.orders.list_open_by_grid(grid_id):
+            # 保留 oid/filled(行保真):撤单窗口内的在途部分成交仍可按 oid 匹配摄入
             self.orders.upsert(GridOrder(client_oid=o.client_oid, grid_id=grid_id,
                                          line_index=o.line_index, side=o.side, price=o.price,
-                                         size=o.size, status='canceled'))
+                                         size=o.size, status='canceled',
+                                         exchange_order_id=o.exchange_order_id,
+                                         filled=o.filled))
         # reduce 市价单可能部分成交（HL 滑点/薄盘）；重拉持仓、补 reduce 直至 <= min_amount。
         if siblings:
             # 净额化关格(spec 2026-07-08-position-ledger):reduce 自己份额(claim 真相源

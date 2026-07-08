@@ -99,3 +99,24 @@ def test_full_fill_single_shot_unchanged(store):
     row = gx.orders.get(go.client_oid)
     assert row.status == 'closed'
     assert len(gx.orders.list_by_grid(gid)) == orders_before + 1
+
+
+def test_quantized_size_from_exchange_used_for_closure(store):
+    """交易所量化缩量(GRAM 42.187→42 实证):行 size 存回传值,吃满判定为真;
+    否则 filled(42) 永远追不上 size(42.187) → 行永不闭合 → E2 误重挂。"""
+    import math
+    ex = FakeExchange(instruments=[Instrument(BTC, 0.1, 0.001, 0.001, 'live', 0)],
+                      price=100.0)
+    ex.set_price(BTC, 100.0)
+    orig = ex.create_limit_order
+    def quantized(symbol, side, price, size, **kw):
+        return orig(symbol, side, price, float(math.floor(size)), **kw)  # 整数量化
+    ex.create_limit_order = quantized
+    gx = GridExecutor(ex, store, cap=1000.0, leverage=5.0)
+    gid = gx.open('fake', BTC, dict(GP))
+    go = [o for o in gx.orders.list_by_grid(gid)
+          if o.side == 'sell' and o.status == 'open'][0]
+    assert go.size == float(math.floor(go.size))       # 行存量化值(整数)
+    _partial(ex, go, go.size, 'qz1', 1000)             # 交易所按量化值吃满
+    gx.sync(gid, BTC)
+    assert gx.orders.get(go.client_oid).status == 'closed'

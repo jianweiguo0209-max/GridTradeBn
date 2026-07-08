@@ -85,24 +85,44 @@ class Reconciler:
         replaced = 0
         for oid, go in expected.items():
             if oid not in on_exchange:
-                # E2 宽限：连续 missing 达到 grace 才重挂——延迟窗口内可能是「成交但成交尚不可见」，
+                # E2 宽限：连续 missing 达到 grace 才处置——延迟窗口内可能是「成交但成交尚不可见」，
                 # 立即重挂会覆盖成交 oid → 漏摄入。给 sync 时间先摄入（它会把该单标 closed、移出 expected）。
                 cnt = missing.get(go.client_oid, 0) + 1
                 missing[go.client_oid] = cnt
                 seen_missing.add(go.client_oid)
                 if cnt < self._replace_grace:
                     continue
-                # 达宽限 → 重挂。先撤旧 oid 再补（D）：HL 抖动漏返回的仍在挂的单先撤掉，杜绝重复。
+                # 三态主判(spec 2026-07-09,复用 reconcile_fuses 模式)：重挂前问权威状态——
+                # 'filled'=已吃满、成交由 sync 摄入(oid 已保真可匹配),重挂即重复建仓,禁止;
+                # 'open'=信息面盲区仍在挂,不动;其余(canceled/unknown)才撤旧重挂。
+                status = ex.adapter.order_status(symbol, oid)
+                if status in ('open', 'filled'):
+                    missing.pop(go.client_oid, None)
+                    continue
                 try:
                     ex.adapter.cancel_order(symbol, oid)
                 except Exception:
                     pass
-                order = ex.adapter.create_limit_order(symbol, go.side, go.price, go.size,
+                # 部分成交后只重挂残量(size−filled)；残量为尘 → 线视为完成,闭合行不重挂。
+                done = float(go.filled or 0.0)
+                remnant = float(go.size) - done
+                if remnant <= max(ex.min_amount, float(go.size) * 1e-6):
+                    ex.orders.upsert(GridOrder(client_oid=go.client_oid, grid_id=grid_id,
+                                               line_index=go.line_index, side=go.side,
+                                               price=go.price, size=go.size, status='closed',
+                                               exchange_order_id=go.exchange_order_id,
+                                               filled=done))
+                    missing.pop(go.client_oid, None)
+                    continue
+                order = ex.adapter.create_limit_order(symbol, go.side, go.price, remnant,
                                                       post_only=False, client_oid=go.client_oid)
+                placed = float(getattr(order, 'size', 0.0) or 0.0) or remnant
+                # size 校正为 filled+交易所量化后的残量：吃满判定基准与真实可成交量一致
                 ex.orders.upsert(GridOrder(client_oid=go.client_oid, grid_id=grid_id,
                                            line_index=go.line_index, side=go.side, price=go.price,
-                                           size=go.size, status='open',
-                                           exchange_order_id=getattr(order, 'id', None)))
+                                           size=done + placed, status='open',
+                                           exchange_order_id=getattr(order, 'id', None),
+                                           filled=done))
                 missing.pop(go.client_oid, None)   # 重挂后清零
                 replaced += 1
         for coid in list(missing):                 # 不再 missing（重回 book / 已 closed 移出 expected）→ 清零

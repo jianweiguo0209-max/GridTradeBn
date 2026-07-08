@@ -160,9 +160,10 @@ class _FlakyFetch:
         return getattr(self._inner, name)
 
 
-def test_reconcile_cancels_stale_oid_before_replacing_no_duplicate(store):
-    # HL 抖动：fetch_open_orders 偶尔少返回一张【仍在挂】的单 → reconcile 不能直接重挂
-    # （否则旧单还在 + 新单 = 重复单，旧单后来成交会漏摄入）。须先撤旧 oid 再补。
+def test_reconcile_blindspot_open_order_left_alone_no_duplicate(store):
+    # HL 抖动：fetch_open_orders 偶尔少返回一张【仍在挂】的单。三态升级(spec 2026-07-09)后
+    # 语义校准：重挂前问 order_status 权威——'open'=信息面盲区 → 一手不动(替代旧的
+    # 撤旧重挂)。不变量相同且更强：无重复单、旧单原封、其后续成交仍可按 oid 摄入。
     from gridtrade.execution.reconciler import Reconciler
     ex = FakeExchange(instruments=[Instrument(SYM, 0.1, 0.001, 0.001, 'live', 0)], price=100.0)
     ex.set_price(SYM, 100.0)
@@ -172,13 +173,12 @@ def test_reconcile_cancels_stale_oid_before_replacing_no_duplicate(store):
     before = {o.id for o in ex.fetch_open_orders(SYM)}
 
     gx.adapter = _FlakyFetch(ex, hide_oid=victim.id)   # 让对账时这张单“消失”（实际还挂着）
-    out = Reconciler(gx, replace_grace=1).reconcile_open_orders(gid, SYM)   # 即时重挂聚焦 D
+    out = Reconciler(gx, replace_grace=1).reconcile_open_orders(gid, SYM)
 
     after = {o.id for o in ex.fetch_open_orders(SYM)}
-    assert out['replaced'] == 1
-    assert victim.id in gx.adapter.cancels             # 重挂前先撤了旧 oid
-    assert victim.id not in after                       # 旧单已撤、不再挂
-    assert len(after) == len(before)                    # 撤一补一，无重复单
+    assert out['replaced'] == 0                         # 权威在挂 → 不重挂
+    assert victim.id in after                           # 旧单原封不动
+    assert after == before                              # 无重复单、零折腾
 
 
 def test_reconcile_grace_delays_replace_until_consecutive_missing(store):

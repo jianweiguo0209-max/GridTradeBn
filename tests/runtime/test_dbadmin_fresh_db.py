@@ -22,4 +22,5 @@ def test_create_then_migrate_on_empty_db_is_clean():
     assert results == [('add_grid_fills_fee', 'skipped'),
                        ('add_grids_fuse_oids', 'skipped'),
                        ('add_grids_close_reason', 'skipped'),
-                       ('slotify_active_symbol', 'skipped')]
+                       ('slotify_active_symbol', 'skipped'),
+                       ('add_grid_orders_filled', 'skipped')]
