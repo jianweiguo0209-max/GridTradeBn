@@ -95,7 +95,8 @@ def build_overview(store, adapter) -> List[GridOverviewRow]:
     grids = GridRepository(store)
     accs = AccountingRepository(store)
     orders = OrderRepository(store)
-    actives = sorted(grids.list_active(), key=lambda x: x.symbol)
+    # 建网时间倒序,最新在上(用户要求 2026-07-08);同毫秒并列再按 symbol 稳定
+    actives = sorted(grids.list_active(), key=lambda x: (-int(x.created_at or 0), x.symbol))
     # 批量取价（allMids：主 dex 一次 + builder dex 各一次）。逐格 fetch_price 串行
     # 曾把首页拖到 73.6s/9 格（2026-07-08 实证）；批量缺币才逐格回退（原路径兜底）。
     prices = {}

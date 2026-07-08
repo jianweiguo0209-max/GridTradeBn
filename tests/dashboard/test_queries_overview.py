@@ -137,3 +137,20 @@ def test_overview_batch_missing_falls_back_per_symbol(store):
     rows = build_overview(store, ad)
     assert ad.batch_calls == 1 and ad.single_calls == 1
     assert rows[0].current_price == 105.0
+
+
+def test_overview_sorted_by_created_at_desc(store):
+    """active grids 按建网时间倒序(最新在上)——用户要求 2026-07-08。"""
+    import time
+    grids = GridRepository(store)
+    accs = AccountingRepository(store)
+    for i, sym in enumerate(['AAA/USDT:USDT', 'ZZZ/USDT:USDT', 'MMM/USDT:USDT']):
+        g = grids.create(Grid(id='g%d' % i, exchange='hyperliquid', symbol=sym,
+                              status=ACTIVE, direction='neutral',
+                              low_price=90.0, high_price=110.0,
+                              stop_low_price=80.0, stop_high_price=120.0))
+        accs.init(g.id)
+        time.sleep(0.002)                       # created_at(ms) 单调递增
+    rows = build_overview(store, _PriceAdapter({s: 100.0 for s in
+                          ['AAA/USDT:USDT', 'ZZZ/USDT:USDT', 'MMM/USDT:USDT']}))
+    assert [r.symbol for r in rows] == ['MMM/USDT:USDT', 'ZZZ/USDT:USDT', 'AAA/USDT:USDT']
