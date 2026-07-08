@@ -192,6 +192,9 @@ class Reconciler:
             if status == 'filled' or (status == 'unknown'
                                       and self._fuse_filled(symbol, oid,
                                                             snapshot=snapshot)):
+                # 丝成交先入触发格账本(真实 fee → 计入 record pnl;账本含 reduce 后
+                # close_share 残余计算自洽,兄弟份额经标准转仓结算,不再互噬)。
+                ex.ledger.ingest_fuse_fills(grid_id, symbol, oid)
                 ex.close(grid_id, symbol, '保险丝触发')   # 已触发 -> 撑网全拆
                 return {'replaced': replaced, 'fired': True}
             # 被丢/已撤（或迁移空 oid）-> 先撤旧（容错：已没则 no-op）再重挂，回写新 oid
