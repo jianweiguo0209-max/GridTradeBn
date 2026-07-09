@@ -30,7 +30,7 @@ primary_region = "nrt"
   MAX_CONCURRENT = "12"
   # 仓位参数体系(spec 2026-07-07-account-leverage-gearing):frac=AL/(N×gearing/2)=3.5/20.4≈0.1716
   GRID_GEARING = "3.4"
-  ACCOUNT_LEVERAGE = "3.5"
+  ACCOUNT_LEVERAGE = "5.0"
   # MarketShockBrake(spec 2026-07-08):|票池中位数4h收益|≥4% → 暂停开格2h(只关不开);THR=0 停用
   SHOCK_THR = "0.04"
   SHOCK_K_HOURS = "4"

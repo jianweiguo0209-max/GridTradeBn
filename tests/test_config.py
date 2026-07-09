@@ -4,7 +4,7 @@ from gridtrade.config import (load_deploy_config, DeployConfig, compute_cap,
 
 def test_cap_equity_frac_defaults_and_parsing():
     cfg = load_deploy_config(env={})
-    assert abs(cfg.cap_equity_frac - 0.17157) < 1e-4   # 推导值:AL3.5/(12×1.7)——默认与部署值一致(用户定)
+    assert abs(cfg.cap_equity_frac - 0.24510) < 1e-4   # 推导值:AL5.0/(12×1.7)——默认与部署值一致(用户定 2026-07-09)
     assert cfg.cap_min == 20.0 and cfg.cap_max == 100000.0
     cfg2 = load_deploy_config(env={'CAP_MIN': '30', 'CAP_MAX': '500'})
     assert cfg2.cap_min == 30.0 and cfg2.cap_max == 500.0
@@ -23,7 +23,7 @@ def test_defaults_when_env_empty():
     assert cfg.exchange == 'hyperliquid'
     assert cfg.testnet is False
     assert cfg.cap == 100.0
-    assert cfg.grid_gearing == 3.4 and cfg.account_leverage == 3.5
+    assert cfg.grid_gearing == 3.4 and cfg.account_leverage == 5.0
     assert cfg.monitor_interval_sec == 5.0
     assert cfg.scheduler_period == '12H'
     assert cfg.max_concurrent == 12
