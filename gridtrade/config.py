@@ -193,8 +193,13 @@ DEFAULT_STRATEGY_CONFIG = {
 
 DEFAULT_STOP_CFG = {
     'stop_loss': 0.034,
-    'trailing_k': 0.3,
-    'trailing_floor': 0.00618,
+    # 连续回撤止盈换挡(2026-07-10 四窗实盘口径扫描 data/tiercmp/trail_results.csv,用户拍板):
+    # floor 是唯一敏感自由度(单调,0.015 附近饱和),k 几乎不敏感取最优 0.15;现值 k0.3/fl0.00618
+    # 被四窗全面支配(均值 7.88→10.02%/2mo)。floor 抬高后 trailing 触发占比 6-12%→~1%,
+    # 只砍大回撤不再过早锁小利;代价=最差窗 MDD −3.44→−4.17%。OFF 臂 W1 垫底(4.18/MDD−4.42),
+    # 保险价值在趋势崩盘窗兑现,故松而不删。
+    'trailing_k': 0.15,
+    'trailing_floor': 0.015,
     'fundingRate_stop_loss': 0.0015,   # 资金费率止损（HL 真实 fundingRate）
     # pv 主动止损（量能尖峰 + pnl 门槛）；2026-07-07 PV 研究终配置（干净数据+对齐费率四窗全正，
     # spec 2026-07-07-pv-legacy-semantics-live）：尖峰时浮盈不足 +0.5% 即撤（策略换形，~70% 格首尖峰退出）
