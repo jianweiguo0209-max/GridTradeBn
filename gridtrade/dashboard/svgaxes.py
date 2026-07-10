@@ -45,12 +45,35 @@ def _hhmm(ms, tz_name: str = 'UTC') -> str:
     return to_display_dt(int(ms), tz_name).strftime('%H:%M')
 
 
-def x_time_axis(xmin, xmax, sx, y_base, tz_name: str = 'UTC') -> str:
-    mid = (int(xmin) + int(xmax)) // 2
+_DAY_MS = 86400_000
+
+
+def _time_fmt(span_ms) -> str:
+    """按跨度选时间刻度格式：≤24h 纯时刻（实时图现状）；≤7d 带日期；更长只留日期。
+    修「/analytics 跨天曲线 X 轴全是 HH:MM 无日期不可读」（2026-07-11 用户核）。"""
+    if span_ms <= _DAY_MS:
+        return '%H:%M'
+    if span_ms <= 7 * _DAY_MS:
+        return '%m-%d %H:%M'
+    return '%m-%d'
+
+
+def x_time_axis(xmin, xmax, sx, y_base, tz_name: str = 'UTC', *, y_top=None,
+                n: int = 4) -> str:
+    """时间轴：n+1 个等距刻度（跨度为 0 时 1 个），标签格式随跨度自适应；
+    y_top 给定时画纵向淡网格线（analytics 长跨度曲线定位用；实时图不传保持原样）。"""
+    span = int(xmax) - int(xmin)
+    ticks = ([int(xmin) + i * span // n for i in range(n + 1)] if span > 0 else [int(xmin)])
+    fmt = _time_fmt(span)
     out = []
-    for t in (xmin, mid, xmax):
+    for t in ticks:
+        x = sx(t)
+        if y_top is not None:
+            out.append('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="#222" '
+                       'stroke-width="0.5"/>' % (x, y_top, x, y_base))
         out.append('<text x="%.1f" y="%.1f" text-anchor="middle" font-size="9" '
-                   'fill="#999">%s</text>' % (sx(t), y_base + 10, _hhmm(t, tz_name)))
+                   'fill="#999">%s</text>'
+                   % (x, y_base + 10, to_display_dt(int(t), tz_name).strftime(fmt)))
     return ''.join(out)
 
 

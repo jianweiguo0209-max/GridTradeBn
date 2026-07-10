@@ -37,10 +37,39 @@ def test_y_axis_has_lines_and_number_labels():
 
 
 def test_x_time_axis_hhmm():
-    # 0 ms = 1970-01-01 00:00 UTC
+    # 0 ms = 1970-01-01 00:00 UTC；≤24h 跨度维持纯 HH:MM（实时图现状）
     svg = x_time_axis(0, 3600_000, sx=lambda t: t / 3600_000 * 100, y_base=120)
     assert '00:00' in svg and '01:00' in svg          # 起/现
+    assert '00:30' in svg                             # 5 刻度加密后含中点
     assert '<text' in svg
+    assert '<line' not in svg                         # 不传 y_top 无纵向网格线（gridchart 口径）
+
+
+def test_x_time_axis_multiday_has_dates():
+    day = 86400_000
+    sx = lambda t: t / (30 * day) * 700
+    # >7d 跨度 → 只留日期 MM-DD（修跨天曲线 HH:MM 不可读）
+    svg = x_time_axis(0, 30 * day, sx=sx, y_base=120)
+    assert '01-01' in svg and '01-31' in svg          # 起/止日期
+    import re
+    labels = re.findall(r'>([^<]+)</text>', svg)
+    assert len(labels) == 5 and all(':' not in lab for lab in labels)
+    # 1d<跨度≤7d → 日期+时刻
+    svg3 = x_time_axis(0, 3 * day, sx=lambda t: t / (3 * day) * 700, y_base=120)
+    labels3 = re.findall(r'>([^<]+)</text>', svg3)
+    assert all('-' in lab and ':' in lab for lab in labels3)
+
+
+def test_x_time_axis_vertical_gridlines_with_y_top():
+    svg = x_time_axis(0, 3600_000, sx=lambda t: t / 3600_000 * 100, y_base=120, y_top=18)
+    assert svg.count('<line') == 5                    # 每刻度一条纵向网格线
+    assert 'y1="18.0"' in svg and 'y2="120.0"' in svg
+
+
+def test_x_time_axis_zero_span_single_tick():
+    svg = x_time_axis(1000, 1000, sx=lambda t: 50.0, y_base=120)
+    import re
+    assert len(re.findall(r'<text', svg)) == 1
 
 
 def test_x_cat_axis_escapes():

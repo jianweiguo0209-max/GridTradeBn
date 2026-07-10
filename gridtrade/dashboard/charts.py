@@ -37,7 +37,8 @@ def line_chart(series, *, width: int = 720, height: int = 240,
 
     parts = [ax.y_axis(ax.nice_ticks(ymin, ymax), sy, pl, pr)]
     if x_is_time:
-        parts.append(ax.x_time_axis(xmin, xmax, sx, pb, tz_name))
+        # y_top=pt → 纵向淡网格线（跨天曲线定位用；实时图 gridchart 不传竖线保持原样）
+        parts.append(ax.x_time_axis(xmin, xmax, sx, pb, tz_name, y_top=pt))
     else:
         cs = [sx(v) for v in (xmin, (xmin + xmax) / 2, xmax)]
         parts.append(ax.x_cat_axis(['%.0f' % v for v in (xmin, (xmin + xmax) / 2, xmax)], cs, pb))
