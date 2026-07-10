@@ -161,7 +161,7 @@ DEFAULT_TIER_POLICY = TierPolicy(
     # 不猜译名（PI/DEGEN/ALCH/MAX/OL/MASK/ACT/SONIC/BR/RDNT/MAGIC/CSPR/LOOKS/MEW/
     # NEIROETH/IP），上市巡检再补。
     tier1=(),
-    tier2_cap=2,   # legacy black_dict['2'] OTHERS≤2 口径（2026-07-06 用户决定全套跟进：SymbolLockGate cap 感知 + DB 槽位）
+    tier2_cap=4,   # ←2:保费-集中度曲线甜点(2026-07-11 tiercap 扫描,用户定)——拿回锁保费 67%(+1.86pp)/Calmar 全档最高/峰值单币敞口 1.67×equity(丝封顶);cap 全链路动态派生,槽位自动 #0..#3
 )
 
 DEFAULT_STRATEGY_CONFIG = {

@@ -44,13 +44,14 @@ def test_open_proposals_opens_passing_and_returns_ids(store):
 
 
 def test_open_proposals_blocked_by_gate_not_opened(store):
-    # cap=2：同币第 2 格放行，第 3 格由 DB 槽位拒（SlotExhausted → open_proposals 优雅跳过）。
+    # cap=4（2026-07-11 换代）：同币第 4 格放行，第 5 格由 DB 槽位拒（SlotExhausted → 优雅跳过）。
     ex, store, gx = _setup(store)
     mgr = _manager(gx, store)
-    mgr.open_proposals([_proposal()])            # 第 1 格
-    assert len(mgr.open_proposals([_proposal()])) == 1   # 第 2 格：cap=2 放行
-    ids3 = mgr.open_proposals([_proposal()])     # 第 3 格 -> 槽满跳过（不炸批）
-    assert ids3 == []
+    for _ in range(3):
+        mgr.open_proposals([_proposal()])        # 第 1-3 格
+    assert len(mgr.open_proposals([_proposal()])) == 1   # 第 4 格：cap=4 放行
+    ids5 = mgr.open_proposals([_proposal()])     # 第 5 格 -> 槽满跳过（不炸批）
+    assert ids5 == []
 
 
 def test_open_proposals_empty_list_noop(store):

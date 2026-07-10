@@ -73,8 +73,8 @@ def test_compute_proposals_prefilters_locked_symbols(monkeypatch):
     class _Grid:
         symbol = 'BBB/USDT:USDT'; tag = 'gtX'
     class _Grids:
-        # cap=2 语义：2 格才触顶被剔出预览票池
-        def list_active(self): return [_Grid(), _Grid()]
+        # cap=4 语义（2026-07-11 换代）：4 格才触顶被剔出预览票池
+        def list_active(self): return [_Grid(), _Grid(), _Grid(), _Grid()]
     class _Ex:
         grids = _Grids()
     class _Mgr:
