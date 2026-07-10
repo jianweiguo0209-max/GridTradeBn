@@ -121,7 +121,7 @@ def test_strategy_defaults_mirror_legacy():
     assert DEFAULT_STRATEGY_CONFIG['stop_limit'] == 0.01
     assert DEFAULT_STRATEGY_CONFIG['grid_v2_config']['grid_count_max'] == 149
     # legacy 止盈止损 + 已接线的资金费/pv 主动止损参数（pv 由 2026-03~06 回测扫描调优）
-    assert DEFAULT_STOP_CFG['stop_loss'] == 0.034
+    assert DEFAULT_STOP_CFG['stop_loss'] == 0.045   # 固定止损放宽(2026-07-10 stop 扫描保守候选,详 config 注释)
     assert DEFAULT_STOP_CFG['trailing_k'] == 0.15    # 回撤止盈换挡(2026-07-10 trail 扫描,k 不敏感取最优)
     assert DEFAULT_STOP_CFG['trailing_floor'] == 0.015  # floor 单调敏感,0.015 饱和点;触发占比 6-12%→~1%
     assert DEFAULT_STOP_CFG['fundingRate_stop_loss'] == 0.0015
