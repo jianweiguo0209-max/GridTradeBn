@@ -5,10 +5,15 @@
   <a href="/analytics?range=all">全部</a>
   <a href="/analytics?range=7d">近7天</a>
   <a href="/analytics?range=30d">近30天</a>
-  <small>（当前：{{ range }}）</small>
+  <form method="get" action="/analytics" style="display:inline">
+    起 <input type="date" name="start" value="{{ sel_start }}">
+    止 <input type="date" name="end" value="{{ sel_end }}">
+    <button>应用</button>
+  </form>
+  <small>（当前：{{ range }}；日期为 UTC 日历天、含两端，作用于本页全部图表）</small>
 </nav>
 
-<h2>权益 / 已实现盈亏曲线</h2>
+<h2>已实现盈亏曲线</h2>
 {{ equity_svg | safe }}
 
 <h2>tag 盈亏归因</h2>

@@ -12,6 +12,8 @@ def test_realized_curve_cumulative(store):
     recs.add(Record(id='open', exchange='x', symbol='SOL', tag='gt0', closed_at=None))  # 未平不计
     assert realized_curve(store) == [(1000, 10.0), (2000, 6.0)]
     assert realized_curve(store, start_ms=1500) == [(2000, -4.0)]   # 范围过滤后从该窗起累加
+    assert realized_curve(store, end_ms=1500) == [(1000, 10.0)]     # 上界过滤（手动日期范围）
+    assert realized_curve(store, start_ms=500, end_ms=1500) == [(1000, 10.0)]
 
 
 def test_equity_curve(store):

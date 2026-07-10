@@ -195,23 +195,38 @@ def create_app(store, adapter, *, username: str, password_hash: str,
         return RedirectResponse('/controls', status_code=302)
 
     @app.get('/analytics', response_class=HTMLResponse)
-    def analytics_page(request: Request, range: str = 'all'):
+    def analytics_page(request: Request, range: str = 'all', start: str = '', end: str = ''):
         if not _user(request):
             return RedirectResponse('/login', status_code=302)
         from gridtrade.dashboard import analytics as an
         from gridtrade.dashboard import charts as ch
+        from gridtrade.dashboard import export_csv as ex
         from gridtrade.state.models import now_ms
-        cutoff = {'7d': 7 * 86400_000, '30d': 30 * 86400_000}.get(range, 0)
-        start_ms = (now_ms() - cutoff) if cutoff else 0
-        realized = an.realized_curve(store, start_ms=start_ms)
-        equity = an.equity_curve(store, start_ms=start_ms)
-        dist = an.fill_distribution(store, start_ms=start_ms)
+        # 手动日期范围（YYYY-MM-DD，UTC 日界，与 CSV 导出同口径）优先于预设周期
+        start, end = start.strip(), end.strip()
+        end_ms = None
+        if start or end:
+            try:
+                start_ms = ex.parse_day_ms(start) if start else 0
+                end_ms = ex.parse_day_ms(end, end=True) if end else None
+            except ValueError:
+                return PlainTextResponse('start/end 需为 YYYY-MM-DD', status_code=400)
+            if end_ms is not None and start_ms > end_ms:
+                return PlainTextResponse('start 不能晚于 end', status_code=400)
+            range = '%s ~ %s' % (start or '…', end or '…')
+        else:
+            cutoff = {'7d': 7 * 86400_000, '30d': 30 * 86400_000}.get(range, 0)
+            start_ms = (now_ms() - cutoff) if cutoff else 0
+        realized = an.realized_curve(store, start_ms=start_ms, end_ms=end_ms)
+        dist = an.fill_distribution(store, start_ms=start_ms, end_ms=end_ms)
         ctx = {
             'range': range,
-            'equity_svg': ch.line_chart([realized, equity], x_is_time=True,
-                                        series_labels=[('#6cf', '已实现'), ('#fb0', '真权益')],
+            'sel_start': start,
+            'sel_end': end,
+            'equity_svg': ch.line_chart([realized], x_is_time=True,
+                                        series_labels=[('#6cf', '已实现')],
                                         value_labels=True, tz_name=display_tz),
-            'tags': an.tag_attribution(store, start_ms=start_ms),
+            'tags': an.tag_attribution(store, start_ms=start_ms, end_ms=end_ms),
             'by_hour_svg': ch.bar_chart([(str(h), n) for h, n in dist.by_hour], value_labels=True),
             'by_side_svg': (ch.stacked_bar([('成交', dist.by_side)],
                                            seg_labels=[('#4caf50', '买'), ('#e53935', '卖')])
@@ -220,7 +235,7 @@ def create_app(store, adapter, *, username: str, password_hash: str,
             'fee_cum_svg': ch.line_chart([dist.fee_cum], x_is_time=True,
                                          series_labels=[('#6cf', '累计手续费')], value_labels=True,
                                          tz_name=display_tz),
-            'exits': an.exit_reason_stats(store, start_ms=start_ms),
+            'exits': an.exit_reason_stats(store, start_ms=start_ms, end_ms=end_ms),
         }
         from datetime import datetime, timedelta, timezone
         today = datetime.now(timezone.utc).date()

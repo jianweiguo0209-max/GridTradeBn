@@ -8,14 +8,14 @@ from gridtrade.state.equity import EquitySnapshotRepository
 from gridtrade.state.models import grid_fills, order_records
 
 
-def realized_curve(store, *, start_ms: int = 0) -> List[Tuple]:
-    with store.engine.connect() as c:
-        rows = c.execute(
-            select(order_records.c.closed_at, order_records.c.total_pnl)
+def realized_curve(store, *, start_ms: int = 0, end_ms: Optional[int] = None) -> List[Tuple]:
+    stmt = (select(order_records.c.closed_at, order_records.c.total_pnl)
             .where(order_records.c.closed_at.isnot(None),
-                   order_records.c.closed_at >= start_ms)
-            .order_by(order_records.c.closed_at)
-        ).all()
+                   order_records.c.closed_at >= start_ms))
+    if end_ms is not None:
+        stmt = stmt.where(order_records.c.closed_at <= end_ms)
+    with store.engine.connect() as c:
+        rows = c.execute(stmt.order_by(order_records.c.closed_at)).all()
     out = []
     cum = 0.0
     for closed_at, pnl in rows:
@@ -51,16 +51,16 @@ def _max_drawdown(cum_series) -> float:
     return mdd if mdd != float('-inf') else 0.0
 
 
-def tag_attribution(store, *, start_ms: int = 0) -> List[TagStat]:
-    with store.engine.connect() as c:
-        recs = c.execute(
-            select(order_records.c.tag, order_records.c.grid_id,
+def tag_attribution(store, *, start_ms: int = 0, end_ms: Optional[int] = None) -> List[TagStat]:
+    stmt = (select(order_records.c.tag, order_records.c.grid_id,
                    order_records.c.total_pnl, order_records.c.opened_at,
                    order_records.c.closed_at)
             .where(order_records.c.closed_at.isnot(None),
-                   order_records.c.closed_at >= start_ms)
-            .order_by(order_records.c.closed_at)
-        ).all()
+                   order_records.c.closed_at >= start_ms))
+    if end_ms is not None:
+        stmt = stmt.where(order_records.c.closed_at <= end_ms)
+    with store.engine.connect() as c:
+        recs = c.execute(stmt.order_by(order_records.c.closed_at)).all()
         fee_rows = c.execute(
             select(grid_fills.c.grid_id, grid_fills.c.fee)
         ).all()
@@ -102,14 +102,14 @@ class FillDist:
     fee_cum: List[Tuple]
 
 
-def fill_distribution(store, *, start_ms: int = 0) -> FillDist:
-    with store.engine.connect() as c:
-        rows = c.execute(
-            select(grid_fills.c.side, grid_fills.c.line_index,
+def fill_distribution(store, *, start_ms: int = 0, end_ms: Optional[int] = None) -> FillDist:
+    stmt = (select(grid_fills.c.side, grid_fills.c.line_index,
                    grid_fills.c.fee, grid_fills.c.ts)
-            .where(grid_fills.c.ts >= start_ms)
-            .order_by(grid_fills.c.ts)
-        ).all()
+            .where(grid_fills.c.ts >= start_ms))
+    if end_ms is not None:
+        stmt = stmt.where(grid_fills.c.ts <= end_ms)
+    with store.engine.connect() as c:
+        rows = c.execute(stmt.order_by(grid_fills.c.ts)).all()
     hour = {}; side = {}; line = {}
     fee_cum = []; run = 0.0
     for s, li, fee, ts in rows:
@@ -135,13 +135,14 @@ class ExitStat:
     avg_pnl: float
 
 
-def exit_reason_stats(store, *, start_ms: int = 0) -> List[ExitStat]:
-    with store.engine.connect() as c:
-        rows = c.execute(
-            select(order_records.c.exit_reason, order_records.c.total_pnl)
+def exit_reason_stats(store, *, start_ms: int = 0, end_ms: Optional[int] = None) -> List[ExitStat]:
+    stmt = (select(order_records.c.exit_reason, order_records.c.total_pnl)
             .where(order_records.c.closed_at.isnot(None),
-                   order_records.c.closed_at >= start_ms)
-        ).all()
+                   order_records.c.closed_at >= start_ms))
+    if end_ms is not None:
+        stmt = stmt.where(order_records.c.closed_at <= end_ms)
+    with store.engine.connect() as c:
+        rows = c.execute(stmt).all()
     agg = {}
     for reason, pnl in rows:
         r = reason or 'unknown'
