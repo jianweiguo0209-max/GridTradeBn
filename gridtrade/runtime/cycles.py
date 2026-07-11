@@ -80,9 +80,11 @@ def _grid_unit(reconciler, manager, grid, *, skip_replenish=False, snapshot=None
                            margin_rate=manager.margin_rate,
                            skip_replenish=skip_replenish,
                            pv_spike=pv_spike, funding_rate=funding_rate,
-                           snapshot=snapshot)
+                           snapshot=snapshot, defer_close=True)
         out.update(res)
-        if not res['closed']:
+        # 两阶段(spec 2026-07-11-symbol-desk):触发关格的单元只出意向不执行(阶段 B
+        # 按币合并 close_set);带意向的格即将关闭,跳过 reconcile(与 closed 同位)。
+        if not res['closed'] and not res.get('close_intent'):
             out['stage'] = 'reconcile'
             out['reconciled'] = reconciler.reconcile_open_orders(grid.id, grid.symbol,
                                                                  snapshot=snapshot)
@@ -208,6 +210,43 @@ def run_monitor_cycle(reconciler, manager, log=print, *,
                         % (sorted(g.id for g in pending.values()), waited))
 
     by_grid = {g.id: g for g in active}
+    # ---- 阶段 B(spec 2026-07-11-symbol-desk 组件二):关格意向按 (币,原因) 分组,
+    # 币内一次 close_set(净额化:对冲对零交易所单/N 格最多 1 张市价单,币级互斥),
+    # 跨币可并行(复用 parallel);结果回写单元 results,事件仍由下方主线程循环统一发布。
+    intents = {}
+    for r in results:
+        ci = r.get('close_intent')
+        if ci:
+            g = by_grid[r['grid_id']]
+            intents.setdefault((g.symbol, ci), []).append(r['grid_id'])
+    if intents:
+        def _run_set(item):
+            (sym, why), gids = item
+            try:
+                return item, manager.executor.ledger.close_set(gids, sym, why), None
+            except Exception as exc:          # 集合失败不掀翻整轮;留 CLOSING 由续平自愈
+                return item, [], repr(exc)
+        items = sorted(intents.items())
+        if parallel > 1 and len(items) > 1:
+            with _cf.ThreadPoolExecutor(max_workers=int(parallel)) as pool:
+                outs = list(pool.map(_run_set, items))
+        else:
+            outs = [_run_set(it) for it in items]
+        outcome = {}
+        for item, res_list, err in outs:
+            (sym, why), gids = item
+            if err is not None:
+                for gid in gids:
+                    degraded[gid] = err
+                log('[monitor] close_set %s(%s) failed: %s' % (sym, why, err))
+            for o in res_list:
+                outcome[o['grid_id']] = o
+        for r in results:
+            o = outcome.get(r['grid_id'])
+            if o is not None:
+                r['closed'] = True
+                r['reason'] = o['reason']
+                r['pnl_ratio'] = o['pnl_ratio']
     for r in results:                         # 事件/归类收在主线程（EventBus 不进多线程）
         gid = r['grid_id']
         grid = by_grid[gid]

@@ -3,7 +3,10 @@ from gridtrade.core.stop_rules import evaluate_exit
 
 
 def monitor_grid(executor, grid_id, symbol, stop_cfg, *, margin_rate=0.05, skip_replenish=False,
-                 pv_spike=0, funding_rate=0.0, snapshot=None):
+                 pv_spike=0, funding_rate=0.0, snapshot=None, defer_close=False):
+    """defer_close(spec 2026-07-11-symbol-desk 组件二):True=只读决策,触发时返回
+    close_intent 不执行——monitor 轮阶段 B 按币合并成 close_set(同币市价单永不并发);
+    默认 False 即时关格,既有直调路径零改动。"""
     res = executor.sync(grid_id, symbol, skip_replenish=skip_replenish, snapshot=snapshot)
     snap = res['snapshot']
     acc = executor.accounting.get(grid_id)
@@ -12,6 +15,9 @@ def monitor_grid(executor, grid_id, symbol, stop_cfg, *, margin_rate=0.05, skip_
                            stop_cfg=stop_cfg, margin_rate=margin_rate,
                            funding_rate=funding_rate, pv_spike=pv_spike)
     if reason:
+        if defer_close:
+            return {'closed': False, 'reason': None, 'close_intent': reason,
+                    'pnl_ratio': snap['pnl_ratio'], 'fills': res.get('fills', [])}
         executor.close(grid_id, symbol, reason)
         return {'closed': True, 'reason': reason, 'pnl_ratio': snap['pnl_ratio'],
                 'fills': res.get('fills', [])}

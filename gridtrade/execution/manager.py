@@ -75,15 +75,25 @@ class GridManager:
         return results
 
     def close_by_tag(self, tag: str, reason: str) -> List[str]:
+        # 按币分组走 close_set(spec 2026-07-11-symbol-desk):同 tag 同币多格(罕见)
+        # 净额化一次出清;单格集合退化 ≡ 旧逐格路径。
         closed: List[str] = []
         active = [g for g in self.executor.grids.list_active()
                   if g.status == ACTIVE and g.tag == tag]
-        for grid in active:
-            res = self.executor.close(grid.id, grid.symbol, reason)
-            if self.signals is not None:
-                self.signals.evict(grid.id)          # 平仓即清信号缓存
-            self._publish(GridClosed(
-                grid_id=grid.id, exchange=grid.exchange, symbol=grid.symbol,
-                reason=reason, pnl_ratio=res['pnl_ratio']))
-            closed.append(grid.id)
+        by_sym = {}
+        for g in active:
+            by_sym.setdefault(g.symbol, []).append(g)
+        for symbol, grids in sorted(by_sym.items()):
+            results = self.executor.ledger.close_set([g.id for g in grids],
+                                                     symbol, reason)
+            g_by_id = {g.id: g for g in grids}
+            for res in results:
+                gid = res['grid_id']
+                grid = g_by_id[gid]
+                if self.signals is not None:
+                    self.signals.evict(gid)          # 平仓即清信号缓存
+                self._publish(GridClosed(
+                    grid_id=gid, exchange=grid.exchange, symbol=symbol,
+                    reason=res['reason'], pnl_ratio=res['pnl_ratio']))
+                closed.append(gid)
         return closed
