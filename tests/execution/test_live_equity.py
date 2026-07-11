@@ -198,3 +198,101 @@ def test_net_position_property_matches_snapshot():
     le.record_fill(101.0, 'sell', 2.0, 2000)
     assert abs(le.net_position - 3.0) < 1e-12
     assert abs(le.net_position - le.snapshot(102.0)['net_position']) < 1e-9
+
+
+# ── pnl_exact:逐笔精确直算(spec 2026-07-12-honest-record-pnl 组件一) ──
+
+
+def test_pnl_exact_long_reduce_and_unreal():
+    le = LiveEquity(1000.0, entry_price=100.0)
+    le.record_fill(100.0, 'buy', 2.0, 1000, fee=0.0)
+    le.record_fill(98.0, 'buy', 2.0, 2000, fee=0.0)       # avg 99, net 4
+    le.record_fill(101.0, 'sell', 1.0, 3000, fee=0.0)     # realize (101-99)*1 = +2
+    r = le.pnl_exact(100.0)
+    assert abs(r['realized'] - 2.0) < 1e-12
+    assert abs(r['unreal'] - (100.0 - 99.0) * 3.0) < 1e-12
+    assert abs(r['pnl'] - 5.0) < 1e-12
+    assert abs(r['pnl_ratio'] - 0.005) < 1e-15
+
+
+def test_pnl_exact_short_side_symmetric():
+    le = LiveEquity(1000.0, entry_price=100.0)
+    le.record_fill(100.0, 'sell', 2.0, 1000, fee=0.0)     # 开空 avg 100
+    le.record_fill(97.0, 'buy', 1.0, 2000, fee=0.0)       # realize (100-97)*1 = +3
+    r = le.pnl_exact(99.0)
+    assert abs(r['realized'] - 3.0) < 1e-12
+    assert abs(r['unreal'] - (100.0 - 99.0) * 1.0) < 1e-12   # 空 1 手,mark 99
+    assert abs(r['pnl'] - 4.0) < 1e-12
+
+
+def test_pnl_exact_cross_zero_realizes_then_flips():
+    le = LiveEquity(1000.0, entry_price=100.0)
+    le.record_fill(100.0, 'buy', 1.0, 1000, fee=0.0)
+    le.record_fill(103.0, 'sell', 2.5, 2000, fee=0.0)     # 平 1 (+3),翻空 1.5 @103
+    r = le.pnl_exact(102.0)
+    assert abs(r['realized'] - 3.0) < 1e-12
+    assert abs(r['unreal'] - (103.0 - 102.0) * 1.5) < 1e-12
+    assert abs(r['pnl'] - 4.5) < 1e-12
+
+
+def test_pnl_exact_deducts_fee_and_funding():
+    le = LiveEquity(1000.0, entry_price=100.0)
+    le.record_fill(100.0, 'buy', 1.0, 1000, fee=0.3)
+    le.add_funding(0.2)
+    r = le.pnl_exact(101.0)
+    assert abs(r['pnl'] - (1.0 - 0.3 - 0.2)) < 1e-12
+
+
+def test_pnl_exact_flat_exact_zero():
+    le = LiveEquity(1000.0, entry_price=100.0)
+    le.record_fill(100.0, 'buy', 1.0, 1000, fee=0.0)
+    le.record_fill(102.0, 'sell', 1.0, 2000, fee=0.0)     # 恰好平净
+    r = le.pnl_exact(50.0)                                 # mark 任意,不应影响
+    assert abs(r['realized'] - 2.0) < 1e-12
+    assert abs(r['unreal']) < 1e-12
+    assert abs(r['pnl'] - 2.0) < 1e-12
+
+
+# ── 事故形状回归(2026-07-11 VVV manual 记录失真根治验证) ──
+
+
+def test_vvv_gt00_shape_manual_close_must_be_negative():
+    """mainnet 2026-07-11 gt00 实测形状:三批买入 41.8@11.10/10.72/10.47,manual 关格
+    合成 reduce 卖 125.4@10.434。旧引擎重放记录 +$15(+1.00%);真实 ≈ −$41.3。
+    直算后必须为负且等于手算值。"""
+    le = LiveEquity(1493.0, entry_price=11.10)
+    le.record_fill(11.10, 'buy', 41.8, 1_000, fee=0.02)
+    le.record_fill(10.72, 'buy', 41.8, 2_000, fee=0.02)
+    le.record_fill(10.47, 'buy', 41.8, 3_000, fee=0.03)
+    le.record_fill(10.434, 'sell', 125.4, 4_000, fee=0.0)   # ledger:reduce 合成行,零费
+    snap = le.snapshot(10.434)
+    avg = (11.10 + 10.72 + 10.47) / 3.0
+    expect = (10.434 - avg) * 125.4 - 0.07                   # ≈ −41.37
+    assert snap['pnl_ratio'] < -0.02                          # 绝不允许为正
+    assert abs(snap['pnl_ratio'] * 1493.0 - expect) < 1e-6
+    assert abs(snap['net_position']) < 1e-9
+
+
+def test_zro_partial_fill_shape_no_distortion():
+    """ZRO 2026-07-10 实测:一张限价单同毫秒被 3 个对手方拆成 16.9+66.7+428.5。
+    非均匀拆单不得引入任何失真:随后整量平仓 realized = Δpx × 总量,精确。"""
+    le = LiveEquity(1493.0, entry_price=0.9412)
+    for sz in (16.9, 66.7, 428.5):
+        le.record_fill(0.9400, 'buy', sz, 1_000, fee=0.0)
+    le.record_fill(0.9450, 'sell', 512.1, 2_000, fee=0.0)
+    snap = le.snapshot(0.9450)
+    assert abs(snap['realized_pnl'] - 0.005 * 512.1) < 1e-9
+    assert abs(snap['net_position']) < 1e-9
+
+
+def test_transfer_pair_conserves_pnl_at_any_mark():
+    """转仓守恒:A(成本100)按 mark 105 零费转 1 手给 B;任意后续 mark m 下,
+    A+B 的 pnl_exact 之和 == 无转仓时 A 独自持有的 (m−100)。"""
+    a = LiveEquity(1000.0, entry_price=100.0)
+    a.record_fill(100.0, 'buy', 1.0, 1_000, fee=0.0)
+    a.record_fill(105.0, 'sell', 1.0, 2_000, fee=0.0)       # 转出(合成,零费)
+    b = LiveEquity(1000.0, entry_price=105.0)
+    b.record_fill(105.0, 'buy', 1.0, 2_000, fee=0.0)        # 转入(合成,零费)
+    for m in (90.0, 100.0, 105.0, 111.5):
+        total = a.pnl_exact(m)['pnl'] + b.pnl_exact(m)['pnl']
+        assert abs(total - (m - 100.0)) < 1e-9, (m, total)

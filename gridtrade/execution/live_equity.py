@@ -1,12 +1,11 @@
-"""LiveEquity：实盘网格增量记账，通过复用 core.grid_engine.cal_equity_curve 与回测同源。
-把累计成交流水重建为 trade_df + 一根当前 mark 价的合成 1m K线喂引擎，取末行 net_value；
-资金费单独累计（funding_paid），从 net_value 扣除。不直接判止损（由监控层组合）。
+"""LiveEquity：实盘网格增量记账,盈亏逐笔精确直算(_replay_exact/pnl_exact)。
+2026-07-12 起引擎 cal_equity_curve 移出记账链路(spec honest-record-pnl):引擎是回测
+均匀 lot/线价语义的模拟器,对部分成交/合成行/乱序输入失真(neutral hold_num、ADA avg=0、
+VVV manual 三次同族事故);回测继续用引擎,记账一律直算。不直接判止损(由监控层组合)。
 """
 from typing import Optional
 
 import pandas as pd
-
-from gridtrade.core.grid_engine import cal_equity_curve
 
 
 class LiveEquity:
@@ -55,25 +54,45 @@ class LiveEquity:
         """最后成交 ts(ms);无成交 None。账本↔DB 对齐判定顺序/乱序用。"""
         return self._last_ts
 
-    def _avg_cost(self):
-        """当前净仓的精确加权平均成本（逐笔回放：同向加权、减仓成本不变、过零重置为翻向价）。
-        引擎 avg 是均匀 lot 阶梯近似（回测语义）；实盘非均匀 size 用真实成交直算——
-        mainnet ADA 2026-07-08 实证近似路径产出 avg=0 → 幻影浮盈 +13.5%。"""
+    def _replay_exact(self):
+        """单遍逐笔精确回放 → (avg, net, realized)。语义:同向加权、减仓 realize 且成本不变、
+        过零先 realize 旧仓再以翻向价开新。realized 为毛额(费/资金费在 pnl_exact 层扣)。
+        这是记账真相源(spec 2026-07-12-honest-record-pnl):引擎 cal_equity_curve 是回测
+        均匀 lot/线价语义的模拟器,对部分成交/合成行/乱序输入失真(neutral hold_num、
+        ADA avg=0、VVV manual 记录 +15/真实 −52 三次同族实证),不得用于记账。"""
         pos = 0.0
         avg = 0.0
+        realized = 0.0
         for f in self._fills:
             signed = f['order_dir'] * f['order_num']
             px = f['touch']
             new = pos + signed
             if pos == 0.0 or pos * signed > 0:          # 开新/同向加仓 → 加权
                 avg = px if pos == 0.0 else (avg * abs(pos) + px * abs(signed)) / abs(new)
-            elif pos * new < 0:                          # 穿越翻向 → 成本=本笔价
+            elif pos * new < 0:                          # 穿越翻向 → 平旧全额 realize,成本=本笔价
+                realized += (px - avg) * pos if pos > 0 else (avg - px) * (-pos)
                 avg = px
-            elif new == 0.0:                             # 恰好平净
+            elif new == 0.0:                             # 恰好平净 → realize 全部
+                realized += (px - avg) * pos if pos > 0 else (avg - px) * (-pos)
                 avg = 0.0
-            # 部分减仓：成本不变
+            else:                                        # 部分减仓 → realize 减仓量,成本不变
+                q = abs(signed)
+                realized += (px - avg) * q if pos > 0 else (avg - px) * q
             pos = new
-        return avg
+        return avg, pos, realized
+
+    def _avg_cost(self):
+        """当前净仓的精确加权平均成本(薄壳,见 _replay_exact)。"""
+        return self._replay_exact()[0]
+
+    def pnl_exact(self, mark_price):
+        """诚实盈亏(记账唯一口径):realized + (mark−avg)×net − 真实费 − 资金费。
+        返回 {'realized','unreal','pnl','pnl_ratio','avg','net'}。"""
+        avg, net, realized = self._replay_exact()
+        unreal = (float(mark_price) - avg) * net if net != 0.0 else 0.0
+        pnl = realized + unreal - self.real_fee_paid - self.funding_paid
+        return {'realized': realized, 'unreal': unreal, 'pnl': pnl,
+                'pnl_ratio': pnl / self.cap, 'avg': avg, 'net': net}
 
     def replay(self, fills) -> 'LiveEquity':
         """fills: 可迭代的 (price, side, size, ts_ms) 或 (price, side, size, ts_ms, fee)。
@@ -84,29 +103,16 @@ class LiveEquity:
         return self
 
     def snapshot(self, mark_price) -> dict:
-        """Mark-to-market snapshot: net_value/fee_paid via cal_equity_curve WITHOUT _apply_exit,
-        so excludes close-out taker fee (applied by executor on actual exit).
-        fee_paid 取真实累计费（real_fee_paid），net_value 按 (est_fee - real_fee)/cap 修正。"""
+        """Mark-to-market snapshot,全字段逐笔精确直算(spec 2026-07-12-honest-record-pnl):
+        record/accounting/止损判定共用本口径。引擎 cal_equity_curve 已移出记账链路
+        (回测均匀 lot/线价语义,对部分成交/合成行失真——三次同族事故实证,见 _replay_exact);
+        不含平仓 taker 费(实际退出时由 executor 落真实费)。"""
         if not self._fills:
             return {'net_value': 1.0, 'pnl_ratio': 0.0, 'net_position': 0.0,
                     'avg_price': 0.0, 'realized_pnl': 0.0, 'fee_paid': 0.0,
                     'funding_paid': self.funding_paid}
-        trade_df = pd.DataFrame(self._fills)
-        mark_ts = pd.to_datetime(self._last_ts + 60_000, unit='ms')  # 严格晚于所有成交
-        mp = float(mark_price)
-        candle_df = pd.DataFrame([{
-            'candle_begin_time': mark_ts, 'open': mp, 'high': mp, 'low': mp,
-            'close': mp, 'symbol': '_LIVE_',
-        }])
-        eq = cal_equity_curve(candle_df, trade_df.copy(), self.fee, self.cap,
-                              self.c_rate_taker, funding_df=None)
-        last = eq.iloc[-1]
-        est_fee = float(last['fee'])                 # 引擎按费率估算的累计费
-        # net_value 内已扣 est_fee；用真实费替换：+est_fee/cap -real_fee/cap -funding/cap
-        net_value = (float(last['net_value'])
-                     + (est_fee - self.real_fee_paid) / self.cap
-                     - self.funding_paid / self.cap)
-        return {'net_value': net_value, 'pnl_ratio': net_value - 1.0,
-                'net_position': float(last['hold_num']), 'avg_price': self._avg_cost(),
-                'realized_pnl': float(last['real_profit']), 'fee_paid': self.real_fee_paid,
+        r = self.pnl_exact(mark_price)
+        return {'net_value': 1.0 + r['pnl_ratio'], 'pnl_ratio': r['pnl_ratio'],
+                'net_position': r['net'], 'avg_price': r['avg'],
+                'realized_pnl': r['realized'], 'fee_paid': self.real_fee_paid,
                 'funding_paid': self.funding_paid}
