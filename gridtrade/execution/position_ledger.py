@@ -79,11 +79,14 @@ class PositionLedger:
 
     # ── 合成成交 ──
 
-    def _record_synthetic(self, grid_id, side, qty, px, event):
-        """单边合成行:落 grid_fills(去重)+ 已加载的 live 账本同步 record_fill。"""
+    def _record_synthetic(self, grid_id, side, qty, px, event, eid=None):
+        """单边合成行:落 grid_fills(去重)+ 已加载的 live 账本同步 record_fill。
+        eid(spec 2026-07-11 组件三):转仓对由 settle_transfer 生成一次、两行共享 →
+        审计可精确配对;None=自生成(reduce 等单边行)。格式 'ts-seq'。"""
         ts = now_ms()
-        fill = Fill(trade_id='%s%s:%s:%d:%d' % (LEDGER_PREFIX, event, grid_id, ts,
-                                                next(self._seq)),
+        if eid is None:
+            eid = '%d-%d' % (ts, next(self._seq))
+        fill = Fill(trade_id='%s%s:%s:%s' % (LEDGER_PREFIX, event, grid_id, eid),
                     grid_id=grid_id, line_index=-1, side=side,
                     price=float(px), size=abs(float(qty)), fee=0.0, ts=ts)
         if self.ex.fills.add_if_new(fill):
@@ -99,8 +102,9 @@ class PositionLedger:
             return
         out_side = 'sell' if qty > 0 else 'buy'
         in_side = 'buy' if qty > 0 else 'sell'
-        self._record_synthetic(from_gid, out_side, qty, mark_px, event)
-        self._record_synthetic(to_gid, in_side, qty, mark_px, event)
+        eid = '%d-%d' % (now_ms(), next(self._seq))   # 一对共享(审计配对锚)
+        self._record_synthetic(from_gid, out_side, qty, mark_px, event, eid=eid)
+        self._record_synthetic(to_gid, in_side, qty, mark_px, event, eid=eid)
         print('[ledger] transfer %s: %s -> %s qty=%+.8g @ %.8g (event=%s)'
               % (symbol, from_gid, to_gid, qty, float(mark_px), event), flush=True)
 
