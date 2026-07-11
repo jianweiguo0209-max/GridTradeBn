@@ -74,3 +74,39 @@ def test_legacy_format_rows_not_flagged(store):
                              size=1.0, fee=0.0, ts=777))  # 旧 5 段格式
     rep = verify_ledger(store, log=lambda *a: None)
     assert rep['pairs_bad'] == 0 and rep['legacy'] >= 1
+
+
+# ── --records:record 直算重验(spec 2026-07-12-honest-record-pnl 组件二) ──
+
+
+def test_records_audit_clean_store_silent(store):
+    """_healthy 场景的关格 record 由直算 snapshot 落库 → --records 全绿。"""
+    _healthy(store)
+    rep = verify_ledger(store, log=lambda *a: None, records=True)
+    assert rep['records_scanned'] >= 1
+    assert rep['records_bad'] == 0
+
+
+def test_records_audit_flags_tampered_record(store):
+    """把 record.total_pnl 篡改(模拟引擎时代失真)→ RECORD deviation 必报。"""
+    import sqlalchemy as sa
+    from gridtrade.state.models import order_records
+    _healthy(store)
+    with store.engine.begin() as c:
+        c.execute(sa.update(order_records).values(total_pnl=15.0, pnl_ratio=0.01))
+    msgs = []
+    rep = verify_ledger(store, log=lambda *a: msgs.append(a), records=True)
+    assert rep['records_bad'] >= 1
+    assert any('RECORD deviation' in str(m) for m in msgs)
+
+
+def test_records_audit_no_fills_counted_not_flagged(store):
+    """无 fills 的旧 record(迁移前)只计数不误报。"""
+    from gridtrade.state.models import Record, now_ms
+    from gridtrade.state.records import RecordRepository
+    RecordRepository(store).add(Record(id='', exchange='fake', symbol=BTC, tag='old',
+                                       grid_id='ghost', sz=100.0, total_pnl=1.0,
+                                       pnl_ratio=0.01, exit_reason='x',
+                                       opened_at=1, closed_at=now_ms()))
+    rep = verify_ledger(store, log=lambda *a: None, records=True)
+    assert rep['records_nofills'] >= 1 and rep['records_bad'] == 0

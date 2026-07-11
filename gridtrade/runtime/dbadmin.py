@@ -75,13 +75,16 @@ def add_grid_orders_filled(store) -> str:
     return 'added'
 
 
-def verify_ledger(store, adapter=None, log=print) -> dict:
+def verify_ledger(store, adapter=None, log=print, records=False) -> dict:
     """组件三(spec 2026-07-11-symbol-desk):合成行守恒审计,只读幂等。
     ①转仓对按共享 eid 配对:恰 2 行/带符号量和≈0/同价(masking 唯一来源=合成行写错,
       配对守恒使其必留痕);②`ledger:reduce` 单边行按设计跳过;③旧 5 段格式计 legacy;
     ④每活跃格重放净仓(Σ signed fills) vs accounting 快照(容差 1.5×order_num,同
       drift-check 口径——审计与告警一个标尺);⑤adapter 给出时:per-symbol Σclaims vs
-      交易所净仓。巡查定期跑:`python -m gridtrade.runtime.dbadmin verify-ledger`。"""
+      交易所净仓;⑥records=True(spec 2026-07-12-honest-record-pnl 组件二):每条关格
+      record 用 DB fills 直算重验(pnl_exact+funding vs total_pnl,容差 max($0.05,
+      0.1%×cap))——引擎时代历史失真全量曝光。
+    巡查定期跑:`python -m gridtrade.runtime.dbadmin verify-ledger [--records]`。"""
     from collections import defaultdict
     from gridtrade.state.grids import GridRepository
     from gridtrade.state.accounting import AccountingRepository
@@ -139,8 +142,45 @@ def verify_ledger(store, adapter=None, log=print) -> dict:
                 rep['symbol_drift'] += 1
                 log('[verify-ledger] SYMBOL drift %s claims=%.6g exchange=%.6g'
                     % (sym, total, real))
+    if records:
+        from gridtrade.execution.live_equity import LiveEquity
+        from gridtrade.state.models import order_records
+        rep.update({'records_scanned': 0, 'records_bad': 0, 'records_nofills': 0})
+        with store.engine.connect() as c:
+            recs = c.execute(sa.select(order_records)).all()
+        by_grid = defaultdict(list)
+        for r in rows:
+            by_grid[r._mapping['grid_id']].append(r._mapping)
+        for r in recs:
+            rec = r._mapping
+            rep['records_scanned'] += 1
+            fl = sorted(by_grid.get(rec['grid_id'], []),
+                        key=lambda m: (m['ts'], m['trade_id']))
+            if not fl:
+                rep['records_nofills'] += 1     # 迁移前旧格无 fills:只计数不判
+                continue
+            cap = float(rec['sz'] or 0.0)
+            le = LiveEquity(cap or 1.0)
+            for m in fl:
+                le.record_fill(m['price'], m['side'], m['size'], m['ts'],
+                               float(m['fee'] or 0.0))
+            acc = ar.get(rec['grid_id'])
+            if acc is not None and acc.funding_paid:
+                le.add_funding(float(acc.funding_paid))
+            # 关格后净仓≈0 → mark 取末笔价即可(残差仅作用于 ≈0 的净仓)
+            exact = le.pnl_exact(float(fl[-1]['price']))['pnl']
+            tol = max(0.05, 0.001 * abs(cap))
+            if abs(exact - float(rec['total_pnl'] or 0.0)) > tol:
+                rep['records_bad'] += 1
+                log('[verify-ledger] RECORD deviation grid=%s %s tag=%s reason=%s '
+                    'record=%+.4f exact=%+.4f Δ=%+.4f'
+                    % (rec['grid_id'], rec['symbol'], rec['tag'], rec['exit_reason'],
+                       float(rec['total_pnl'] or 0.0), exact,
+                       exact - float(rec['total_pnl'] or 0.0)))
     log('[verify-ledger] scanned=%(scanned)d pairs_ok=%(pairs_ok)d pairs_bad=%(pairs_bad)d '
-        'legacy=%(legacy)d replay_bad=%(replay_bad)d symbol_drift=%(symbol_drift)d' % rep)
+        'legacy=%(legacy)d replay_bad=%(replay_bad)d symbol_drift=%(symbol_drift)d' % rep
+        + (' records_scanned=%(records_scanned)d records_bad=%(records_bad)d '
+           'records_nofills=%(records_nofills)d' % rep if records else ''))
     return rep
 
 
@@ -209,7 +249,7 @@ def run(action, *, store_factory=None):
                                      'private_key': cfg.private_key,
                                      'testnet': cfg.testnet,
                                      'quote_currency': cfg.quote_currency})
-        return verify_ledger(store, adapter=adapter)
+        return verify_ledger(store, adapter=adapter, records='--records' in sys.argv)
     if action == 'reset':
         store.drop_all()
         store.create_all()
@@ -220,7 +260,7 @@ def run(action, *, store_factory=None):
     if action == 'migrate':
         return migrate(store)
     raise SystemExit('usage: python -m gridtrade.runtime.dbadmin '
-                     '[create|reset|migrate|verify-ledger [--exchange]|validate-1m [--dry-run]]')
+                     '[create|reset|migrate|verify-ledger [--exchange] [--records]|validate-1m [--dry-run]]')
 
 
 def main():
