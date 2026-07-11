@@ -37,9 +37,9 @@ def test_lev5_symbol_capped_at_two(store):
         gx.open('fake', BTC, dict(GP), tag='c')
 
 
-def test_unknown_lev_keeps_cap4(store):
-    gx = _gx(store, None)                     # FakeExchange 默认 → None
-    for t in 'abcd':
+def test_unknown_lev_keeps_tier2_cap(store):
+    gx = _gx(store, None)                     # FakeExchange 默认 → None → tier2_cap=2
+    for t in 'ab':
         gx.open('fake', BTC, dict(GP), tag=t)
     with pytest.raises(SlotExhausted):
-        gx.open('fake', BTC, dict(GP), tag='e')
+        gx.open('fake', BTC, dict(GP), tag='c')

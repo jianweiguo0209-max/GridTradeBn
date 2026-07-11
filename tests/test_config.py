@@ -83,7 +83,7 @@ def test_default_tier_policy_content():
     assert 'FARTCOIN/USDC:USDC' in DEFAULT_TIER_POLICY.tier0     # legacy 档0 移植
     assert 'KNEIRO/USDC:USDC' in DEFAULT_TIER_POLICY.tier0       # NEIRO→HL k 前缀
     assert len(DEFAULT_TIER_POLICY.tier0) == 9
-    assert DEFAULT_TIER_POLICY.tier1 == () and DEFAULT_TIER_POLICY.tier2_cap == 4  # 保费-集中度曲线甜点(2026-07-11 用户定)
+    assert DEFAULT_TIER_POLICY.tier1 == () and DEFAULT_TIER_POLICY.tier2_cap == 2  # 恢复 cap2(2026-07-12 用户定;lev_caps 叠加后 lev3=1)
 
 
 def test_whitelist_parsing():

@@ -3,6 +3,17 @@
 cap=4 后多幸存格成常态:残余按反号 claim |比例| 分摊(正是对冲掉本格份额的各方);
 无反号→全体按|claim|;全零→均分;守恒逐位(最后一名吃余数);EPS 防浮点尘埃转仓。
 N=2 退化(单一反号幸存格得 100%)由现有 test_close_share.py 零改动锁定。"""
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _wide_slots(monkeypatch):
+    """本文件测 cap=N 通用逻辑,槽位策略与线上默认解耦(tier2_cap 现值变化不波及)。"""
+    import gridtrade.config as cfg
+    from gridtrade.core.tier_policy import TierPolicy
+    monkeypatch.setattr(cfg, 'DEFAULT_TIER_POLICY', TierPolicy(tier2_cap=8))
+
+
 from gridtrade.exchanges.base import Instrument
 from gridtrade.exchanges.fake import FakeExchange
 from gridtrade.execution.grid_executor import GridExecutor

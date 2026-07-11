@@ -161,7 +161,7 @@ DEFAULT_TIER_POLICY = TierPolicy(
     # 不猜译名（PI/DEGEN/ALCH/MAX/OL/MASK/ACT/SONIC/BR/RDNT/MAGIC/CSPR/LOOKS/MEW/
     # NEIROETH/IP），上市巡检再补。
     tier1=(),
-    tier2_cap=4,   # ←2:保费-集中度曲线甜点(2026-07-11 tiercap 扫描,用户定)——拿回锁保费 67%(+1.86pp)/Calmar 全档最高/峰值单币敞口 1.67×equity(丝封顶);cap 全链路动态派生,槽位自动 #0..#3
+    tier2_cap=2,   # ←4→2(2026-07-12 用户定恢复):同币开仓上限回 2;lev_caps 叠加后 lev3 币=1、其余=2;曲线数据留档 tiercap.csv 供将来复用
 )
 
 DEFAULT_STRATEGY_CONFIG = {

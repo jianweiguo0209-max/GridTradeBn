@@ -3,6 +3,17 @@
 ①对冲对同关=零交易所单(PUMP gt01/gt07 案型);②混合集合恰一张净额 reduce 单;
 ③单格退化 ≡ 旧 ex.close 逐位;④幂等重入;⑤残余分摊 exclude 集合成员;
 ⑥滑点归因=执行格承担(用户已决)。"""
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _wide_slots(monkeypatch):
+    """本文件测 cap=N 通用逻辑,槽位策略与线上默认解耦(tier2_cap 现值变化不波及)。"""
+    import gridtrade.config as cfg
+    from gridtrade.core.tier_policy import TierPolicy
+    monkeypatch.setattr(cfg, 'DEFAULT_TIER_POLICY', TierPolicy(tier2_cap=8))
+
+
 from gridtrade.exchanges.base import Instrument
 from gridtrade.exchanges.fake import FakeExchange
 from gridtrade.execution.grid_executor import GridExecutor
