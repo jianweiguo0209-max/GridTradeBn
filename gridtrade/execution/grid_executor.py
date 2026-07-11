@@ -319,14 +319,20 @@ class GridExecutor:
 
     def _flatten_symbol(self, grid_id, symbol):
         """无兄弟收尾段:symbol 级扫平(孤儿仓卫生,旧行为);reduce 市价单可能部分成交,
-        重拉持仓补 reduce 直至 <= min_amount。"""
+        重拉持仓补 reduce 直至 <= min_amount。每步落 ledger:reduce 合成行(spec
+        2026-07-12 补):此前扫平退出不入 grid_fills → 账本重放 net≠0,record 只能靠
+        snapshot 的 mark 兜、verify-ledger --records 离线不可重验;补行后关格流水自洽,
+        与 close_share reduce 同规范(mark 价合成,真实滑点差留给交易所快照)。"""
         pos = self.adapter.fetch_positions(symbol)
         attempt = 0
         while abs(pos.net_size) > self.min_amount and attempt < 3:
             side = 'sell' if pos.net_size > 0 else 'buy'
-            self.adapter.create_market_order(symbol, side, abs(pos.net_size),
-                                             reduce_only=True,
+            qty = abs(pos.net_size)
+            self.adapter.create_market_order(symbol, side, qty, reduce_only=True,
                                              client_oid='%s:close:%d' % (grid_id, attempt))
+            self.ledger._record_synthetic(grid_id, side, qty,
+                                          float(self.adapter.fetch_price(symbol)),
+                                          'reduce')
             attempt += 1
             pos = self.adapter.fetch_positions(symbol)
 

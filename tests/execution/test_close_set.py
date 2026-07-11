@@ -72,8 +72,11 @@ def test_mixed_set_single_net_reduce(store):
         assert gx.grids.get(g).status == 'CLOSED'
     for g in (b, c, d):                                 # 非执行格账本经转仓归零
         assert abs(gx.live[g].net_position) < 1e-9
-    # 执行格账本保留净额 +3(legacy 无兄弟扫平语义:record 按 mark 实现,不写合成行)
-    assert abs(gx.live[a].net_position - 3.0) < 1e-9
+    # 执行格账本也归零(2026-07-12 起 _flatten_symbol 落 ledger:reduce 合成行——
+    # 关格流水自洽,record 可离线重验;此前留 +3 是"退出不入账"缺口)
+    assert abs(gx.live[a].net_position) < 1e-9
+    assert any(f.trade_id.startswith('ledger:reduce:')
+               for f in gx.fills.list_by_grid(a))
 
 
 def test_single_grid_degenerates_to_legacy_close(store):

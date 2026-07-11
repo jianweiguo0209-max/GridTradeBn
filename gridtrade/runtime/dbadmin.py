@@ -145,7 +145,8 @@ def verify_ledger(store, adapter=None, log=print, records=False) -> dict:
     if records:
         from gridtrade.execution.live_equity import LiveEquity
         from gridtrade.state.models import order_records
-        rep.update({'records_scanned': 0, 'records_bad': 0, 'records_nofills': 0})
+        rep.update({'records_scanned': 0, 'records_bad': 0, 'records_nofills': 0,
+                    'records_openmark': 0})
         with store.engine.connect() as c:
             recs = c.execute(sa.select(order_records)).all()
         by_grid = defaultdict(list)
@@ -167,8 +168,14 @@ def verify_ledger(store, adapter=None, log=print, records=False) -> dict:
             acc = ar.get(rec['grid_id'])
             if acc is not None and acc.funding_paid:
                 le.add_funding(float(acc.funding_paid))
-            # 关格后净仓≈0 → mark 取末笔价即可(残差仅作用于 ≈0 的净仓)
-            exact = le.pnl_exact(float(fl[-1]['price']))['pnl']
+            last_px = float(fl[-1]['price'])
+            r_ex = le.pnl_exact(last_px)
+            # 重放残留净仓 → record 的 pnl 依赖关格时刻 mark(离线不可得),不可判:
+            # 老 _flatten_symbol 不落退出合成行的存量记录归此桶(2026-07-12 起补行)。
+            if abs(r_ex['net']) * last_px > 1.0:
+                rep['records_openmark'] += 1
+                continue
+            exact = r_ex['pnl']
             tol = max(0.05, 0.001 * abs(cap))
             if abs(exact - float(rec['total_pnl'] or 0.0)) > tol:
                 rep['records_bad'] += 1
@@ -180,7 +187,8 @@ def verify_ledger(store, adapter=None, log=print, records=False) -> dict:
     log('[verify-ledger] scanned=%(scanned)d pairs_ok=%(pairs_ok)d pairs_bad=%(pairs_bad)d '
         'legacy=%(legacy)d replay_bad=%(replay_bad)d symbol_drift=%(symbol_drift)d' % rep
         + (' records_scanned=%(records_scanned)d records_bad=%(records_bad)d '
-           'records_nofills=%(records_nofills)d' % rep if records else ''))
+           'records_nofills=%(records_nofills)d records_openmark=%(records_openmark)d'
+           % rep if records else ''))
     return rep
 
 
