@@ -80,7 +80,11 @@ def run_scheduler_once(runtime, *, now_fn=time.time,
     # （SlotExhausted 由 open_proposals 逐提议捕获，SymbolLockGate 已删）。
     held = Counter(g.symbol for g in rt.manager.executor.grids.list_active()
                    if g.tag != tag)
-    banned = capped_symbols(universe, held, DEFAULT_TIER_POLICY)
+    try:
+        _mlmap = rt.adapter.fetch_max_leverages()   # 杠杆感知上限(组件四);失败 fail-open
+    except Exception:
+        _mlmap = {}
+    banned = capped_symbols(universe, held, DEFAULT_TIER_POLICY, maxlev_map=_mlmap)
     if banned:
         universe = [s for s in universe if s not in banned]
         print('[scheduler] symbol-lock pre-filter: -%d held %s'

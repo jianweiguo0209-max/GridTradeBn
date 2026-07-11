@@ -88,7 +88,15 @@ class GridExecutor:
         order_num = float(gi['每笔数量'])
         entry = float(self.adapter.fetch_price(symbol))
 
-        grid = self.grids.create(Grid(
+        # 杠杆感知槽位上限(spec 2026-07-11-symbol-desk 组件四):maxlev 未知 → None=原行为
+        from gridtrade.config import DEFAULT_TIER_POLICY
+        from gridtrade.core.tier_policy import cap_for
+        try:
+            _ml = self.adapter.max_leverage(symbol)
+        except Exception:
+            _ml = None                       # fail-open:取数失败退化为无分级
+        _slots = cap_for(symbol, DEFAULT_TIER_POLICY, maxlev=_ml)
+        grid = self.grids.create(max_slots=_slots, grid=Grid(
             id='', exchange=exchange, symbol=symbol, status='PENDING', offset=offset, tag=tag,
             entry_price=entry, low_price=grid_params['low_price'], high_price=grid_params['high_price'],
             stop_low_price=grid_params['stop_low_price'], stop_high_price=grid_params['stop_high_price'],

@@ -33,3 +33,22 @@ def test_capped_symbols_matches_pick_semantics():
     out = capped_symbols(['A/USDC:USDC', 'B/USDC:USDC', 'C/USDC:USDC', 'D/USDC:USDC'],
                          held, T)
     assert out == {'A/USDC:USDC', 'C/USDC:USDC'}           # A: tier1 满 1；B: 1<2 未满；C: 满 2
+
+
+def test_lev_caps_tiers():
+    """组件四(spec 2026-07-11-symbol-desk):杠杆感知上限——maxlev≤3→1、≤5→2、
+    其余→tier2_cap;None=不启用(向后兼容);与 tier2_cap 取更严者。"""
+    from gridtrade.core.tier_policy import TierPolicy, cap_for, capped_symbols
+    tp = TierPolicy(tier2_cap=4)
+    s = 'X/USDC:USDC'
+    assert cap_for(s, tp, maxlev=3) == 1
+    assert cap_for(s, tp, maxlev=5) == 2
+    assert cap_for(s, tp, maxlev=20) == 4
+    assert cap_for(s, tp) == 4                      # None → 原行为
+    assert cap_for(s, TierPolicy(tier2_cap=1), maxlev=5) == 1   # 取更严
+    # map 注入:lev3 币持 1 格即触顶;高杠杆币持 3 格不触
+    held = {'A/USDC:USDC': 1, 'B/USDC:USDC': 3}
+    mm = {'A/USDC:USDC': 3.0, 'B/USDC:USDC': 20.0}
+    assert capped_symbols(['A/USDC:USDC', 'B/USDC:USDC'], held, tp, maxlev_map=mm) \
+        == {'A/USDC:USDC'}
+    assert capped_symbols(['A/USDC:USDC'], held, tp) == set()   # 无 map → 原行为

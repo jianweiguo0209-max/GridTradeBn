@@ -14,6 +14,10 @@ class TierPolicy:
     tier0: tuple = ()      # 硬禁：票池级剔除
     tier1: tuple = ()      # 名单币并发上限 1
     tier2_cap: int = 2     # 其余币(OTHERS)并发上限；0 = 不限
+    # 杠杆感知上限(spec 2026-07-11-symbol-desk 组件四,档位用户定):maxlev≤3 → cap 1、
+    # ≤5 → cap 2(维持率高/薄盘,压脆弱币堆叠);其余走 tier2_cap。maxlev 由调用方注入
+    # (本层禁止 import 交易所);maxlev=None 不适用(向后兼容)。
+    lev_caps: tuple = ((3, 1), (5, 2))
 
 
 def effective_blacklist(blacklist, tiers) -> tuple:
@@ -23,26 +27,41 @@ def effective_blacklist(blacklist, tiers) -> tuple:
     return tuple(dict.fromkeys(tuple(blacklist) + tuple(tiers.tier0)))
 
 
-def cap_for(symbol, tiers) -> Optional[int]:
-    """档1 名单 → 1；其余(OTHERS) → tier2_cap；tier2_cap==0 → None=不限。"""
+def cap_for(symbol, tiers, maxlev=None) -> Optional[int]:
+    """档1 名单 → 1；其余(OTHERS) → tier2_cap(0=不限);maxlev 给出时叠加杠杆感知档
+    (lev_caps,取更严者)。扫描依据(2026-07-11 levcap):spec 档保费 −1.18pp/2mo,
+    最差窗 MDD −3.35→−2.02、脆弱币堆叠 4→≤2。"""
     if symbol in tiers.tier1:
         return 1
-    return tiers.tier2_cap if tiers.tier2_cap else None
+    cap = tiers.tier2_cap if tiers.tier2_cap else None
+    if maxlev is not None:
+        for thr, c in getattr(tiers, 'lev_caps', ()) or ():
+            if maxlev <= thr:
+                cap = c if cap is None else min(cap, c)
+                break
+    return cap
 
 
-def _allowed(symbol, held_counts, tiers) -> bool:
-    cap = cap_for(symbol, tiers)
+def _allowed(symbol, held_counts, tiers, maxlev=None) -> bool:
+    cap = cap_for(symbol, tiers, maxlev=maxlev)
     return cap is None or held_counts.get(symbol, 0) < cap
 
 
-def pick_first_allowed(ranked_symbols, held_counts, tiers) -> Optional[int]:
-    """按序取第一个未触顶币的下标（=实盘方案A 与回测递补共用的唯一判定）；全触顶 → None。"""
+def pick_first_allowed(ranked_symbols, held_counts, tiers, maxlev_map=None) -> Optional[int]:
+    """按序取第一个未触顶币的下标（=实盘方案A 与回测递补共用的唯一判定）；全触顶 → None。
+    maxlev_map(可选):{symbol: maxlev},None=不启用杠杆感知(向后兼容/金标)。"""
     for i, sym in enumerate(ranked_symbols):
-        if _allowed(sym, held_counts, tiers):
+        ml = maxlev_map.get(sym) if maxlev_map else None
+        if _allowed(sym, held_counts, tiers, maxlev=ml):
             return i
     return None
 
 
-def capped_symbols(symbols, held_counts, tiers) -> set:
+def capped_symbols(symbols, held_counts, tiers, maxlev_map=None) -> set:
     """已触顶币集合（实盘选币入口剔锁用；与 pick_first_allowed 同一 cap_for 派生）。"""
-    return {s for s in symbols if not _allowed(s, held_counts, tiers)}
+    out = set()
+    for s in symbols:
+        ml = maxlev_map.get(s) if maxlev_map else None
+        if not _allowed(s, held_counts, tiers, maxlev=ml):
+            out.add(s)
+    return out

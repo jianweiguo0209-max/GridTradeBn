@@ -126,6 +126,26 @@ class CcxtAdapter(ExchangeAdapter):
     def fetch_price(self, symbol) -> float:
         return float(self.client.fetch_ticker(self.to_native(symbol))['last'])
 
+    def fetch_max_leverages(self) -> dict:
+        """{canonical: maxLeverage} 自 ccxt markets(limits.leverage.max),实例缓存;
+        经 _include_market 守卫(HL 剔 builder-dex,防同名币低杠杆覆写主 dex)。"""
+        cache = getattr(self, '_maxlev_cache', None)
+        if cache is None:
+            if not getattr(self.client, 'markets', None):
+                self.client.load_markets()
+            cache = {}
+            for m in self.client.markets.values():
+                if not m.get('swap') or not self._include_market(m):
+                    continue
+                ml = (m.get('limits', {}).get('leverage', {}) or {}).get('max')
+                if ml is None:
+                    ml = (m.get('info', {}) or {}).get('maxLeverage')
+                if ml is not None:
+                    q = self.quote_currency
+                    cache['%s/%s:%s' % (m['base'], q, q)] = float(ml)
+            self._maxlev_cache = cache
+        return cache
+
     def fetch_24h_quote_volumes(self) -> dict:
         tickers = self.client.fetch_tickers()
         out = {}

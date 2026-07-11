@@ -23,8 +23,12 @@ def compute_proposals(runtime, *, now_fn=time.time, fetch_candles=None):
     mgr = getattr(rt, 'manager', None)
     if mgr is not None:
         held = Counter(g.symbol for g in mgr.executor.grids.list_active())
+        try:
+            _mlmap = rt.adapter.fetch_max_leverages()
+        except Exception:
+            _mlmap = {}
         universe = [s for s in universe
-                    if s not in capped_symbols(universe, held, DEFAULT_TIER_POLICY)]
+                    if s not in capped_symbols(universe, held, DEFAULT_TIER_POLICY, maxlev_map=_mlmap)]
     candles = fetch(rt.adapter, universe, run_time,
                     max_candle_num=DEFAULT_STRATEGY_CONFIG['max_candle_num'])
     ctx = TriggerContext(rt.config.exchange, run_time, candles)

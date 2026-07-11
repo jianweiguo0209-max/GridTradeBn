@@ -157,6 +157,15 @@ class ExchangeAdapter(ABC):
         """'open'/'filled'/'canceled'/'unknown'。"""
         return 'unknown'
 
+    # ---- 可选：最大杠杆(杠杆感知并发上限用;spec 2026-07-11-symbol-desk 组件四)----
+    def fetch_max_leverages(self) -> dict:
+        """{canonical symbol: maxLeverage}。默认空 dict(调用方 fail-open 跳过分级)。"""
+        return {}
+
+    def max_leverage(self, symbol: str):
+        """单币 maxLeverage;None=未知(cap_for 退化为无杠杆感知)。"""
+        return self.fetch_max_leverages().get(symbol)
+
     # ---- 可选：24h 成交额（用于流动性地板；默认空=上层跳过过滤）----
     def fetch_24h_quote_volumes(self) -> dict:
         """{canonical symbol: 24h 计价币成交额}。默认空 dict（无数据 → resolve_live_universe fail-open 跳过）。"""
