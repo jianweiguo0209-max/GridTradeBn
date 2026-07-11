@@ -20,6 +20,19 @@
     <button>{{ '恢复 scheduler' if scheduler_paused else '暂停 scheduler' }}</button>
   </form>
 </section>
+{% if interventions %}
+<section class="ctl">
+  <h2>外部干预熔断: <b class="neg">{{ interventions | length }} 币暂停管理</b></h2>
+  <p>Σclaims≠交易所净仓(如前端手动平仓)→ 该币只读。确认交易所侧已人工处置后再恢复。</p>
+  {% for sym in interventions %}
+  <form method="post" action="/control/resolve-intervention"
+        onsubmit="return confirm('确认已人工核对 {{ sym }} 交易所仓位/挂单,恢复系统管理?')">
+    <input type="hidden" name="symbol" value="{{ sym }}">
+    <button class="danger">恢复 {{ sym }}</button>
+  </form>
+  {% endfor %}
+</section>
+{% endif %}
 <h2>Command queue</h2>
 <table><thead><tr><th>type</th><th>status</th><th>by</th><th>result</th></tr></thead><tbody>
 {% for c in commands %}<tr><td>{{ c.type }}</td><td>{{ c.status }}</td><td>{{ c.created_by }}</td><td>{{ c.result or '' }}</td></tr>{% endfor %}

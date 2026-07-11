@@ -59,3 +59,24 @@ def test_detail_close_button_hidden_for_closed_grid(store):
     assert r.status_code == 200
     assert '/control/close' not in r.text
     assert '关' not in r.text or 'confirm' not in r.text
+
+def test_intervention_shown_and_resolve_enqueues_command(store):
+    """外部干预熔断(spec 2026-07-12 组件三):controls 页显示熔断币+恢复按钮;
+    按钮 POST → RESOLVE_INTERVENTION 入指令队列(monitor 消费落旗,web 零直改)。"""
+    from gridtrade.runtime.commands import INTERVENTION_PREFIX
+    ControlFlagRepository(store).set(INTERVENTION_PREFIX + 'VVV/USDC:USDC', True,
+                                     actor='monitor')
+    c = _client(store)
+    r = c.get('/controls')
+    assert r.status_code == 200 and 'VVV/USDC:USDC' in r.text
+    assert '/control/resolve-intervention' in r.text
+    r2 = c.post('/control/resolve-intervention', data={'symbol': 'VVV/USDC:USDC'})
+    assert r2.status_code in (200, 302)
+    cmds = CommandRepository(store).list_recent()
+    assert any(x.type == 'RESOLVE_INTERVENTION' and 'VVV' in (x.payload or '')
+               for x in cmds)
+
+
+def test_no_intervention_no_section(store):
+    r = _client(store).get('/controls')
+    assert '外部干预熔断' not in r.text

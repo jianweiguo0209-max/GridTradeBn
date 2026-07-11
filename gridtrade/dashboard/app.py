@@ -159,13 +159,30 @@ def create_app(store, adapter, *, username: str, password_hash: str,
         return templates.TemplateResponse(request, 'open.html',
                                           {'symbol': symbol, 'prefill': prefill})
 
+    @app.post('/control/resolve-intervention')
+    def control_resolve_intervention(request: Request, symbol: str = Form(...)):
+        # 外部干预熔断恢复按钮(spec 2026-07-12 组件三,resolve 形态=用户定):
+        # 走指令队列(monitor 落旗),与 CLOSE/OPEN 同一写路径,web 保持零直改执行面。
+        u = _user(request)
+        if not u:
+            return RedirectResponse('/login', status_code=302)
+        cmd = commands.enqueue('RESOLVE_INTERVENTION',
+                               json.dumps({'symbol': symbol}), created_by=u)
+        audit.add(u, 'CMD_SUBMIT', cmd.id,
+                  detail=json.dumps({'type': 'RESOLVE_INTERVENTION', 'symbol': symbol}))
+        return RedirectResponse('/controls', status_code=302)
+
     @app.get('/controls', response_class=HTMLResponse)
     def controls_page(request: Request):
         if not _user(request):
             return RedirectResponse('/login', status_code=302)
+        from gridtrade.runtime.commands import INTERVENTION_PREFIX
+        braked = sorted(n[len(INTERVENTION_PREFIX):]
+                        for n in flags.list_true(INTERVENTION_PREFIX))
         return templates.TemplateResponse(request, 'controls.html', {
             'halted': flags.get('trading_halted'),
             'scheduler_paused': flags.get('scheduler_paused'),
+            'interventions': braked,
             'commands': commands.list_recent(), 'audit': audit.list_recent()})
 
     @app.get('/universe', response_class=HTMLResponse)
