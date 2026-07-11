@@ -49,7 +49,7 @@ def test_day_1m_all_valid_detects_bad_and_good():
 def test_warm_refetches_bad_cell(monkeypatch, tmp_path):
     c = _StubCache({('1h', SYM, DAY): _h([4.0] * 24),
                     ('1m', SYM, DAY): _h([4.0] * 24).iloc[:0].copy()})   # 坏：1m 空
-    monkeypatch.setattr(RV, '_s3_cp', lambda day, dest, log=print: (open(dest, 'w').close() or True))
+    monkeypatch.setattr(RV, '_s3_cp', lambda day, dest, **kw: (open(dest, 'w').close() or True))
     monkeypatch.setattr(RV.pd, 'read_parquet', lambda p: pd.DataFrame({'coin': ['BTC']}))
     monkeypatch.setattr(RV, 'candles_1s_resample',
                         lambda raw, smap, rule: {SYM: _good_1m()} if rule == '1min'
@@ -64,7 +64,7 @@ def test_warm_refetches_bad_cell(monkeypatch, tmp_path):
 def test_warm_skips_valid_cell(monkeypatch, tmp_path):
     c = _StubCache({('1h', SYM, DAY): _h([4.0] * 24), ('1m', SYM, DAY): _good_1m()})
     called = {'s3': 0}
-    monkeypatch.setattr(RV, '_s3_cp', lambda day, dest, log=print: called.__setitem__('s3', called['s3'] + 1) or True)
+    monkeypatch.setattr(RV, '_s3_cp', lambda day, dest, **kw: called.__setitem__('s3', called['s3'] + 1) or True)
     start = int(pd.Timestamp(DAY).value // 1_000_000)
     end = start + 86_400_000 - 1
     stat = RV.warm_reservoir_ohlcv(c, [SYM], start, end, workdir=str(tmp_path))

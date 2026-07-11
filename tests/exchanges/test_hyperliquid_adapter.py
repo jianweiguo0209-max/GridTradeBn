@@ -58,3 +58,52 @@ def test_list_instruments_excludes_builder_dex_assets():
     a = HyperliquidAdapter(_C())
     syms = [i.symbol for i in a.list_instruments()]
     assert syms == ['BTC/USDC:USDC']
+
+
+def _mixed_markets():
+    return {
+        'BTC/USDC:USDC': {'swap': True, 'precision': {'price': 0.1, 'amount': 0.001},
+                          'limits': {'amount': {'min': 0.001}}, 'active': True,
+                          'settle': 'USDC', 'info': {}},
+        'HYNA-BTC/USDE:USDE': {'swap': True, 'precision': {}, 'limits': {}, 'active': True,
+                               'settle': 'USDE', 'info': {'dex': 'hyna', 'hip3': True}},
+        'XYZ-TSLA/USDC:USDC': {'swap': True, 'precision': {}, 'limits': {}, 'active': True,
+                               'settle': 'USDC', 'info': {'dex': 'xyz'}},
+        'MKTS-US500/USDC:USDC': {'swap': True, 'precision': {}, 'limits': {}, 'active': True,
+                                 'settle': 'USDC', 'info': {'dex': 'mkts'}},
+    }
+
+
+def test_builder_dex_whitelist_allows_usdc_dex_only():
+    """spec 2026-07-12-builder-dex 阶段1：builder_dexes 白名单放行 USDC 结算的 builder 资产；
+    ①默认空=整类剔除（现状零变化）②白名单内 USDC dex 放行③非 USDC dex 即使在白名单也剔
+    ④白名单外 USDC dex 仍剔。"""
+    from gridtrade.exchanges.hyperliquid import HyperliquidAdapter
+
+    class _C:
+        markets = _mixed_markets()
+        def load_markets(self):
+            return self.markets
+
+    a = HyperliquidAdapter(_C())
+    assert [i.symbol for i in a.list_instruments()] == ['BTC/USDC:USDC']   # ① 默认现状
+
+    a.builder_dexes = ('xyz', 'hyna')
+    syms = [i.symbol for i in a.list_instruments()]
+    assert 'XYZ-TSLA/USDC:USDC' in syms                                    # ② USDC dex 放行
+    assert 'HYNA-BTC/USDE:USDE' not in syms                                # ③ USDE 硬剔
+    assert 'MKTS-US500/USDC:USDC' not in syms                              # ④ 白名单外仍剔
+    assert 'BTC/USDC:USDC' in syms                                         # 主 dex 恒在
+
+
+def test_bt_builder_dexes_env_plumb(monkeypatch, tmp_path):
+    """BT_BUILDER_DEXES 只作用于回测数据源适配器；默认空=不设属性（现状）。"""
+    from gridtrade.backtest.backtest_run import _hl_datasource_1h
+    from gridtrade.backtest.cache import ParquetCache
+    cache = ParquetCache(str(tmp_path))
+    monkeypatch.delenv('BT_BUILDER_DEXES', raising=False)
+    ad, _ = _hl_datasource_1h(cache)
+    assert ad.builder_dexes == ()
+    monkeypatch.setenv('BT_BUILDER_DEXES', 'xyz, mkts')
+    ad2, _ = _hl_datasource_1h(cache)
+    assert ad2.builder_dexes == ('xyz', 'mkts')

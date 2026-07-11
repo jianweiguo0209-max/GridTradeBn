@@ -18,7 +18,8 @@ import pandas as pd
 from gridtrade.exchanges.base import CANDLE_COLS
 
 S3_BUCKET = 's3://hydromancer-reservoir'
-S3_KEY_FMT = 'by_dex/hyperliquid/candles/1s/date=%s/candles.parquet'
+MAIN_DEX = 'hyperliquid'
+S3_KEY_FMT = 'by_dex/%s/candles/1s/date=%s/candles.parquet'   # % (dex, day)
 NAMESPACE = '1m'
 _RULES = {'1m': '1min', '1h': '1H'}   # cache 命名空间 → pandas resample 规则
 
@@ -98,13 +99,34 @@ def validate_1m_cell(m_df, h_df, *, range_tol=0.05):
     return True, 'ok'
 
 
-def _s3_cp(day, dest, *, log=print):
+def reservoir_coin(symbol, dex=None):
+    """canonical → Reservoir coin 名。主 dex 'BTC/USDC:USDC'→'BTC'；
+    builder（如 dex='xyz'）'XYZ-TSLA/USDC:USDC'→'xyz:TSLA'（档案实测命名，
+    2026-07-12 探针：by_dex/xyz 文件 coin 列 = 'xyz:XYZ100' 等）。"""
+    base = symbol.split('/')[0]
+    if not dex or dex == MAIN_DEX:
+        return base
+    pre = dex.upper() + '-'
+    return '%s:%s' % (dex, base[len(pre):] if base.startswith(pre) else base)
+
+
+def _dex_groups(universe, dex_map):
+    """{dex: {reservoir_coin: canonical}}。dex_map: {canonical: dex}（builder 币才需要，
+    缺省=主 dex）。哨兵语义按组独立：某 dex 日文件失败只影响该组（根治跨 dex 假哨兵）。"""
+    groups = {}
+    for s in universe:
+        d = (dex_map or {}).get(s) or MAIN_DEX
+        groups.setdefault(d, {})[reservoir_coin(s, None if d == MAIN_DEX else d)] = s
+    return groups
+
+
+def _s3_cp(day, dest, *, dex=MAIN_DEX, log=print):
     """aws s3 cp（requester-pays）。返回 True=成功；文件不存在/失败=False。"""
-    src = '%s/%s' % (S3_BUCKET, S3_KEY_FMT % day)
+    src = '%s/%s' % (S3_BUCKET, S3_KEY_FMT % (dex, day))
     r = subprocess.run(['aws', 's3', 'cp', src, dest, '--request-payer', 'requester'],
                        capture_output=True, text=True)
     if r.returncode != 0:
-        log('[reservoir] %s 跳过：%s' % (day, (r.stderr or '').strip().splitlines()[-1:]))
+        log('[reservoir] %s(%s) 跳过：%s' % (day, dex, (r.stderr or '').strip().splitlines()[-1:]))
         return False
     return True
 
@@ -120,13 +142,17 @@ def _day_1m_all_valid(cache, universe, day):
 
 
 def warm_reservoir_ohlcv(cache, universe, start_ms, end_ms, *, timeframes=('1h', '1m'),
-                         workdir=None, log=print):
+                         workdir=None, log=print, dex_map=None):
     """把 [start,end] 每个 UTC 天的 1s 拉下→按 timeframes 重采样→写各命名空间（一次下载多周期同写）。
 
     幂等：**所有** timeframe 的整天全命中才跳过；只差其一也重下 day 文件补齐（覆盖写同值无害）。
     只缓存**完整**的天：当天(UTC)未过完、或该天在 S3 尚未发布/拉取报错 → 不写任何文件（含空哨兵），
-    计入 retry_later，下次重取。只有「日文件已成功下载、但某币当天确无成交」才落该币空哨兵（真空）。"""
-    symbol_map = {s.split('/')[0]: s for s in universe}
+    计入 retry_later，下次重取。只有「日文件已成功下载、但某币当天确无成交」才落该币空哨兵（真空）。
+
+    dex_map（可选，spec 2026-07-12-builder-dex）：{canonical_symbol: dex 名}——builder 币按
+    by_dex/{dex}/ 独立日文件下载（coin 命名 'xyz:TSLA'），哨兵/失败按组隔离；None=全主 dex，
+    路径与行为逐字节不变。"""
+    groups = _dex_groups(universe, dex_map)             # {dex: {coin: canonical}}
     now_ms = int(pd.Timestamp.utcnow().value // 1_000_000)
     days = _days(start_ms, end_ms)
     tmpdir = workdir or tempfile.mkdtemp(prefix='reservoir_')
@@ -140,37 +166,50 @@ def warm_reservoir_ohlcv(cache, universe, start_ms, end_ms, *, timeframes=('1h',
         if day_end_ms > now_ms:
             stat['retry_later'] += 1
             continue
-        if (all(cache.exists(tf, s, day) for tf in timeframes for s in universe)
-                and _day_1m_all_valid(cache, universe, day)):   # 自愈：坏 1m 不跳过、重下
+        # 组粒度幂等：某 dex 组全命中即跳过该组（哨兵/失败互不串组——根治跨 dex 假哨兵）
+        pending = {}
+        for dex, cmap in groups.items():
+            syms = list(cmap.values())
+            if (all(cache.exists(tf, s, day) for tf in timeframes for s in syms)
+                    and _day_1m_all_valid(cache, syms, day)):   # 自愈：坏 1m 不跳过、重下
+                continue
+            pending[dex] = cmap
+        if not pending:
             stat['skipped_cached'] += 1
             continue
-        dest = os.path.join(tmpdir, '%s.parquet' % day)
-        if not _s3_cp(day, dest, log=log):
-            # 拉取失败(404 未发布 / 接口报错) → 不写任何文件，跳过，下次重取
-            stat['retry_later'] += 1
-            continue
-        raw = pd.read_parquet(dest)
-        os.remove(dest)
-        for tf in timeframes:
-            per_sym = candles_1s_resample(raw, symbol_map, _RULES[tf])
-            for s in universe:
-                df = per_sym.get(s)
-                if df is None or df.empty:
-                    cache.write_empty(tf, s, day, CANDLE_COLS)  # 日文件已下、该币确无成交 → 真空哨兵
-                else:
-                    cache.write(tf, s, day, df)
-                    stat[tf]['rows'] += int(len(df))
-            stat[tf]['days'] += 1
+        wrote_any = False
+        for dex in sorted(pending):
+            cmap = pending[dex]
+            dest = os.path.join(tmpdir, '%s_%s.parquet' % (dex, day))
+            if not _s3_cp(day, dest, dex=dex, log=log):
+                # 该 dex 拉取失败(404 未发布 / dex 上线前) → 该组不写任何文件，下次重取
+                stat['retry_later'] += 1
+                continue
+            raw = pd.read_parquet(dest)
+            os.remove(dest)
+            for tf in timeframes:
+                per_sym = candles_1s_resample(raw, cmap, _RULES[tf])
+                for s in cmap.values():
+                    df = per_sym.get(s)
+                    if df is None or df.empty:
+                        cache.write_empty(tf, s, day, CANDLE_COLS)  # 该组文件已下、该币当天确无成交
+                    else:
+                        cache.write(tf, s, day, df)
+                        stat[tf]['rows'] += int(len(df))
+            wrote_any = True
+        if wrote_any:
+            for tf in timeframes:
+                stat[tf]['days'] += 1
         done = stat[timeframes[0]]['days']
-        if done % 10 == 0:
+        if done and done % 10 == 0:
             log('[reservoir] %d days done (%s)' % (
                 done, ', '.join('%s rows=%d' % (tf, stat[tf]['rows']) for tf in timeframes)))
     return stat
 
 
-def warm_reservoir_1m(cache, universe, start_ms, end_ms, *, workdir=None, log=print):
+def warm_reservoir_1m(cache, universe, start_ms, end_ms, *, workdir=None, log=print, dex_map=None):
     """向后兼容薄包装：只做 1m，返回旧格式 {'days','rows','skipped_cached','retry_later'}。"""
     st = warm_reservoir_ohlcv(cache, universe, start_ms, end_ms,
-                              timeframes=('1m',), workdir=workdir, log=log)
+                              timeframes=('1m',), workdir=workdir, log=log, dex_map=dex_map)
     return {'days': st['1m']['days'], 'rows': st['1m']['rows'],
             'skipped_cached': st['skipped_cached'], 'retry_later': st['retry_later']}

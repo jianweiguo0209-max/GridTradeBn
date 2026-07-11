@@ -69,7 +69,7 @@ def _ms(day):
 def test_warm_no_file_on_fetch_failure(tmp_path, monkeypatch):
     """拉取失败(404/报错) → 不写任何文件（含空哨兵），计 retry_later，下次可重取。"""
     cache = ParquetCache(str(tmp_path))
-    monkeypatch.setattr(R, '_s3_cp', lambda day, dest, log=print: False)   # 模拟失败
+    monkeypatch.setattr(R, '_s3_cp', lambda day, dest, **kw: False)   # 模拟失败
     stat = warm_reservoir_1m(cache, UNI, _ms(_PAST_DAY), _ms(_PAST_DAY) + _DAY_MS - 1)
     assert stat['rows'] == 0 and stat['days'] == 0 and stat['retry_later'] >= 1
     for s in UNI:                                     # 关键：没有落任何缓存文件
@@ -80,7 +80,7 @@ def test_warm_current_day_not_cached(tmp_path, monkeypatch):
     """当天(UTC)未过完 → 跳过、不缓存、不触网。"""
     cache = ParquetCache(str(tmp_path))
     calls = []
-    monkeypatch.setattr(R, '_s3_cp', lambda day, dest, log=print: calls.append(day) or False)
+    monkeypatch.setattr(R, '_s3_cp', lambda day, dest, **kw: calls.append(day) or False)
     today = pd.Timestamp.utcnow().strftime('%Y-%m-%d')
     end_ms = int(pd.Timestamp.utcnow().value // 1_000_000)
     stat = warm_reservoir_1m(cache, UNI, _ms(today), end_ms)
@@ -94,7 +94,7 @@ def test_warm_success_writes_and_reuses(tmp_path, monkeypatch):
     """成功拉取 → 写真数据；再跑一次整天命中 → 复用零下载。"""
     cache = ParquetCache(str(tmp_path))
 
-    def fake_cp(day, dest, log=print):
+    def fake_cp(day, dest, **kw):
         raw = pd.concat([_raw_1s('BTC', day + ' 00:00:00', 120, base=100.0),
                          _raw_1s('ETH', day + ' 00:00:00', 120, base=50.0)], ignore_index=True)
         raw.to_parquet(dest, index=False)
@@ -107,7 +107,7 @@ def test_warm_success_writes_and_reuses(tmp_path, monkeypatch):
         assert cache.exists(NAMESPACE, s, _PAST_DAY)
 
     calls = []
-    monkeypatch.setattr(R, '_s3_cp', lambda day, dest, log=print: calls.append(day) or True)
+    monkeypatch.setattr(R, '_s3_cp', lambda day, dest, **kw: calls.append(day) or True)
     stat2 = warm_reservoir_1m(cache, UNI, _ms(_PAST_DAY), _ms(_PAST_DAY) + _DAY_MS - 1)
     assert stat2['skipped_cached'] == 1 and stat2['days'] == 0 and calls == []
 
@@ -148,7 +148,7 @@ def test_1h_equals_1m_reaggregated():
                                    err_msg='%s 口径漂移' % col)
 
 
-def _fake_cp_2coins(day, dest, log=print):
+def _fake_cp_2coins(day, dest, **kw):
     """两币 × 7200 秒（2 根 1h / 120 根 1m 不足——用 7200s 产 2 根 1h、120 根 1m）。"""
     raw = pd.concat([_raw_1s('BTC', day + ' 00:00:00', 7200, base=100.0),
                      _raw_1s('ETH', day + ' 00:00:00', 7200, base=50.0)], ignore_index=True)
@@ -176,9 +176,9 @@ def test_warm_ohlcv_idempotent_and_partial_refill(tmp_path, monkeypatch):
     R.warm_reservoir_ohlcv(cache, UNI, _ms(_PAST_DAY), _ms(_PAST_DAY) + _DAY_MS - 1)
 
     calls = []
-    def _counting_cp(day, dest, log=print):
+    def _counting_cp(day, dest, **kw):
         calls.append(day)
-        return _fake_cp_2coins(day, dest, log=log)
+        return _fake_cp_2coins(day, dest)
     monkeypatch.setattr(R, '_s3_cp', _counting_cp)
     # 全命中 → skip、零下载
     st2 = R.warm_reservoir_ohlcv(cache, UNI, _ms(_PAST_DAY), _ms(_PAST_DAY) + _DAY_MS - 1)

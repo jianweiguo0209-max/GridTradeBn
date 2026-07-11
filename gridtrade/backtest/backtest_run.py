@@ -408,6 +408,11 @@ def _hl_datasource_1h(cache):
             return self._retry(super().fetch_funding_history, symbol, start_ms, end_ms)
 
     adapter = _RetryHL(ccxt.hyperliquid({'enableRateLimit': True, 'timeout': 30000}))
+    # builder-dex 白名单（spec 2026-07-12 阶段1，仅回测层）：BT_BUILDER_DEXES=xyz,mkts…
+    # 放行进候选票池（适配器仍强制 结算币==USDC）；默认空=现状零变化，live factory 不读此键。
+    bd = os.environ.get('BT_BUILDER_DEXES', '')
+    if bd.strip():
+        adapter.builder_dexes = tuple(x.strip() for x in bd.split(',') if x.strip())
     return adapter, DataSource(adapter, cache, timeframe='1h')
 
 

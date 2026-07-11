@@ -11,12 +11,21 @@ class HyperliquidAdapter(CcxtAdapter):
     def __init__(self, client):
         super().__init__(client, name='hyperliquid')
 
+    # builder-dex 白名单（spec 2026-07-12-builder-dex 阶段1）：默认空=整类剔除（现状，
+    # 事故史见 memory builder-dex-backtest-blindspot）；回测层经 BT_BUILDER_DEXES 注入
+    # （backtest_run._hl_datasource_1h），live 侧阶段2 才接 env——默认值不动即 live 零变化。
+    builder_dexes: tuple = ()
+
     def _include_market(self, m) -> bool:
-        """剔除 builder-dex(HIP-3)资产:回测不可复现(Reservoir 归档无 builder 数据、
-        assemble 静默丢格)+ 部分 dex 非 USDC 保证金(hyna=USDE)+ allMids/signals 盲窗事故史
-        (memory builder-dex-backtest-blindspot)。判据=市场 info.dex 非空(主 dex 为 None)。
-        只影响 universe 候选;已持有的 builder 格监控/平仓路径不受影响。"""
-        return not (m.get('info') or {}).get('dex')
+        """universe 候选过滤：主 dex 恒放行；builder-dex(HIP-3)仅当 ①dex 在白名单
+        ②结算币==本适配器 quote_currency(USDC) 时放行——非 USDC 保证金 dex(hyna=USDE、
+        km/flx/vntl=USDH、cash=USDT0)无条件剔除：canonical 符号由 quote_currency 派生，
+        放进来会伪装成 USDC 记账。只影响 universe 候选;已持有的 builder 格监控/平仓
+        路径不受影响。"""
+        dex = (m.get('info') or {}).get('dex')
+        if not dex:
+            return True
+        return dex in self.builder_dexes and m.get('settle') == self.quote_currency
 
     # 规范符号如实反映结算币：HL 恒 USDC -> 'BTC/USDC:USDC'（由 self.quote_currency 派生，
     # 单一事实源）。None 原样返回：HL createOrder 响应不带 symbol，ccxt 解析出 None，
