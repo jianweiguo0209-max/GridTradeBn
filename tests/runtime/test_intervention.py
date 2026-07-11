@@ -156,3 +156,30 @@ def test_fuse_futile_guard_stops_after_two_rounds(store):
     assert r3['futile'] and r4['futile']
     assert r3['replaced'] == 0 and r4['replaced'] == 0
     assert placed['n'] == n_before          # 停手后零新挂
+
+
+def test_drift_tolerance_capped_for_large_lot_full_flatten(store):
+    """mainnet TIA 实测盲区:lot 187×2 格 → 容差 561 盖过整格仓位 374,外部全平
+    永不熔断。修后:持仓 ≥2 lot 时容差封顶 0.6×|模型净仓| → 必触发。"""
+    ex, gx, mgr, flags, gid = _open_with_position(store, size=8.0)   # 2.1×lot(3.78)
+    rec = Reconciler(gx)
+    d0 = rec.check_position_drift(gid, BTC)
+    assert d0['ok']                                    # 未干预:模型=交易所,自然 ok
+    _flatten_externally(ex)
+    d = rec.check_position_drift(gid, BTC)
+    # 旧公式 tol=1.5×3.78=5.67 < 8 本就触发;关键断言=封顶后 tol ≤ 0.6×|model|
+    assert d['tol'] <= 0.6 * 8.0 + 1e-9
+    assert not d['ok']
+    run_monitor_cycle(rec, mgr, log=lambda *a: None, flags=flags)
+    run_monitor_cycle(rec, mgr, log=lambda *a: None, flags=flags)
+    assert flags.get(INTERVENTION_PREFIX + BTC)
+
+
+def test_drift_tolerance_cap_not_applied_below_two_lots(store):
+    """<2 lot(dust/单 lot 噪声区)不启用上限:模型 1 lot、交易所被平,drift=1 lot
+    < 1.5 lot 容差 → 不触发(已知有界盲区,由丝守卫兜底)。"""
+    ex, gx, mgr, flags, gid = _open_with_position(store, size=3.5)   # <2×lot(3.78)
+    rec = Reconciler(gx)
+    _flatten_externally(ex)
+    d = rec.check_position_drift(gid, BTC)
+    assert d['ok']                                     # 容差未封顶,盲区如文档

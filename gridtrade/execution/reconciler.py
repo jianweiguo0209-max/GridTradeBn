@@ -166,6 +166,13 @@ class Reconciler:
             real = float(ex.adapter.fetch_positions(symbol).net_size)
         drift = model - real
         tol = tol_lots * order_num
+        # 容差上限(spec 2026-07-12 组件三补,mainnet TIA 实测盲区):大 lot 币
+        # 1.5×lot×n_sib 可能盖过整格仓位(TIA 374 < 561)→ 整格被外部平掉永不触发
+        # 干预熔断。持仓 ≥2 单格 lot 时容差封顶到 |模型净仓| 的六成(用户定);
+        # <2 lot(dust/单 lot 噪声区)不动,该区间外部干预由丝守卫/对账日志兜底。
+        base_lot = order_num / max(1, n_sib)
+        if base_lot > 0 and abs(model) >= 2.0 * base_lot:
+            tol = min(tol, 0.6 * abs(model))
         return {'grid_id': grid_id, 'model': model, 'exchange': real,
                 'drift': drift, 'tol': tol, 'ok': abs(drift) <= tol}
 
