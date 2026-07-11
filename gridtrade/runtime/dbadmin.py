@@ -75,6 +75,75 @@ def add_grid_orders_filled(store) -> str:
     return 'added'
 
 
+def verify_ledger(store, adapter=None, log=print) -> dict:
+    """组件三(spec 2026-07-11-symbol-desk):合成行守恒审计,只读幂等。
+    ①转仓对按共享 eid 配对:恰 2 行/带符号量和≈0/同价(masking 唯一来源=合成行写错,
+      配对守恒使其必留痕);②`ledger:reduce` 单边行按设计跳过;③旧 5 段格式计 legacy;
+    ④每活跃格重放净仓(Σ signed fills) vs accounting 快照(容差 1.5×order_num,同
+      drift-check 口径——审计与告警一个标尺);⑤adapter 给出时:per-symbol Σclaims vs
+      交易所净仓。巡查定期跑:`python -m gridtrade.runtime.dbadmin verify-ledger`。"""
+    from collections import defaultdict
+    from gridtrade.state.grids import GridRepository
+    from gridtrade.state.accounting import AccountingRepository
+    from gridtrade.state.models import grid_fills
+    rep = {'scanned': 0, 'pairs_ok': 0, 'pairs_bad': 0, 'legacy': 0,
+           'replay_bad': 0, 'symbol_drift': 0}
+    with store.engine.connect() as c:
+        rows = c.execute(sa.select(grid_fills)).all()
+    by_eid = defaultdict(list)
+    for r in rows:
+        m = r._mapping
+        tid = m['trade_id']
+        if not tid.startswith('ledger:'):
+            continue
+        rep['scanned'] += 1
+        parts = tid.split(':')
+        if len(parts) != 4 or '-' not in parts[3]:
+            rep['legacy'] += 1               # 升级前旧格式(ts:seq 5 段):只读兼容,不配对
+            continue
+        event, eid = parts[1], parts[3]
+        if event == 'reduce':
+            continue                         # 单边 by design(有真实 reduce 市价单对应)
+        by_eid[(event, eid)].append(m)
+    for key, pair in sorted(by_eid.items()):
+        signed = sum((1 if p['side'] == 'buy' else -1) * p['size'] for p in pair)
+        prices = {p['price'] for p in pair}
+        if len(pair) == 2 and abs(signed) < 1e-9 and len(prices) == 1:
+            rep['pairs_ok'] += 1
+        else:
+            rep['pairs_bad'] += 1
+            log('[verify-ledger] BAD pair %s: rows=%d signed=%.3g prices=%s'
+                % (key, len(pair), signed, sorted(prices)))
+    gr, ar = GridRepository(store), AccountingRepository(store)
+    fills_by_grid = defaultdict(float)
+    for r in rows:
+        m = r._mapping
+        fills_by_grid[m['grid_id']] += (1 if m['side'] == 'buy' else -1) * m['size']
+    claims = {}
+    for g in gr.list_active():
+        acc = ar.get(g.id)
+        if acc is None:
+            continue
+        replay = fills_by_grid.get(g.id, 0.0)
+        claims.setdefault((g.exchange, g.symbol), 0.0)
+        claims[(g.exchange, g.symbol)] += replay
+        tol = 1.5 * float(g.order_num or 0.0) + 1e-9
+        if abs(replay - float(acc.net_position or 0.0)) > tol:
+            rep['replay_bad'] += 1
+            log('[verify-ledger] REPLAY mismatch grid=%s %s replay=%.6g acc=%.6g tol=%.3g'
+                % (g.id, g.symbol, replay, acc.net_position, tol))
+    if adapter is not None:
+        for (exch, sym), total in sorted(claims.items()):
+            real = float(adapter.fetch_positions(sym).net_size)
+            if abs(total - real) > 1e-6:
+                rep['symbol_drift'] += 1
+                log('[verify-ledger] SYMBOL drift %s claims=%.6g exchange=%.6g'
+                    % (sym, total, real))
+    log('[verify-ledger] scanned=%(scanned)d pairs_ok=%(pairs_ok)d pairs_bad=%(pairs_bad)d '
+        'legacy=%(legacy)d replay_bad=%(replay_bad)d symbol_drift=%(symbol_drift)d' % rep)
+    return rep
+
+
 def migrate(store) -> list:
     """跑所有增量迁移（幂等）。返回每步结果。"""
     return [('add_grid_fills_fee', add_grid_fills_fee(store)),
@@ -129,6 +198,18 @@ def run(action, *, store_factory=None):
                             '..', '..', 'data', 'hl_validate')
         return validate_1m_cache(ParquetCache(root), dry_run='--dry-run' in sys.argv)
     store = store_factory() if store_factory else _store()
+    if action == 'verify-ledger':
+        adapter = None
+        if '--exchange' in sys.argv:
+            from gridtrade.config import load_deploy_config
+            from gridtrade.exchanges.registry import build_adapter
+            cfg = load_deploy_config()
+            adapter = build_adapter({'exchange': cfg.exchange,
+                                     'wallet_address': cfg.wallet_address,
+                                     'private_key': cfg.private_key,
+                                     'testnet': cfg.testnet,
+                                     'quote_currency': cfg.quote_currency})
+        return verify_ledger(store, adapter=adapter)
     if action == 'reset':
         store.drop_all()
         store.create_all()
@@ -139,7 +220,7 @@ def run(action, *, store_factory=None):
     if action == 'migrate':
         return migrate(store)
     raise SystemExit('usage: python -m gridtrade.runtime.dbadmin '
-                     '[create|reset|migrate|validate-1m [--dry-run]]')
+                     '[create|reset|migrate|verify-ledger [--exchange]|validate-1m [--dry-run]]')
 
 
 def main():
