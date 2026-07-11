@@ -15,7 +15,7 @@ from gridtrade.core.selection import compute_offset
 from gridtrade.core.tier_policy import capped_symbols
 from gridtrade.execution.triggers import TriggerContext
 from gridtrade.runtime.shock import cross_median_k
-from gridtrade.runtime.cycles import run_scheduler_cycle
+from gridtrade.runtime.cycles import braked_symbols, run_scheduler_cycle
 from gridtrade.runtime.factory import build_runtime
 from gridtrade.runtime.introspect import adapter_endpoint
 from gridtrade.runtime.universe import resolve_live_universe
@@ -78,6 +78,11 @@ def run_scheduler_once(runtime, *, now_fn=time.time,
     # （testnet SOL×2/HYPE 实证）。本轮换仓 tag 自己持有的币即将被 close_tag 释放
     # → 不计 held（允许连任，状态供给侧口径）。竞态守卫=GridRepository 槽位 UNIQUE
     # （SlotExhausted 由 open_proposals 逐提议捕获，SymbolLockGate 已删）。
+    braked = braked_symbols(flags)            # 外部干预熔断币(spec 2026-07-12 组件三)
+    if braked:
+        universe = [s for s in universe if s not in braked]
+        print('[intervention] scheduler pre-filter: -%d braked %s'
+              % (len(braked), sorted(braked)), flush=True)
     held = Counter(g.symbol for g in rt.manager.executor.grids.list_active()
                    if g.tag != tag)
     try:
@@ -116,7 +121,8 @@ def run_scheduler_once(runtime, *, now_fn=time.time,
                 print('[shock] braked until %s(信号已回落,窗口内继续暂停)' % until, flush=True)
     ctx = TriggerContext(rt.config.exchange, run_time, candles)
     result = run_scheduler_cycle(rt.manager, rt.trigger_engine, rt.reconciler,
-                                 ctx, close_tag=tag, open_enabled=open_enabled)
+                                 ctx, close_tag=tag, open_enabled=open_enabled,
+                                 braked_symbols=frozenset(braked))
     rt.heartbeats.beat('scheduler')
     return result
 

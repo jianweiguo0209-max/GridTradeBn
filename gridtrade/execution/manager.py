@@ -74,12 +74,15 @@ class GridManager:
             results.append({'grid_id': grid.id, **res})
         return results
 
-    def close_by_tag(self, tag: str, reason: str) -> List[str]:
+    def close_by_tag(self, tag: str, reason: str,
+                     exclude_symbols=frozenset()) -> List[str]:
         # 按币分组走 close_set(spec 2026-07-11-symbol-desk):同 tag 同币多格(罕见)
-        # 净额化一次出清;单格集合退化 ≡ 旧逐格路径。
+        # 净额化一次出清;单格集合退化 ≡ 旧逐格路径。exclude_symbols=外部干预熔断币
+        # (spec 2026-07-12 组件三):关格是交易所写入,熔断中不动、留 ACTIVE 待 resolve。
         closed: List[str] = []
         active = [g for g in self.executor.grids.list_active()
-                  if g.status == ACTIVE and g.tag == tag]
+                  if g.status == ACTIVE and g.tag == tag
+                  and g.symbol not in exclude_symbols]
         by_sym = {}
         for g in active:
             by_sym.setdefault(g.symbol, []).append(g)

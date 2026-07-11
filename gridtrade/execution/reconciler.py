@@ -197,7 +197,10 @@ class Reconciler:
         166 张实证）。orderStatus 不可用(unknown)时退回 fills 直查后备。"""
         ex = self.ex
         if not ex.stop_orders_enabled:
-            return {'replaced': 0, 'fired': False}
+            return {'replaced': 0, 'fired': False, 'futile': False}
+        streaks = getattr(self, '_fuse_replace_streak', None)
+        if streaks is None:
+            streaks = self._fuse_replace_streak = {}
         g = ex.grids.get(grid_id)
         src = (snapshot.orders_for(symbol) if snapshot is not None
                else ex.adapter.fetch_open_orders(symbol))
@@ -205,6 +208,7 @@ class Reconciler:
         specs = [('low', 'sell', g.stop_low_price, g.fuse_low_oid),
                  ('high', 'buy', g.stop_high_price, g.fuse_high_oid)]
         replaced = 0
+        futile = False
         for key, side, trigger, oid in specs:
             if oid is not None and oid in on_exchange:
                 continue                                   # 在挂
@@ -220,6 +224,12 @@ class Reconciler:
                 ex.ledger.ingest_fuse_fills(grid_id, symbol, oid)
                 ex.close(grid_id, symbol, '保险丝触发')   # 已触发 -> 撑网全拆
                 return {'replaced': replaced, 'fired': True}
+            # 重挂即消守卫(spec 2026-07-12 组件三):连续 ≥2 轮"挂了下轮又不在"=交易所
+            # 在系统性拒收(如手动平仓后 HL 自动撤无仓位 reduce-only 丝,2026-07-11 churn
+            # 17 秒复现实证)→ 停止重挂、只告警,防孤儿触发单/order 洪峰无限累积。
+            if streaks.get(grid_id, 0) >= 2:
+                futile = True
+                continue
             # 被丢/已撤（或迁移空 oid）-> 先撤旧（容错：已没则 no-op）再重挂，回写新 oid
             if oid is not None:
                 try:
@@ -234,4 +244,9 @@ class Reconciler:
             ex.grids.set_fuse_oids(grid_id, **{'%s_oid' % key: new_oid})
             ex._fuses.setdefault(grid_id, {})[key] = new_oid
             replaced += 1
-        return {'replaced': replaced, 'fired': False}
+        if replaced:
+            streaks[grid_id] = streaks.get(grid_id, 0) + 1
+        elif not futile:
+            streaks[grid_id] = 0     # 丝都在挂/无需动作 → 健康,清计数
+        # futile 轮保持计数:持续停手,直到丝真的重新出现(外因消除)或进程重启
+        return {'replaced': replaced, 'fired': False, 'futile': futile}

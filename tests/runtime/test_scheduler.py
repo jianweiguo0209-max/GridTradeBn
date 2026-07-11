@@ -260,7 +260,7 @@ def test_cycle_open_disabled_still_closes():
         grids = _Grids()
     class _Mgr:
         executor = _Ex()
-        def close_by_tag(self, tag, reason): self.closed_tag = tag; return ['g1']
+        def close_by_tag(self, tag, reason, exclude_symbols=frozenset()): self.closed_tag = tag; return ['g1']
         def open_proposals(self, ps): raise AssertionError('braked 时不应开仓')
     class _Trig:
         def collect(self, ctx): raise AssertionError('braked 时不应触发选币')

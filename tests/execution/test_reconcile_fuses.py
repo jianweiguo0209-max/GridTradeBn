@@ -22,7 +22,7 @@ def test_fuses_in_book_no_action(store):
     ex, fake, gid = _open(store)
     rec = Reconciler(ex)
     out = rec.reconcile_fuses(gid, SYM)
-    assert out == {'replaced': 0, 'fired': False}
+    assert out == {'replaced': 0, 'fired': False, 'futile': False}
 
 
 def test_fired_fuse_tears_down_grid(store):
@@ -56,7 +56,7 @@ def test_disabled_short_circuits(store):
                       stop_orders_enabled=False)
     gid = ex.open('hl', SYM, dict(PARAMS))
     out = Reconciler(ex).reconcile_fuses(gid, SYM)
-    assert out == {'replaced': 0, 'fired': False}
+    assert out == {'replaced': 0, 'fired': False, 'futile': False}
 
 
 # ── CRITICAL ADDITION: reconcile_open_orders must NOT cancel fuse stop orders ──

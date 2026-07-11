@@ -1,27 +1,43 @@
-"""控制指令执行分发：CLOSE_GRID / OPEN_GRID / PANIC_CLOSE_ALL。只在 monitor 调用。"""
+"""控制指令执行分发：CLOSE_GRID / OPEN_GRID / PANIC_CLOSE_ALL / RESOLVE_INTERVENTION。
+只在 monitor 调用。外部干预熔断币(spec 2026-07-12 组件三)拒绝一切交易所写入指令——
+账本已与交易所背离,盲动更险;先 RESOLVE_INTERVENTION(dashboard 按钮)再操作。"""
 import json
 from typing import Optional
 
 from gridtrade.state.models import ACTIVE_STATES, CMD_DONE, CMD_FAILED
 
+INTERVENTION_PREFIX = 'intervention:'   # 单源:cycles/scheduler/dashboard 从此处 import
+
 
 def execute_command(cmd, manager, flags, *, exchange: str) -> str:
+    def _braked(symbol):
+        return bool(flags.get(INTERVENTION_PREFIX + symbol))
+
     ex = manager.executor
     p = json.loads(cmd.payload or '{}')
     if cmd.type == 'CLOSE_GRID':
+        if _braked(p['symbol']):
+            raise RuntimeError('intervention braked %s: CLOSE refused, resolve first'
+                               % p['symbol'])
         ex.close(p['grid_id'], p['symbol'], p.get('reason', 'manual'))
         return 'closed %s' % p['grid_id']
     if cmd.type == 'OPEN_GRID':
         if flags.get('trading_halted'):
             raise RuntimeError('trading halted: OPEN refused')
+        if _braked(p['symbol']):
+            raise RuntimeError('intervention braked %s: OPEN refused, resolve first'
+                               % p['symbol'])
         gid = ex.open(exchange, p['symbol'], p['params'],
                       offset=int(p.get('offset', 0)), tag=p.get('tag', ''),
                       cap=p.get('cap'))
         return 'opened %s -> %s' % (p['symbol'], gid)
     if cmd.type == 'PANIC_CLOSE_ALL':
         active = [g for g in ex.grids.list_active() if g.status in ACTIVE_STATES]
-        ok, failed = [], []
+        ok, failed, skipped = [], [], []
         for g in active:
+            if _braked(g.symbol):                    # 熔断币账本不可信,盲平更险 → 跳过并上报
+                skipped.append(g.id)
+                continue
             try:
                 ex.close(g.id, g.symbol, 'panic')
                 ok.append(g.id)
@@ -30,7 +46,14 @@ def execute_command(cmd, manager, flags, *, exchange: str) -> str:
         msg = 'panic closed %d ok' % len(ok)
         if failed:
             msg += ', %d failed: %s' % (len(failed), '; '.join(failed))
+        if skipped:
+            msg += ', %d braked-skipped: %s' % (len(skipped), '; '.join(skipped))
         return msg
+    if cmd.type == 'RESOLVE_INTERVENTION':
+        sym = p['symbol']
+        flags.set(INTERVENTION_PREFIX + sym, False,
+                  actor=cmd.created_by or 'dashboard')
+        return 'intervention resolved %s' % sym
     raise ValueError('unknown command type: %s' % cmd.type)
 
 

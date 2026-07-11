@@ -16,7 +16,7 @@ from gridtrade.execution.events import GridClosed, OrderFilled
 from gridtrade.execution.grid_executor import _TRADE_REFETCH_OVERLAP_MS
 from gridtrade.execution.monitor import monitor_grid
 from gridtrade.execution.snapshot import build_account_snapshot
-from gridtrade.runtime.commands import consume_one
+from gridtrade.runtime.commands import INTERVENTION_PREFIX, consume_one
 from gridtrade.state.models import ACTIVE, CLOSING, FAILED, OPENING, now_ms
 
 # OPENING 正常在秒级完成（建行后立即批量挂单）；超过该时长仍零挂单 = 开仓首步即失败的
@@ -53,7 +53,15 @@ def restore_all(reconciler) -> List[str]:
     return restored
 
 
-def _grid_unit(reconciler, manager, grid, *, skip_replenish=False, snapshot=None) -> dict:
+def braked_symbols(flags):
+    """外部干预熔断中的币集合(spec 2026-07-12-honest-record-pnl 组件三)。"""
+    if flags is None:
+        return set()
+    return {n[len(INTERVENTION_PREFIX):] for n in flags.list_true(INTERVENTION_PREFIX)}
+
+
+def _grid_unit(reconciler, manager, grid, *, skip_replenish=False, snapshot=None,
+               braked=False) -> dict:
     """单网格监控单元（worker 线程执行体）：restore→信号→monitor→reconcile 一气呵成。
 
     **sync 必须在 reconcile 之前**：否则 reconcile 把刚成交、尚未入账的单当「被丢」
@@ -71,6 +79,20 @@ def _grid_unit(reconciler, manager, grid, *, skip_replenish=False, snapshot=None
     try:
         if not ex.is_loaded(grid.id):     # 惰性 restore（他进程开的/本进程重启）
             reconciler.restore(grid.id)
+        if braked:
+            # 外部干预熔断(spec 2026-07-12 组件三):该币降级只读——只摄入成交与对账,
+            # 不补单/不判止损/不动丝(交易所写入一律禁止,系统不与人抢方向盘)。
+            out['stage'] = 'monitor'
+            res = ex.sync(grid.id, grid.symbol, skip_replenish=True, snapshot=snapshot)
+            out.update({'closed': False, 'reason': None, 'braked': True,
+                        'pnl_ratio': res['snapshot']['pnl_ratio'],
+                        'fills': res.get('fills', [])})
+            out['stage'] = 'reconcile'
+            d = reconciler.check_position_drift(grid.id, grid.symbol, snapshot=snapshot)
+            if d is not None and not d['ok']:
+                out['drift'] = d
+            out['elapsed'] = time.monotonic() - t0
+            return out
         out['stage'] = 'monitor'
         pv_spike, funding_rate = 0, 0.0
         if manager.signals is not None:   # provider 内部已按 grid 节流+失败降级
@@ -160,6 +182,7 @@ def run_monitor_cycle(reconciler, manager, log=print, *,
     _maybe_beat()
 
     halted = bool(flags.get('trading_halted')) if flags is not None else False
+    braked = braked_symbols(flags)
     active = _active_grids(ex.grids)
     snapshot = None
     snap_failed = False
@@ -189,13 +212,15 @@ def run_monitor_cycle(reconciler, manager, log=print, *,
     elif parallel <= 1 or len(active) <= 1:   # 串行保底路径（MONITOR_PARALLEL=1 一键回退）
         for grid in active:
             results.append(_grid_unit(reconciler, manager, grid,
-                                      skip_replenish=halted, snapshot=snapshot))
+                                      skip_replenish=halted, snapshot=snapshot,
+                                      braked=grid.symbol in braked))
             _maybe_beat()
     else:
         next_slow_log = unit_warn_sec
         with _cf.ThreadPoolExecutor(max_workers=int(parallel)) as pool:
             pending = {pool.submit(_grid_unit, reconciler, manager, grid,
-                                   skip_replenish=halted, snapshot=snapshot): grid
+                                   skip_replenish=halted, snapshot=snapshot,
+                                   braked=grid.symbol in braked): grid
                        for grid in active}
             while pending:
                 done, _ = _cf.wait(pending, timeout=1.0)
@@ -218,6 +243,10 @@ def run_monitor_cycle(reconciler, manager, log=print, *,
         ci = r.get('close_intent')
         if ci:
             g = by_grid[r['grid_id']]
+            if g.symbol in braked:            # 防御纵深:熔断币意向不执行(单元已只读,不应出现)
+                log('[intervention] skip close intent %s(%s) grid=%s — braked'
+                    % (g.symbol, ci, r['grid_id']))
+                continue
             intents.setdefault((g.symbol, ci), []).append(r['grid_id'])
     if intents:
         def _run_set(item):
@@ -271,6 +300,9 @@ def run_monitor_cycle(reconciler, manager, log=print, *,
             fuse = r.get('fuse') or {}
             if fuse.get('fired'):
                 log('[monitor] grid %s fuse fired -> grid closed' % gid)
+            elif fuse.get('futile'):
+                log('[fuse] futile grid=%s %s 重挂即消≥2轮 → 已停止重挂(丝保护缺位!),'
+                    '待人工处置' % (gid, grid.symbol))
             elif fuse.get('replaced'):
                 # 健康网格几乎从不重挂；若每轮都打这行 = 保险丝没出现在 fetch_open_orders
                 # （如 HL 触发单不在 frontendOpenOrders）→ 每轮重挂、孤儿触发单堆积，需排查。
@@ -285,6 +317,31 @@ def run_monitor_cycle(reconciler, manager, log=print, *,
     for gid, d in drift.items():              # 净仓背离打日志（不自动改仓，留人工/后续处置）
         log('[monitor] grid %s position drift: model=%s exchange=%s drift=%s tol=%s'
             % (gid, d['model'], d['exchange'], d['drift'], d['tol']))
+    # ---- 外部干预熔断(spec 2026-07-12-honest-record-pnl 组件三):同币 drift 连续
+    # ≥2 轮(单轮容忍摄入时滞瞬差)→ 落 DB 旗,该币此后降级只读;resolve=dashboard 按钮
+    # (用户定)或 RESOLVE_INTERVENTION 指令;无活跃格时自动清旗(护未来新格)。
+    if flags is not None:
+        streaks = getattr(reconciler, '_drift_streak', None)
+        if streaks is None:
+            streaks = reconciler._drift_streak = {}
+        bad_syms = {by_grid[gid].symbol for gid in drift if gid in by_grid}
+        for sym in sorted(bad_syms):
+            streaks[sym] = streaks.get(sym, 0) + 1
+            if streaks[sym] >= 2 and sym not in braked:
+                flags.set(INTERVENTION_PREFIX + sym, True, actor='monitor')
+                braked.add(sym)
+                log('[intervention] %s Σclaims≠交易所净仓 连续%d轮 → 熔断:该币管理已暂停'
+                    '(只读),待人工 resolve' % (sym, streaks[sym]))
+        for sym in list(streaks):
+            if sym not in bad_syms:
+                streaks.pop(sym)
+        active_syms = {g.symbol for g in active}
+        for sym in sorted(braked):
+            if sym not in active_syms:
+                flags.set(INTERVENTION_PREFIX + sym, False, actor='monitor')
+                log('[intervention] %s 无活跃格 → 自动清旗' % sym)
+            else:
+                log('[intervention] %s 管理暂停中(只读)' % sym)
     for r in monitored:                       # 慢格指名道姓（病态格从此在日志里可见）
         if r.get('elapsed', 0.0) > unit_warn_sec:
             log('[monitor] grid %s slow: %.1fs' % (r['grid_id'], r['elapsed']))
@@ -312,19 +369,26 @@ def run_monitor_cycle(reconciler, manager, log=print, *,
 
 def run_scheduler_cycle(manager, trigger_engine, reconciler, ctx, *,
                         close_tag=None, close_reason='周期再平衡',
-                        open_enabled=True) -> dict:
+                        open_enabled=True, braked_symbols=frozenset(),
+                        log=print) -> dict:
     """scheduler 机循环体（复刻 legacy 主流程顺序）：先关旧 tag 网格、再触发→准入→开仓。
 
     scheduler 机 scale-to-zero（全新进程），关旧前先 Reconciler.restore 重建内存态，
-    否则 executor.close 取不到 _geom/live。
+    否则 executor.close 取不到 _geom/live。braked_symbols=外部干预熔断币(组件三):
+    轮换不关其格(关格是交易所写入)、留 ACTIVE 待人工 resolve。
     """
     closed: List[str] = []
     if close_tag is not None:
         to_close = [g for g in _active_grids(manager.executor.grids)
                     if g.tag == close_tag]
         for grid in to_close:
+            if grid.symbol in braked_symbols:
+                log('[intervention] skip rotation close %s grid=%s — braked'
+                    % (grid.symbol, grid.id))
+                continue
             reconciler.restore(grid.id)   # 全新进程：先重建内存态
-        closed = manager.close_by_tag(close_tag, close_reason)
+        closed = manager.close_by_tag(close_tag, close_reason,
+                                      exclude_symbols=braked_symbols)
     if not open_enabled:                      # MarketShockBrake:只关不开(spec 2026-07-08)
         return {'closed': closed, 'opened': [], 'shock_braked': True}
     proposals = trigger_engine.collect(ctx)

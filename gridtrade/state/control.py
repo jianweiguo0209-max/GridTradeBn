@@ -21,6 +21,16 @@ class ControlFlagRepository:
             ).first()
         return bool(row is not None and row[0] == 'true')
 
+    def list_true(self, prefix: str) -> List[str]:
+        """值为 true 且名字带前缀的旗标名(外部干预熔断 `intervention:{symbol}` 枚举用)。"""
+        with self.engine.connect() as c:
+            rows = c.execute(
+                select(control_flags.c.name)
+                .where(control_flags.c.value == 'true')
+                .where(control_flags.c.name.like(prefix + '%'))
+            ).all()
+        return [r[0] for r in rows]
+
     def set(self, name: str, value: bool, *, actor: str = '') -> None:
         v = 'true' if value else 'false'
         ts = now_ms()

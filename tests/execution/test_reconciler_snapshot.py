@@ -64,12 +64,12 @@ def test_fuse_replaced_and_fired_via_snapshot(store):
     g = gx.grids.get(gid)
     # 保险丝在挂 → 无动作
     snap = build_account_snapshot(ex, [BTC])
-    assert rec.reconcile_fuses(gid, BTC, snapshot=snap) == {'replaced': 0, 'fired': False}
+    assert rec.reconcile_fuses(gid, BTC, snapshot=snap) == {'replaced': 0, 'fired': False, 'futile': False}
     # 丢一根（低侧）且未成交 → 重挂（FakeExchange 触发单存于 _stops，非 _open）
     ex._stops[BTC] = [s for s in ex._stops[BTC] if s.id != g.fuse_low_oid]
     snap = build_account_snapshot(ex, [BTC])
     out = rec.reconcile_fuses(gid, BTC, snapshot=snap)
-    assert out == {'replaced': 1, 'fired': False}
+    assert out == {'replaced': 1, 'fired': False, 'futile': False}
 
 
 def test_fuse_fired_outside_snapshot_window_still_detected(store):
@@ -101,7 +101,7 @@ def test_fuse_truly_lost_still_replaced_after_direct_scan(store):
     rec = Reconciler(gx)
     snap = build_account_snapshot(ex, [BTC], trade_since_ms=1_000_000)
     out = rec.reconcile_fuses(gid, BTC, snapshot=snap)
-    assert out == {'replaced': 1, 'fired': False}
+    assert out == {'replaced': 1, 'fired': False, 'futile': False}
     assert gx.grids.get(gid).status == 'ACTIVE'
 
 
@@ -124,7 +124,7 @@ def test_fuse_missing_but_order_status_open_no_replace(store):
 
     gx.adapter = _BlindBook(ex)
     out = rec.reconcile_fuses(gid, BTC)
-    assert out == {'replaced': 0, 'fired': False}          # 不重挂（orderStatus=open）
+    assert out == {'replaced': 0, 'fired': False, 'futile': False}          # 不重挂（orderStatus=open）
 
 
 def test_fuse_replace_cancels_old_oid_first(store):
