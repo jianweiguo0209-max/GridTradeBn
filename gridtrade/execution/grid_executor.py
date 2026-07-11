@@ -281,38 +281,21 @@ class GridExecutor:
         return {'new_fills': new_count, 'fills': new_fills_payload, 'snapshot': snap}
 
     def close(self, grid_id, symbol, reason):
-        grid = self.grids.get(grid_id)
-        self.grids.set_close_reason(grid_id, reason)   # 真因先落库：中途失败续平不丢
-        if grid.status != CLOSING:
-            self.grids.transition_status(grid_id, CLOSING, expected_version=grid.version)
-        return self.finalize_close(grid_id, symbol, reason)
+        # 关格唯一入口(spec 2026-07-11-symbol-desk):单格集合退化,行为 ≡ 旧路径。
+        return self.ledger.close_set([grid_id], symbol, reason)[0]
 
-    def finalize_close(self, grid_id, symbol, reason):
-        # 幂等续平（grid 须已 CLOSING）：撤单 + 有界 reduce 残仓 + 落库(只一次) + 转 CLOSED。
-        # close() 中途失败留下的 CLOSING 网格由 monitor 循环调本方法续平自愈——
-        # 否则残仓无人认领、状态机卡死（瞬时网络/交易所抖动即触发，mainnet 上很危险）。
+    def _cancel_orders_for(self, grid_id, symbol, cancel_lines):
+        """撤单段(finalize_close 拆分,close_set 复用):cancel_lines=True 逐张撤本格
+        线单(有其他同币活跃格,不可 cancel_all);恒撤本格保险丝+标记行 canceled(保留
+        oid/filled:撤单窗口内在途部分成交仍可按 oid 匹配摄入)。"""
         grid = self.grids.get(grid_id)
-        # 续平路径还原关格真因（'周期再平衡(续平)'）：'平仓恢复' 只是恢复动作，不是
-        # 触发原因，裸写会盖掉真因（mainnet 实证 SPX 轮换关格被记成平仓恢复）。
-        if reason == '平仓恢复' and grid.close_reason:
-            reason = '%s(续平)' % grid.close_reason
-        # 同币兄弟格感知（cap=2 双格）：symbol 级撤单/全净仓 reduce 会误伤幸存格——
-        # mainnet 2026-07-07 NBIS 实证：关 gt06 撤光并平掉 gt08 的 0.44 → 幸存格
-        # 永久幻影账簿（平仓成交挂发起格 oid，兄弟 sync 永不摄入）。有兄弟 → 格级
-        # 收敛（只撤自己的单、只平自己的模型份额）；无兄弟 → 保留 symbol 级扫除
-        # （孤儿单/孤儿仓卫生，旧行为不变）。
-        siblings = [g for g in self.grids.list_active()
-                    if g.symbol == symbol and g.id != grid_id]
-        if siblings:
+        if cancel_lines:
             for o in self.orders.list_open_by_grid(grid_id):
                 if o.status == 'open' and o.exchange_order_id:
                     try:
                         self.adapter.cancel_order(symbol, o.exchange_order_id)
                     except Exception:
                         pass        # 已成交/已撤 → 目标态已达
-        else:
-            self.adapter.cancel_all(symbol)
-        # 撤掉未触发的另一张保险丝（cancel_all 在多数所已覆盖触发单，这里再 best-effort 补刀，跨所稳妥）。
         for oid in (grid.fuse_low_oid, grid.fuse_high_oid):
             if oid:
                 try:
@@ -320,30 +303,31 @@ class GridExecutor:
                 except Exception:
                     pass
         for o in self.orders.list_open_by_grid(grid_id):
-            # 保留 oid/filled(行保真):撤单窗口内的在途部分成交仍可按 oid 匹配摄入
             self.orders.upsert(GridOrder(client_oid=o.client_oid, grid_id=grid_id,
                                          line_index=o.line_index, side=o.side, price=o.price,
                                          size=o.size, status='canceled',
                                          exchange_order_id=o.exchange_order_id,
                                          filled=o.filled))
-        # reduce 市价单可能部分成交（HL 滑点/薄盘）；重拉持仓、补 reduce 直至 <= min_amount。
-        if siblings:
-            # 净额化关格(spec 2026-07-08-position-ledger):reduce 自己份额(claim 真相源
-            # = live 账本) + 残余按 mark 价转仓给幸存格,双方模型与交易所对齐。
-            self.ledger.close_share(grid_id, symbol)
-        else:
+
+    def _flatten_symbol(self, grid_id, symbol):
+        """无兄弟收尾段:symbol 级扫平(孤儿仓卫生,旧行为);reduce 市价单可能部分成交,
+        重拉持仓补 reduce 直至 <= min_amount。"""
+        pos = self.adapter.fetch_positions(symbol)
+        attempt = 0
+        while abs(pos.net_size) > self.min_amount and attempt < 3:
+            side = 'sell' if pos.net_size > 0 else 'buy'
+            self.adapter.create_market_order(symbol, side, abs(pos.net_size),
+                                             reduce_only=True,
+                                             client_oid='%s:close:%d' % (grid_id, attempt))
+            attempt += 1
             pos = self.adapter.fetch_positions(symbol)
-            attempt = 0
-            while abs(pos.net_size) > self.min_amount and attempt < 3:
-                side = 'sell' if pos.net_size > 0 else 'buy'
-                self.adapter.create_market_order(symbol, side, abs(pos.net_size),
-                                                 reduce_only=True,
-                                                 client_oid='%s:close:%d' % (grid_id, attempt))
-                attempt += 1
-                pos = self.adapter.fetch_positions(symbol)
+
+    def _finalize_record(self, grid_id, symbol, reason):
+        """落库段(拆分复用):snapshot → record(幂等) → CLOSED → 结构化日志。"""
+        grid = self.grids.get(grid_id)
         snap = self.live[grid_id].snapshot(float(self.adapter.fetch_price(symbol)))
         # 记录按该格真实资金计钱：pnl_ratio 分母是 LiveEquity.cap==grid.cap（动态 cap），
-        # 乘 executor 静态默认 cap 会整体错标（restore-cap 同族，mainnet 2026-07-06 实证低报 3x）。
+        # 乘 executor 静态默认 cap 会整体错标（restore-cap 同族，mainnet 实证低报 3x）。
         grid_cap = grid.cap if grid.cap else self.cap
         if not self.records.list_by_grid(grid_id):   # 幂等：续平不重复落库
             self.records.add(Record(id='', grid_id=grid_id, exchange=grid.exchange, symbol=symbol,
@@ -352,8 +336,25 @@ class GridExecutor:
                                     pnl_ratio=snap['pnl_ratio'], exit_reason=reason))
         g2 = self.grids.get(grid_id)
         self.grids.transition_status(grid_id, CLOSED, expected_version=g2.version)
-        # 平仓可观测性：止损/PV/轮换关格此前零日志（mainnet 5+ 例靠 DB 反推），
-        # 一行结构化日志供事件监控实时捕获（reason 含 止损/止盈/再平衡 关键词）。
         print('[close] grid %s %s tag=%s reason=%s pnl_ratio=%+.6f'
               % (grid_id, symbol, grid.tag, reason, snap['pnl_ratio']), flush=True)
-        return {'reason': reason, 'pnl_ratio': snap['pnl_ratio']}
+        return {'grid_id': grid_id, 'reason': reason, 'pnl_ratio': snap['pnl_ratio']}
+
+    def finalize_close(self, grid_id, symbol, reason):
+        # 幂等续平（grid 须已 CLOSING）：撤单 + 有界 reduce 残仓 + 落库(只一次) + 转 CLOSED。
+        # close() 中途失败留下的 CLOSING 网格由 monitor 循环调本方法续平自愈——
+        # 否则残仓无人认领、状态机卡死。三段拆分(spec 2026-07-11)后行为逐位不变。
+        grid = self.grids.get(grid_id)
+        # 续平路径还原关格真因（'周期再平衡(续平)'）：'平仓恢复' 只是恢复动作,裸写会盖真因。
+        if reason == '平仓恢复' and grid.close_reason:
+            reason = '%s(续平)' % grid.close_reason
+        siblings = [g for g in self.grids.list_active()
+                    if g.symbol == symbol and g.id != grid_id]
+        if not siblings:
+            self.adapter.cancel_all(symbol)
+        self._cancel_orders_for(grid_id, symbol, cancel_lines=bool(siblings))
+        if siblings:
+            self.ledger.close_share(grid_id, symbol)
+        else:
+            self._flatten_symbol(grid_id, symbol)
+        return self._finalize_record(grid_id, symbol, reason)
