@@ -16,6 +16,32 @@ from gridtrade.state.models import Fill, now_ms
 LEDGER_PREFIX = 'ledger:'
 
 
+def LEDGER_EPS(ex):
+    """零判定锚:prod 未配 min_amount(=0)时,防浮点尘埃(多笔成交带符号和 ~1e-16,
+    mainnet ETHFI gt08 实证)写 1e-14 级合成转仓行(2026-07-11 巡查已批的一行修)。"""
+    return max(ex.min_amount, 1e-9)
+
+
+def _split_residual(remaining, survivors):
+    """残余分摊(spec 2026-07-11-symbol-desk 组件一)。survivors: [(gid, claim)]。
+    反号优先按 |claim| 比例(正是对冲掉本格份额的各方,按对冲贡献分);无反号 →
+    全体按 |claim| 比例(总账守恒,避免单格背全部);全零 → 均分(与 funding 兜底同构)。
+    守恒逐位:最后一名吃余数,Σ份额 == remaining。N=2 单反号幸存格分得 100% ≡ 旧行为。"""
+    opp = [(g, c) for g, c in survivors if c * remaining < 0]
+    pool = opp or list(survivors)
+    w = [abs(c) for _, c in pool]
+    tw = sum(w)
+    if tw <= 0:
+        w = [1.0] * len(pool)
+        tw = float(len(pool))
+    out, acc = [], 0.0
+    for i, (g, _) in enumerate(pool):
+        q = remaining - acc if i == len(pool) - 1 else remaining * (w[i] / tw)
+        out.append((g, q))
+        acc += q
+    return out
+
+
 class PositionLedger:
     def __init__(self, executor):
         self.ex = executor
@@ -47,7 +73,7 @@ class PositionLedger:
         if grid_id not in cl or len(cl) == 1:
             return 1.0
         total = sum(cl.values())
-        if abs(total) < max(self.ex.min_amount, 1e-12):
+        if abs(total) < LEDGER_EPS(self.ex):
             return 1.0 / len(cl)
         return cl[grid_id] / total
 
@@ -80,21 +106,23 @@ class PositionLedger:
 
     # ── 关格净额化 ──
 
-    def close_share(self, grid_id, symbol):
-        """关格净额化(finalize_close 兄弟分支收编):
+    def close_share(self, grid_id, symbol, exclude=frozenset()):
+        """关格净额化(finalize_close 兄弟分支收编;spec 2026-07-11-symbol-desk 组件一):
         ① clamp reduce 自己份额(v23 语义:只平交易所净仓同号部分,≤3 次);每次 reduce
            写 ledger:reduce 合成行入本格账本——账本始终反映"还剩多少没平",崩溃续平时
            restore 重放即恢复,不会二次转仓(claim 真相源是 live 账本,非 accounting 快照);
-        ② 残余(被兄弟对冲的部分)按 mark 价转给反号 claim 幸存格 → 双方模型与交易所对齐
-           (v23 残留根治:此前正确不动手但幸存格永久带差);
+        ② 残余(被兄弟对冲的部分)按 mark 价 **比例分摊** 给幸存格(_split_residual:
+           反号优先按 |claim| 比例——正是对冲掉本格份额的各方;N=2 单反号幸存格得 100%,
+           与旧行为逐位一致);exclude=同批关格集合(close_set 用),不作接收方;
         ③ 无幸存格接收(同轮全关竞态)→ 留差给漂移告警(概率极低,不越权动仓)。"""
         ex = self.ex
+        eps = LEDGER_EPS(ex)
         remaining = self.claim(grid_id)
-        if abs(remaining) <= ex.min_amount:
+        if abs(remaining) <= eps:
             return
         pos = ex.adapter.fetch_positions(symbol)
         attempt = 0
-        while (abs(remaining) > ex.min_amount and pos.net_size * remaining > 0
+        while (abs(remaining) > eps and pos.net_size * remaining > 0
                and attempt < 3):
             qty = min(abs(remaining), abs(pos.net_size))
             side = 'sell' if remaining > 0 else 'buy'
@@ -105,20 +133,22 @@ class PositionLedger:
             remaining -= qty if remaining > 0 else -qty
             attempt += 1
             pos = ex.adapter.fetch_positions(symbol)
-        if abs(remaining) <= ex.min_amount:
+        if abs(remaining) <= eps:
             return
         g = ex.grids.get(grid_id)
         sibs = [s for s in ex.grids.list_active()
-                if s.symbol == symbol and s.exchange == g.exchange and s.id != grid_id]
+                if s.symbol == symbol and s.exchange == g.exchange
+                and s.id != grid_id and s.id not in exclude]
         if not sibs:
             return
-        # 优先反号 claim 幸存格(正是对冲掉我们份额的一方);cap=2 至多一个兄弟
-        target = next((s for s in sibs if self.claim(s.id) * remaining < 0), sibs[0])
-        if len(sibs) > 1:
-            print('[ledger] WARN close_share %s: %d survivors (cap=2 设计外) target=%s'
-                  % (grid_id, len(sibs), target.id), flush=True)
-        self.settle_transfer(grid_id, target.id, symbol, remaining,
-                             float(ex.adapter.fetch_price(symbol)), 'closeshare')
+        survivors = [(s.id, self.claim(s.id)) for s in sibs]
+        shares = _split_residual(remaining, survivors)
+        px = float(ex.adapter.fetch_price(symbol))
+        print('[ledger] closeshare split %s residual=%+.8g -> %s'
+              % (grid_id, remaining,
+                 {gid: round(q, 8) for gid, q in shares}), flush=True)
+        for gid, q in shares:
+            self.settle_transfer(grid_id, gid, symbol, q, px, 'closeshare')
 
     # ── 丝成交摄入 ──
 
