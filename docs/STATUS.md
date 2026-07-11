@@ -183,6 +183,7 @@ gridtrade/
 - ✅ ~~MarginGate（保证金门）~~ —— 已实现（准入门链 4/4：cash≥cap 保守口径 + 同轮累计扣减 + fail-closed，置链尾）。
 - ✅ ~~真并发 TOCTOU 测试~~ —— 已补（`tests/state/test_transition_concurrency.py` 真线程+Barrier 在本地 PG 验证版本守卫只放一个赢家；CI 仍 SQLite，CI PG job 待多监控机阶段）。
 - ✅ ~~OrderFilled 事件~~ —— 已实现（GridManager.monitor_all 逐笔成交发布，带 fee）。
+- ✅ **SymbolDesk 阶段1+2 已实现(2026-07-11,spec `2026-07-11-symbol-desk-capn-design.md`,cap=N 操作层收编)**:组件一 close_share 残余比例分摊(反号优先按|claim|,守恒逐位)+LEDGER_EPS(浮点尘埃);组件三 合成转仓对共享 event_id+`dbadmin verify-ledger` 守恒审计(配对/重放/币级,巡查定期跑);组件二 close_set 关格集合净额化(内部预净额→对冲对零交易所单/N 格最多 1 张净额市价单,币级互斥,滑点归因执行格)+monitor 两阶段(阶段A只读意向/阶段B按币合并,跨币并行)+全入口收编(ex.close/close_by_tag/丝触发)。单格与 N=2 退化逐位等价,753 tests。**待部署 testnet(验收:PUMP 对冲对同关零交易所单)**。
 - ✅ **部分成交订单生命周期彻底修复（2026-07-09，spec `2026-07-09-partial-fill-lifecycle-design.md`）**：mainnet GRAM 实证根因（首笔部分成交即 closed+抹 oid → 跨轮部分成交静默丢 → 幻影仓）。grid_orders 加 `filled` 列（dbadmin 迁移 add_grid_orders_filled，**两网部署后各跑一次 migrate**）;sync 累计 filled、吃满才 closed+补单、行字段保真;开格/补单/E2 存交易所量化 size;E2 重挂三态（order_status 权威，filled 不重挂根治重挂重复建仓，open 盲区不动，canceled 只重挂残量）;finalize_close 撤单标记保真。721 tests。
 - ✅ ~~**同币种多网格**（二期 LogicalAttributionPolicy / 子账户）~~ —— **PositionLedger 内部净额化已实现（2026-07-08，spec `2026-07-08-position-ledger-design.md`）**：核心不变量 Σclaims=交易所净仓;合成成交(`ledger:` 前缀,line_index=-1)结算——关格残余转仓(根治 v23 对冲残留)、丝成交摄入触发格账本(顺带根治"丝成交不入 record pnl")、funding 签名权重分摊(根治同币双格双计潜伏 bug);max_ts 游标排除合成行;dashboard fills 标注「内部转仓/保险丝」;零新表零新 env。710 passed。待部署 testnet 双格验收。
 - 详见记忆 `p4-deferred-items`、`deferred-toctou-concurrency-test`。
