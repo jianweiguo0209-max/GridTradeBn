@@ -51,8 +51,12 @@ def test_two_transfers_distinct_eids(store):
 
 
 def test_reduce_row_single_sided_own_eid(store):
+    from gridtrade.state.models import Fill
     ex, gx, ga, gb = _setup(store)
+    gx.fills.add_if_new(Fill(trade_id='t-real', grid_id=ga, line_index=3, side='buy',
+                             price=100.0, size=5.0, fee=0.1, ts=1000))
     gx.live[ga].record_fill(100.0, 'buy', 5.0, 1000)
+    gx._book_ids.setdefault(ga, set()).add('t-real')
     ex._pos[BTC] = type(ex.fetch_positions(BTC))(BTC, 5.0, 100.0)
     gx.close(ga, BTC, '周期再平衡')
     reduce_rows = [f for f in gx.fills.list_by_grid(ga)
