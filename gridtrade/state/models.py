@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from sqlalchemy import (BigInteger, Column, Float, Index, Integer, MetaData,
-                        String, Table, UniqueConstraint)
+                        String, Table, Text, UniqueConstraint)
 
 metadata = MetaData()
 
@@ -203,6 +203,18 @@ equity_snapshots = Table(
     Column('equity', Float, nullable=False),
     Column('cash', Float, nullable=True),
     Index('ix_equity_snapshots_ts', 'ts'),
+)
+
+# 票池快照(2026-07-12,选币可复现性):因子名次是组内相对名次,票池集合一变全体
+# 名次重排——事后重放必须用当时真实进入排名的集合(post 地板/黑名单/held 预过滤/
+# 取数跳过)。每 tick 一行,幂等(exchange+run_time 主键)。
+universe_snapshots = Table(
+    'universe_snapshots', metadata,
+    Column('exchange', String, primary_key=True),
+    Column('run_time', BigInteger, primary_key=True),   # tick 整点 ms(UTC)
+    Column('symbols', Text, nullable=False),            # JSON list:实际进入排名的币
+    Column('excluded', Text, nullable=True),            # JSON:{held_banned/braked}
+    Column('created_at', BigInteger, nullable=False),
 )
 
 

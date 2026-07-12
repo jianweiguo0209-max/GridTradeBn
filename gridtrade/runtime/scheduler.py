@@ -97,6 +97,18 @@ def run_scheduler_once(runtime, *, now_fn=time.time,
     candles = fetch_candles(rt.adapter, universe, run_time,
                             max_candle_num=DEFAULT_STRATEGY_CONFIG['max_candle_num'],
                             pace_ms=getattr(rt.config, 'scheduler_fetch_pace_ms', None))
+    # 票池快照(2026-07-12,选币可复现性):落"实际进入排名的集合"(post 地板/黑名单/
+    # held 预过滤/braked/取数跳过)——因子名次是组内相对名次,没有它历史选币不可精确
+    # 复现(实证:TRUMP 在 168 币集合无影、57 币线上集合进 #4)。fail-soft:快照失败
+    # 绝不阻塞选币开格。
+    try:
+        from gridtrade.state.universe_snapshots import UniverseSnapshotRepository
+        UniverseSnapshotRepository(rt.store).add(
+            rt.config.exchange, int(run_time.value // 1_000_000),
+            list(candles.keys()),
+            excluded={'held_banned': sorted(banned), 'braked': sorted(braked)})
+    except Exception as exc:
+        print('[scheduler] universe snapshot skipped: %r' % exc, flush=True)
     # MarketShockBrake(spec 2026-07-08):|票池中位数 k 小时收益|≥thr → 本轮只关不开,
     # 并暂停 pause 小时;状态进程内(信号自持 ~k 小时,重启自愈,约束 pause<=k)。
     open_enabled = True
