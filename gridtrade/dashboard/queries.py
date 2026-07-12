@@ -151,6 +151,19 @@ class GridDetailDTO:
     orders: List[GridOrder]
     fills: List[Fill]
     accounting: Optional[Accounting]
+    replenishments: List[GridOrder] = None      # 补单记录（成交后补对侧/E2 兜底补挂）
+
+
+def is_replenish_order(o: GridOrder) -> bool:
+    """初始批次 client_oid='{gid}:{line}:{seq}' 且 seq==line（开格循环顺序生成）；
+    补单 seq 为后续计数（sync 补对侧）或 10M+（restore 后计数器高位起）→ seq!=line 即补单。
+    边缘：开格恰有档位价==entry 被跳过时初始 seq 会错位（需价格逐位相等，实务未见），
+    误标仅影响展示层。oid 不可解析（异常/测试桩）按初始处理。"""
+    try:
+        seq = int(str(o.client_oid).rsplit(':', 1)[-1])
+    except (ValueError, TypeError):
+        return False
+    return seq != o.line_index
 
 
 def build_grid_detail(store, grid_id: str, *,
@@ -158,12 +171,15 @@ def build_grid_detail(store, grid_id: str, *,
     grid = GridRepository(store).get(grid_id)
     if grid is None:
         return None
-    orders = sorted(OrderRepository(store).list_by_grid(grid_id),
-                    key=lambda o: o.line_index)
+    all_orders = OrderRepository(store).list_by_grid(grid_id)
+    orders = sorted(all_orders, key=lambda o: o.line_index)
+    repl = sorted((o for o in all_orders if is_replenish_order(o)),
+                  key=lambda o: o.created_at or 0, reverse=True)
     fills = sorted(FillRepository(store).list_by_grid(grid_id),
                    key=lambda f: f.ts, reverse=True)[:fills_limit]
     acc = AccountingRepository(store).get(grid_id)
-    return GridDetailDTO(grid=grid, orders=orders, fills=fills, accounting=acc)
+    return GridDetailDTO(grid=grid, orders=orders, fills=fills, accounting=acc,
+                         replenishments=repl)
 
 
 @dataclass

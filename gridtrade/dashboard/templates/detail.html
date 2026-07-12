@@ -56,6 +56,13 @@
 {% for o in d.orders %}<tr><td>{{ o.line_index }}</td><td>{{ o.side }}</td>
 <td>{{ o.price | fmt_price }}</td><td>{{ o.size | fmt_size }}</td><td>{{ o.status }}</td></tr>{% endfor %}
 </tbody></table>
+<h2>补单记录</h2>
+{% if d.replenishments %}
+<table><thead><tr><th>时间</th><th>line</th><th>side</th><th>price</th><th>size</th><th>status</th></tr></thead><tbody>
+{% for o in d.replenishments %}<tr><td>{{ o.created_at | ms_to_human }}</td><td>{{ o.line_index }}</td>
+<td>{{ o.side }}</td><td>{{ o.price | fmt_price }}</td><td>{{ o.size | fmt_size }}</td><td>{{ o.status }}</td></tr>{% endfor %}
+</tbody></table>
+{% else %}<p class="muted">暂无补单（成交后补对侧/E2 兜底补挂会显示在此）</p>{% endif %}
 <h2>Recent Fills</h2>
 <table><thead><tr><th>ts</th><th>line</th><th>side</th><th>price</th><th>size</th><th>fee</th></tr></thead><tbody>
 {% for f in d.fills %}<tr><td>{{ f.ts | ms_to_human }}</td><td>{{ f | fill_line }}</td>
