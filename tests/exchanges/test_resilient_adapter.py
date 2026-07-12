@@ -242,3 +242,20 @@ def test_account_batch_methods_wrapped_with_categories():
     with pytest.raises(CircuitOpenError):
         ra.fetch_positions_all(['X'])          # 同 account_read 路被熔断
     assert ra.fetch_prices_all(['X']) == {'X': 1.0}   # market_read 不受影响
+
+
+def test_fetch_max_leverages_delegates_to_inner():
+    """lev_caps 接线断层回归(2026-07-12 mainnet 实证):ResilientAdapter 曾漏代理
+    fetch_max_leverages → 落到基类默认 {} → lev_caps 静默失效(fail-open 掩盖,
+    VVV maxlev=3 开出双格)。包装层必须穿透内层非空 map。"""
+    class _MLInner(_Inner):
+        def fetch_max_leverages(self):
+            self._maybe_fail('fetch_max_leverages')
+            self.calls.append(('fetch_max_leverages',))
+            return {'VVV/USDC:USDC': 3.0, 'PUMP/USDC:USDC': 10.0}
+
+    inner = _MLInner()
+    ra = ResilientAdapter(inner, policy=FAST, sleep=NOSLEEP)
+    out = ra.fetch_max_leverages()
+    assert out == {'VVV/USDC:USDC': 3.0, 'PUMP/USDC:USDC': 10.0}   # 绝不允许 {}
+    assert ('fetch_max_leverages',) in inner.calls
