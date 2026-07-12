@@ -37,3 +37,17 @@ def test_column_constants():
     assert CANDLE_COLS == ['symbol', 'candle_begin_time', 'open', 'high', 'low',
                            'close', 'vol', 'volCcy', 'quote_volume']
     assert FUNDING_COLS == ['ts', 'symbol', 'fundingRate', 'realizedRate']
+
+
+def test_resilient_adapter_forwards_quantize_amount():
+    """ResilientAdapter 逐方法显式转发、无 __getattr__——端口新增方法漏转发会静默落到
+    基类恒等默认(2026-07-12 mainnet 实证:量化修复线上失效)。合同:quantize 必达 inner。"""
+    from gridtrade.exchanges.resilient_adapter import ResilientAdapter
+
+    class _Inner:
+        name = 'x'
+        def quantize_amount(self, symbol, amount):
+            return 3.7
+
+    r = ResilientAdapter(_Inner())
+    assert r.quantize_amount('BTC/USDT:USDT', 3.7827) == 3.7

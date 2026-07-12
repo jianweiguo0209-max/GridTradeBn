@@ -148,6 +148,12 @@ class ResilientAdapter(ExchangeAdapter):
                                since_ms: Optional[int] = None) -> List[FundingPayment]:
         return self._call('fetch_funding_payments', symbol, since_ms=since_ms)
 
+    def quantize_amount(self, symbol, amount):
+        """本地精度换算,无网络——直通 inner,不套重试/熔断。
+        必须显式转发:本类逐方法转发无 __getattr__,漏转会静默落到基类恒等默认,
+        量化修复在线上失效(2026-07-12 mainnet 核验实证,memory quantized-size-fallback-bug)。"""
+        return self._inner.quantize_amount(symbol, amount)
+
     def order_status(self, symbol, order_id):
         return self._call('order_status', symbol, order_id)
 
