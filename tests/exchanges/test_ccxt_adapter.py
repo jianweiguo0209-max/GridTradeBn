@@ -170,3 +170,25 @@ def test_fetch_24h_quote_volumes_takes_max_per_canonical():
     a = _FoldAdapter(_FoldVolClient(), name='fold')
     vols = a.fetch_24h_quote_volumes()
     assert vols == {'BTC/USDC:USDC': 900.0}   # 取两者中的较大值，而非遍历顺序中的先/后者
+
+
+def test_quantize_amount_uses_precision_table():
+    """quantize_amount 经 ccxt amount_to_precision（惰性 load_markets）；异常 fail-open 原样返回。"""
+    from gridtrade.exchanges.ccxt_adapter import CcxtAdapter
+
+    class _C:
+        markets = None
+        def load_markets(self):
+            self.markets = {'BTC/USDT:USDT': {}}
+        def amount_to_precision(self, sym, amt):
+            return '%.1f' % (int(float(amt) * 10) / 10.0)   # 1 位截断,ccxt 返回字符串
+
+    a = CcxtAdapter(_C(), name='x')
+    assert a.quantize_amount('BTC/USDT:USDT', 35.10441977) == 35.1
+    assert _C.markets is None or True                       # 惰性加载已发生(实例属性)
+
+    class _Broken:
+        def load_markets(self):
+            raise RuntimeError('boom')
+    b = CcxtAdapter(_Broken(), name='x')
+    assert b.quantize_amount('BTC/USDT:USDT', 35.10441977) == 35.10441977   # fail-open

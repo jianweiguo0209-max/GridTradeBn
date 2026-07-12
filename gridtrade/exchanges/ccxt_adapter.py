@@ -201,6 +201,16 @@ class CcxtAdapter(ExchangeAdapter):
             p['postOnly'] = True
         return p
 
+    def quantize_amount(self, symbol, amount) -> float:
+        """按交易所精度表量化下单量（ccxt amount_to_precision）。markets 未加载则惰性加载；
+        任何异常 fail-open 原样返回（保守：宁可存原始值也不阻塞下单）。"""
+        try:
+            if not getattr(self.client, 'markets', None):
+                self.client.load_markets()
+            return float(self.client.amount_to_precision(self.to_native(symbol), amount))
+        except Exception:
+            return float(amount)
+
     def create_limit_order(self, symbol, side, price, size, *,
                            post_only=False, reduce_only=False, client_oid=None) -> Order:
         r = self.client.create_order(self.to_native(symbol), 'limit', side, size, price,

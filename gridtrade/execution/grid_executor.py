@@ -117,6 +117,9 @@ class GridExecutor:
         # 真中性：开网不建底仓，净仓从 0 开始（价涨→挂单成交转净空，价跌→转净多）。
 
         # 逐线挂限价单
+        # 下单量先自量化（memory quantized-size-fallback-bug：HL create 响应不带数量，
+        # "存回传 amount"退化为存原始值 → AVAX 等量化缩量币吃满永假、线卡死不补单）
+        wire_qty = self.adapter.quantize_amount(symbol, order_num)
         for i, p in enumerate(price_array):
             if p > entry:
                 side = 'sell'
@@ -125,11 +128,10 @@ class GridExecutor:
             else:
                 continue
             oid = self._next_oid(gid, i)
-            order = self.adapter.create_limit_order(symbol, side, p, order_num,
+            order = self.adapter.create_limit_order(symbol, side, p, wire_qty,
                                                     post_only=False, client_oid=oid)
-            # 行 size 存交易所量化后的量(回传 amount)：吃满判定(filled>=size)基准
-            # 必须与真实可成交量一致,否则量化缩量的单永远闭合不了(spec 2026-07-09)
-            placed = float(getattr(order, 'size', 0.0) or 0.0) or order_num
+            # 行 size 存真实可成交量：优先交易所回传，缺失时回退到自量化值（而非原始值）
+            placed = float(getattr(order, 'size', 0.0) or 0.0) or wire_qty
             self.orders.upsert(GridOrder(client_oid=oid, grid_id=gid, line_index=i,
                                          side=side, price=p, size=placed, status='open',
                                          exchange_order_id=getattr(order, 'id', None)))
@@ -154,6 +156,43 @@ class GridExecutor:
         g2 = self.grids.get(gid)
         self.grids.transition_status(gid, ACTIVE, expected_version=g2.version)
         return gid
+
+    def _replenish_opposite(self, grid_id, symbol, line_index, side):
+        """按 sync 同款守卫补对侧单（E2 兜底路径复用；guard=对侧 (line,side) 已有 open 行则跳过）。
+        与 sync 内联块语义一致（memory quantized-size-fallback-bug 修复配套）。"""
+        geom = self._geom.get(grid_id)
+        if not geom:
+            return False
+        price_array = geom['price_array']
+        opp_line = line_index - 1 if side == 'sell' else line_index + 1
+        if not (0 <= opp_line < len(price_array)):
+            return False
+        opp_side = 'buy' if side == 'sell' else 'sell'
+        open_lines = {(o.line_index, o.side)
+                      for o in self.orders.list_by_grid(grid_id) if o.status == 'open'}
+        if (opp_line, opp_side) in open_lines:
+            return False
+        p = price_array[opp_line]
+        rq = self.adapter.quantize_amount(symbol, geom['order_num'])
+        oid = self._next_oid(grid_id, opp_line)
+        order = self.adapter.create_limit_order(symbol, opp_side, p, rq,
+                                                post_only=False, client_oid=oid)
+        placed = float(getattr(order, 'size', 0.0) or 0.0) or rq
+        self.orders.upsert(GridOrder(client_oid=oid, grid_id=grid_id, line_index=opp_line,
+                                     side=opp_side, price=p, size=placed, status='open',
+                                     exchange_order_id=getattr(order, 'id', None)))
+        return True
+
+    def finalize_filled_order(self, grid_id, symbol, go):
+        """E2 兜底（memory quantized-size-fallback-bug）：交易所权威 status='filled' 但行仍
+        open（历史行存了未量化 size、吃满判定永假）→ 闭合行 + 腾线 + 补对侧。成交本体
+        已由 sync 按真实 fills 全量摄入（记账/账本无缺口），此处只修行状态与呼吸。"""
+        self.orders.upsert(GridOrder(client_oid=go.client_oid, grid_id=grid_id,
+                                     line_index=go.line_index, side=go.side, price=go.price,
+                                     size=go.size, status='closed',
+                                     exchange_order_id=go.exchange_order_id,
+                                     filled=float(go.filled or 0.0)))
+        self._replenish_opposite(grid_id, symbol, go.line_index, go.side)
 
     def sync(self, grid_id, symbol, *, skip_replenish=False, snapshot=None):
         geom = self._geom[grid_id]
@@ -212,8 +251,9 @@ class GridExecutor:
                     if (opp_line, opp_side) not in open_lines:
                         p = price_array[opp_line]
                         oid = self._next_oid(grid_id, opp_line)
+                        rq = self.adapter.quantize_amount(symbol, order_num)
                         try:
-                            order = self.adapter.create_limit_order(symbol, opp_side, p, order_num,
+                            order = self.adapter.create_limit_order(symbol, opp_side, p, rq,
                                                                     post_only=False, client_oid=oid)
                         except Exception as exc:
                             # 线上只有异常字符串可见：交易所拒补单（如 HL min $10）时必须带上
@@ -223,7 +263,7 @@ class GridExecutor:
                                 'replenish %s %s line=%d px=%.8g sz=%.8g notional=%.2f: %s'
                                 % (symbol, opp_side, opp_line, p, order_num,
                                    p * order_num, exc)) from exc
-                        placed = float(getattr(order, 'size', 0.0) or 0.0) or order_num
+                        placed = float(getattr(order, 'size', 0.0) or 0.0) or rq
                         self.orders.upsert(GridOrder(client_oid=oid, grid_id=grid_id, line_index=opp_line,
                                                      side=opp_side, price=p, size=placed, status='open',
                                                      exchange_order_id=getattr(order, 'id', None)))

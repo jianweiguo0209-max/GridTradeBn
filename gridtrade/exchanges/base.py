@@ -103,6 +103,12 @@ class ExchangeAdapter(ABC):
     @abstractmethod
     def fetch_positions(self, symbol: str) -> Position: ...
 
+    def quantize_amount(self, symbol: str, amount: float) -> float:
+        """交易所数量精度量化。默认原样返回（测试桩/无精度表交易所 fail-open）；
+        ccxt 适配器覆写为真实精度表。下单量必须先经它（memory quantized-size-fallback-bug：
+        HL create 响应不带数量，存储量依赖回传会退化为原始值 → 吃满判定永假）。"""
+        return float(amount)
+
     @abstractmethod
     def create_limit_order(self, symbol: str, side: str, price: float, size: float,
                            *, post_only: bool = False, reduce_only: bool = False,

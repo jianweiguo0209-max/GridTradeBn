@@ -99,7 +99,20 @@ class Reconciler:
                 # 'filled'=已吃满、成交由 sync 摄入(oid 已保真可匹配),重挂即重复建仓,禁止;
                 # 'open'=信息面盲区仍在挂,不动;其余(canceled/unknown)才撤旧重挂。
                 status = ex.adapter.order_status(symbol, oid)
-                if status in ('open', 'filled'):
+                if status == 'open':
+                    missing.pop(go.client_oid, None)
+                    continue
+                if status == 'filled':
+                    # E2 兜底(memory quantized-size-fallback-bug)：权威已吃满、成交已摄入
+                    # (filled>0)、且残量量化后为 0(该所不可成交之尘)——即"未量化 size 历史行
+                    # 吃满判定永假"的形状 → 闭合+腾线+补对侧,恢复呼吸。
+                    # 其余情形(成交在途 filled==0 / 残量可成交)保持旧行为:交给 sync 摄入闭合,
+                    # 提前闭合会孤儿化在途成交(E 系列事故史)。
+                    done = float(go.filled or 0.0)
+                    residual = float(go.size) - done
+                    if done > 0 and ex.adapter.quantize_amount(symbol, residual) <= 0:
+                        ex.finalize_filled_order(grid_id, symbol, go)
+                        replaced += 1
                     missing.pop(go.client_oid, None)
                     continue
                 try:
@@ -117,9 +130,18 @@ class Reconciler:
                                                filled=done))
                     missing.pop(go.client_oid, None)
                     continue
-                order = ex.adapter.create_limit_order(symbol, go.side, go.price, remnant,
+                rq = ex.adapter.quantize_amount(symbol, remnant)
+                if rq <= 0:                     # 残量量化后为 0 → 视为尘,闭合不重挂
+                    ex.orders.upsert(GridOrder(client_oid=go.client_oid, grid_id=grid_id,
+                                               line_index=go.line_index, side=go.side,
+                                               price=go.price, size=go.size, status='closed',
+                                               exchange_order_id=go.exchange_order_id,
+                                               filled=done))
+                    missing.pop(go.client_oid, None)
+                    continue
+                order = ex.adapter.create_limit_order(symbol, go.side, go.price, rq,
                                                       post_only=False, client_oid=go.client_oid)
-                placed = float(getattr(order, 'size', 0.0) or 0.0) or remnant
+                placed = float(getattr(order, 'size', 0.0) or 0.0) or rq
                 # size 校正为 filled+交易所量化后的残量：吃满判定基准与真实可成交量一致
                 ex.orders.upsert(GridOrder(client_oid=go.client_oid, grid_id=grid_id,
                                            line_index=go.line_index, side=go.side, price=go.price,
