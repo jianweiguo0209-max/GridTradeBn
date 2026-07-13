@@ -22,6 +22,15 @@ def test_classify_rate_limit(exc):
     assert classify_error(exc) == 'rate_limit'
 
 
+def test_binance_418_ban_classified_rate_limit():
+    # 币安 418(IP ban)/-1003 → ccxt DDoSProtection/RateLimitExceeded → rate_limit
+    # （退避用 rate_limit_base_delay 长冷却，spec 2026-07-14 §九）
+    import ccxt
+    from gridtrade.exchanges.resilience import classify_error
+    assert classify_error(ccxt.DDoSProtection('418 I am a teapot')) == 'rate_limit'
+    assert classify_error(ccxt.RateLimitExceeded('-1003 TOO_MANY_REQUESTS')) == 'rate_limit'
+
+
 @pytest.mark.parametrize('exc', [
     ccxt.AuthenticationError('t'),
     ccxt.InsufficientFunds('t'),

@@ -201,50 +201,7 @@ def migrate(store) -> list:
             ('add_grid_orders_filled', add_grid_orders_filled(store))]
 
 
-def validate_1m_cache(cache, *, dry_run=False, warm_fn=None, log=print):
-    """扫全 1m 缓存 → 分类 → 坏格聚合成天 → warm 重取（dry_run 时只报告）。幂等。
-    返回 {scanned, ok, range_mismatch, hour_gap, no_1h_ref, refetched_days, still_bad}。"""
-    import pandas as pd
-    from gridtrade.backtest.reservoir import validate_1m_cell, warm_reservoir_ohlcv
-    warm_fn = warm_fn or warm_reservoir_ohlcv
-    rep = {'scanned': 0, 'ok': 0, 'range_mismatch': 0, 'hour_gap': 0,
-           'no_1h_ref': 0, 'refetched_days': 0, 'still_bad': 0}
-    bad_by_day = {}
-    for sym in cache.list_symbols('1m'):
-        for day in cache.list_days('1m', sym):
-            rep['scanned'] += 1
-            ok, reason = validate_1m_cell(cache.read('1m', sym, day),
-                                          cache.read('1h', sym, day))
-            rep[reason] = rep.get(reason, 0) + 1
-            if not ok:
-                bad_by_day.setdefault(day, set()).add(sym)
-    if dry_run:
-        log('[validate-1m] DRY scanned=%d ok=%d range=%d gap=%d no1h=%d 坏天=%d'
-            % (rep['scanned'], rep['ok'], rep['range_mismatch'], rep['hour_gap'],
-               rep['no_1h_ref'], len(bad_by_day)))
-        return rep
-    for day, syms in sorted(bad_by_day.items()):
-        s_ms = int(pd.Timestamp(day).value // 1_000_000)
-        e_ms = s_ms + 86_400_000 - 1
-        warm_fn(cache, sorted(syms), s_ms, e_ms, log=log)
-        rep['refetched_days'] += 1
-        for sym in syms:
-            ok, _ = validate_1m_cell(cache.read('1m', sym, day),
-                                     cache.read('1h', sym, day))
-            if not ok:
-                rep['still_bad'] += 1
-    log('[validate-1m] scanned=%d refetched_days=%d still_bad=%d'
-        % (rep['scanned'], rep['refetched_days'], rep['still_bad']))
-    return rep
-
-
 def run(action, *, store_factory=None):
-    if action == 'validate-1m':      # 缓存维护，不需要 DB store
-        import os
-        from gridtrade.backtest.cache import ParquetCache
-        root = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                            '..', '..', 'data', 'hl_validate')
-        return validate_1m_cache(ParquetCache(root), dry_run='--dry-run' in sys.argv)
     store = store_factory() if store_factory else _store()
     if action == 'verify-ledger':
         adapter = None
@@ -268,7 +225,7 @@ def run(action, *, store_factory=None):
     if action == 'migrate':
         return migrate(store)
     raise SystemExit('usage: python -m gridtrade.runtime.dbadmin '
-                     '[create|reset|migrate|verify-ledger [--exchange] [--records]|validate-1m [--dry-run]]')
+                     '[create|reset|migrate|verify-ledger [--exchange] [--records]]')
 
 
 def main():

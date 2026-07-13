@@ -11,7 +11,7 @@ from gridtrade.exchanges.base import (Balance, CANDLE_COLS, ExchangeAdapter,
 
 class CcxtAdapter(ExchangeAdapter):
     name = 'ccxt'
-    quote_currency = 'USDT'   # 计价/保证金币种；HL 覆写为 USDC
+    quote_currency = 'USDT'   # 计价/保证金币种；子类可覆写为其他结算币
 
     def __init__(self, client, name: Optional[str] = None):
         self.client = client
@@ -37,10 +37,10 @@ class CcxtAdapter(ExchangeAdapter):
         for sym, m in self.client.markets.items():
             if m.get('swap') is not True:          # 只留永续合约，丢 spot/其它类型
                 continue
-            if not self._include_market(m):        # 交易所特有剔除(如 HL builder-dex)
+            if not self._include_market(m):        # 交易所特有剔除（子类按需过滤，见 _include_market）
                 continue
             canonical = self.to_canonical(sym)
-            if canonical in seen:                   # 同 canonical 去重（HL spot+swap/多键折叠）
+            if canonical in seen:                   # 同 canonical 去重（部分交易所 spot+swap 等多键折叠）
                 continue
             seen.add(canonical)
             info = m.get('info', {}) or {}
@@ -65,7 +65,7 @@ class CcxtAdapter(ExchangeAdapter):
         tf_ms = int(self.client.parse_timeframe(timeframe) * 1000)
         all_rows = []
         cursor = int(start_ms)
-        # 不向未来翻页：end_ms 可能是 datasource 给的"今天日终"(未来)，而部分交易所(HL)对
+        # 不向未来翻页：end_ms 可能是 datasource 给的"今天日终"(未来)，而部分交易所对
         # since>now 直接 5xx；用真实 now 封顶，分页到现有数据末尾即止。
         bound = min(int(end_ms), self._now_ms())
         guard = 0
@@ -88,8 +88,8 @@ class CcxtAdapter(ExchangeAdapter):
         df = df[(df['ts'] >= start_ms) & (df['ts'] <= end_ms)]
         df['candle_begin_time'] = pd.to_datetime(df['ts'], unit='ms')
         df['symbol'] = symbol
-        # ccxt 统一 vol 即真实 base 成交量（OKX 永续 volumeIndex=6 / HL 字段 v），故 volCcy=vol 正确。
-        # 报价成交额：OKX 真实 volCcyQuote 经 ccxt 统一接口取不到、HL 无此字段，故用 legacy 文档化
+        # ccxt 统一 vol 即真实 base 成交量（各所字段语义一致），故 volCcy=vol 正确。
+        # 报价成交额：部分交易所经 ccxt 统一接口取不到真实成交额（无对应字段），故用 legacy 文档化
         # 回退 (open+close)/2*vol（见 account_0/utils/stop_loss.py:280）。这样 vwap=quote_volume/volCcy
         # =(open+close)/2 不再恒等于 close，Vwapbias/MarketPl 因子在真实数据上保持有效。
         df['volCcy'] = df['vol']
@@ -129,7 +129,7 @@ class CcxtAdapter(ExchangeAdapter):
 
     def fetch_max_leverages(self) -> dict:
         """{canonical: maxLeverage} 自 ccxt markets(limits.leverage.max),实例缓存;
-        经 _include_market 守卫(HL 剔 builder-dex,防同名币低杠杆覆写主 dex)。"""
+        经 _include_market 守卫(子类按需剔除特殊市场,防同名币低杠杆覆写主市场)。"""
         cache = getattr(self, '_maxlev_cache', None)
         if cache is None:
             if not getattr(self.client, 'markets', None):
@@ -226,7 +226,7 @@ class CcxtAdapter(ExchangeAdapter):
 
     def create_stop_order(self, symbol, side, size, trigger_price, *,
                           reduce_only=True, slippage=0.15, client_oid=None) -> Order:
-        # 触发市价单：stopLossPrice -> HL tpsl='sl'；参考价传触发价本身，
+        # 触发市价单：ccxt 统一参数由各交易所子类翻译为原生字段；参考价传触发价本身，
         # 故成交底线 = trigger_price×(1∓slippage)，slippage 控制为保成交愿追多远。
         p = self._params(reduce_only, client_oid)
         p['stopLossPrice'] = trigger_price
@@ -262,9 +262,9 @@ class CcxtAdapter(ExchangeAdapter):
             ts = int(r['timestamp'])
             if since_ms is not None and ts < since_ms:
                 continue
-            # 通用兜底：只保留本币种行（适用于按 symbol 正确打标的交易所）。
-            # 注意 HL 例外——它返回账户级全币种且把【查询的 symbol】盖到每行，靠 symbol
-            # 区分不出币种，故 HyperliquidAdapter 覆写本方法改按 info.delta.coin 过滤。
+            # 通用兜底：只保留本币种行——按 symbol 正确打标的交易所走本通用路径。
+            # 若某交易所把查询的 symbol 盖到每行、无法据此区分币种，需由子类覆写本方法
+            # 改按其他字段（如 info 内的原生币种标识）过滤。
             if r.get('symbol') != native:
                 continue
             # ccxt 约定 amount 负=支付；统一成"支付为正"
