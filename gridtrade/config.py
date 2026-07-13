@@ -41,10 +41,10 @@ def _csv(env, key):
 @dataclass
 class DeployConfig:
     exchange: str
-    wallet_address: str
-    private_key: str
+    api_key: str
+    api_secret: str
     testnet: bool
-    quote_currency: str  # 计价/结算币覆写；'' -> 用适配器类默认（HL=USDC / OKX=USDT）
+    quote_currency: str  # 计价/结算币覆写；'' -> 用适配器类默认（Binance=USDT）
     database_url: str
     cap: float
     monitor_interval_sec: float
@@ -102,15 +102,19 @@ def load_deploy_config(env=None) -> DeployConfig:
     env = os.environ if env is None else env
     # 退役键守卫(spec 2026-07-07-account-leverage-gearing)：语义变更,禁止静默映射。
     for legacy, repl in (('LEVERAGE', 'GRID_GEARING(=旧LEVERAGE×0.68,默认3.4)'),
-                         ('CAP_EQUITY_FRAC', 'ACCOUNT_LEVERAGE(frac=AL/(N×gearing/2))')):
+                         ('CAP_EQUITY_FRAC', 'ACCOUNT_LEVERAGE(frac=AL/(N×gearing/2))'),
+                         # 币安迁移(spec 2026-07-14)：HL 键退役,语义变更禁静默映射
+                         ('HL_WALLET_ADDRESS', 'BINANCE_API_KEY'),
+                         ('HL_PRIVATE_KEY', 'BINANCE_API_SECRET'),
+                         ('HL_TESTNET', 'BINANCE_TESTNET')):
         if legacy in env:
             raise RuntimeError('env %s 已退役,请改用 %s' % (legacy, repl))
     cap = _f(env, 'CAP', 100.0)
     return DeployConfig(
-        exchange=_s(env, 'EXCHANGE', 'hyperliquid'),
-        wallet_address=_s(env, 'HL_WALLET_ADDRESS', ''),
-        private_key=_s(env, 'HL_PRIVATE_KEY', ''),
-        testnet=_b(env, 'HL_TESTNET', False),
+        exchange=_s(env, 'EXCHANGE', 'binance'),
+        api_key=_s(env, 'BINANCE_API_KEY', ''),
+        api_secret=_s(env, 'BINANCE_API_SECRET', ''),
+        testnet=_b(env, 'BINANCE_TESTNET', False),
         quote_currency=_s(env, 'QUOTE_CURRENCY', ''),
         database_url=_s(env, 'DATABASE_URL', ''),
         cap=cap,

@@ -253,8 +253,8 @@ def run(action, *, store_factory=None):
             from gridtrade.exchanges.registry import build_adapter
             cfg = load_deploy_config()
             adapter = build_adapter({'exchange': cfg.exchange,
-                                     'wallet_address': cfg.wallet_address,
-                                     'private_key': cfg.private_key,
+                                     'api_key': cfg.api_key,
+                                     'secret': cfg.api_secret,
                                      'testnet': cfg.testnet,
                                      'quote_currency': cfg.quote_currency})
         return verify_ledger(store, adapter=adapter, records='--records' in sys.argv)

@@ -1,5 +1,9 @@
+import pytest
+
 from gridtrade.exchanges.hyperliquid import HyperliquidAdapter
 from gridtrade.exchanges.registry import build_adapter
+
+pytestmark = pytest.mark.skip(reason='HL/OKX 退役,Task 14 删除')
 
 
 def test_testnet_uses_sandbox_url():

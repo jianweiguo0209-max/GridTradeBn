@@ -46,8 +46,8 @@ class Runtime:
 def build_runtime(config) -> Runtime:
     inner = build_adapter({
         'exchange': config.exchange,
-        'wallet_address': config.wallet_address,
-        'private_key': config.private_key,
+        'api_key': config.api_key,
+        'secret': config.api_secret,
         'testnet': config.testnet,
         'quote_currency': config.quote_currency,
     })

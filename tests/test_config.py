@@ -20,22 +20,22 @@ def test_compute_cap_clamps():
 def test_defaults_when_env_empty():
     cfg = load_deploy_config(env={})
     assert isinstance(cfg, DeployConfig)
-    assert cfg.exchange == 'hyperliquid'
+    assert cfg.exchange == 'binance'
     assert cfg.testnet is False
     assert cfg.cap == 100.0
     assert cfg.grid_gearing == 3.4 and cfg.account_leverage == 5.0
     assert cfg.monitor_interval_sec == 5.0
     assert cfg.scheduler_period == '12H'
     assert cfg.max_concurrent == 12
-    assert cfg.wallet_address == '' and cfg.private_key == ''
+    assert cfg.api_key == '' and cfg.api_secret == ''
 
 
 def test_parses_env_with_type_coercion():
     env = {
-        'EXCHANGE': 'okx',
-        'HL_WALLET_ADDRESS': '0xabc',
-        'HL_PRIVATE_KEY': 'deadbeef',
-        'HL_TESTNET': 'true',
+        'EXCHANGE': 'binance',
+        'BINANCE_API_KEY': '0xabc',
+        'BINANCE_API_SECRET': 'deadbeef',
+        'BINANCE_TESTNET': 'true',
         'DATABASE_URL': 'postgresql+psycopg2://u:p@h/db',
         'CAP': '250.5',
         'GRID_GEARING': '2.0',
@@ -46,8 +46,8 @@ def test_parses_env_with_type_coercion():
         'DEFAULT_CAP': '200',
     }
     cfg = load_deploy_config(env=env)
-    assert cfg.exchange == 'okx'
-    assert cfg.wallet_address == '0xabc' and cfg.private_key == 'deadbeef'
+    assert cfg.exchange == 'binance'
+    assert cfg.api_key == '0xabc' and cfg.api_secret == 'deadbeef'
     assert cfg.testnet is True
     assert cfg.database_url == 'postgresql+psycopg2://u:p@h/db'
     assert cfg.cap == 250.5 and cfg.grid_gearing == 2.0
@@ -57,10 +57,10 @@ def test_parses_env_with_type_coercion():
 
 
 def test_bool_parsing_variants():
-    assert load_deploy_config(env={'HL_TESTNET': 'YES'}).testnet is True
-    assert load_deploy_config(env={'HL_TESTNET': '1'}).testnet is True
-    assert load_deploy_config(env={'HL_TESTNET': 'off'}).testnet is False
-    assert load_deploy_config(env={'HL_TESTNET': 'false'}).testnet is False
+    assert load_deploy_config(env={'BINANCE_TESTNET': 'YES'}).testnet is True
+    assert load_deploy_config(env={'BINANCE_TESTNET': '1'}).testnet is True
+    assert load_deploy_config(env={'BINANCE_TESTNET': 'off'}).testnet is False
+    assert load_deploy_config(env={'BINANCE_TESTNET': 'false'}).testnet is False
 
 
 def test_default_cap_falls_back_to_cap_when_unset():
@@ -170,3 +170,20 @@ def test_shock_brake_config():
     assert cfg.shock_thr == 0.025 and cfg.shock_k_hours == 4 and cfg.shock_pause_hours == 2
     cfg2 = load_deploy_config(env={'SHOCK_THR': '0', 'SHOCK_K_HOURS': '2', 'SHOCK_PAUSE_HOURS': '6'})
     assert cfg2.shock_thr == 0.0 and cfg2.shock_k_hours == 2 and cfg2.shock_pause_hours == 6
+
+
+def test_binance_credentials_and_defaults():
+    from gridtrade.config import load_deploy_config
+    cfg = load_deploy_config({'BINANCE_API_KEY': 'k', 'BINANCE_API_SECRET': 's',
+                              'BINANCE_TESTNET': 'true'})
+    assert cfg.exchange == 'binance'          # 默认交易所=binance
+    assert cfg.api_key == 'k' and cfg.api_secret == 's'
+    assert cfg.testnet is True
+
+
+def test_hl_legacy_keys_rejected():
+    import pytest
+    from gridtrade.config import load_deploy_config
+    for key in ('HL_WALLET_ADDRESS', 'HL_PRIVATE_KEY', 'HL_TESTNET'):
+        with pytest.raises(RuntimeError):
+            load_deploy_config({key: 'x'})
