@@ -5,7 +5,7 @@ import re
 
 import pandas as pd
 
-from gridtrade.exchanges.base import CANDLE_COLS
+from gridtrade.exchanges.base import CANDLE_COLS, FundingPayment
 from gridtrade.exchanges.ccxt_adapter import CcxtAdapter
 
 # 币安 futures newClientOrderId 官方正则 ^[\.A-Z\:/a-z0-9_-]{1,36}$（含 ':' '.'）（spec §5.1）。
@@ -102,3 +102,75 @@ class BinanceAdapter(CcxtAdapter):
         df['symbol'] = symbol
         df['volCcy'] = df['vol']
         return df[CANDLE_COLS].sort_values('candle_begin_time').reset_index(drop=True)
+
+    # ---- 账户级批量读（monitor 5s 快照权重预算核心，spec §3.1）----
+    def _id_map(self):
+        """原生 id('BTCUSDT') → canonical。只收本结算币 swap；实例缓存。"""
+        if getattr(self, '_id_map_cache', None) is None:
+            if not getattr(self.client, 'markets', None):
+                self.client.load_markets()
+            m2 = {}
+            for m in (self.client.markets or {}).values():
+                if m.get('swap') is not True or not self._include_market(m):
+                    continue
+                m2[m['id']] = self.to_canonical(m['symbol'])
+            self._id_map_cache = m2
+        return self._id_map_cache
+
+    def fetch_open_orders_all(self, symbols):
+        # 无 symbol 的 openOrders：全账户一次（权重40），替代逐币 N 次
+        want = set(symbols)
+        return [o for o in (self._to_order(r)
+                            for r in self.client.fetch_open_orders(None))
+                if o.symbol in want]
+
+    def fetch_positions_all(self, symbols):
+        # positionRisk 全账户（权重5）；无持仓行=缺省（monitor 按 0 处理）
+        want = set(symbols)
+        out = {}
+        for p in self.client.fetch_positions():
+            sym = self.to_canonical(p['symbol'])
+            if sym not in want:
+                continue
+            contracts = float(p.get('contracts') or 0.0)
+            out[sym] = contracts if p.get('side') == 'long' else -contracts
+        return out
+
+    def fetch_prices_all(self, symbols):
+        # 全市场 ticker/price（权重2），替代逐币 fetchTicker
+        want = set(symbols)
+        idmap = self._id_map()
+        out = {}
+        for r in self.client.fapiPublicGetTickerPrice():
+            sym = idmap.get(r.get('symbol'))
+            if sym in want:
+                out[sym] = float(r['price'])
+        for s in want - set(out):          # 罕见后备（新上市 markets 未刷新）
+            out[s] = float(self.fetch_price(s))
+        return out
+
+    def fetch_funding_payments_all(self, symbols, since_ms=None):
+        """income(FUNDING_FEE) 账户级单流（权重30）——币安按 symbol 正确打标，
+        分组回各币种。无 since → 币安默认近7天。统一"支付为正"（income 正=收入取负）。"""
+        idmap = self._id_map()
+        out = {s: [] for s in symbols}
+        params = {'incomeType': 'FUNDING_FEE', 'limit': 1000}
+        if since_ms is not None:
+            params['startTime'] = int(since_ms)
+        guard = 0
+        while guard < 50:
+            guard += 1
+            rows = self.client.fapiPrivateGetIncome(dict(params))
+            for r in rows:
+                ts = int(r['time'])
+                if since_ms is not None and ts < since_ms:
+                    continue
+                sym = idmap.get(r.get('symbol'))
+                if sym in out:
+                    out[sym].append(FundingPayment(ts=ts, amount=-float(r['income'])))
+            if len(rows) < 1000:
+                break
+            params['startTime'] = int(rows[-1]['time']) + 1
+        for s in out:
+            out[s].sort(key=lambda p: p.ts)
+        return out

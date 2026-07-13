@@ -38,6 +38,27 @@ class FakeBinanceClient(FakeCcxtClient):
             [1704070800000, "1.5", "2.5", "1.0", "2.0", "20.0", 1704074399999,
              "36.2", 8, "9.0", "16.3", "0"],
         ]
+    def fetch_positions(self, symbols=None, params=None):
+        # 无参=全账户 positionRisk（币安权重5）
+        return [{'symbol': 'BTC/USDT:USDT', 'contracts': 3.0, 'side': 'long',
+                 'entryPrice': 100.0},
+                {'symbol': 'ETH/USDT:USDT', 'contracts': 2.0, 'side': 'short',
+                 'entryPrice': 50.0}]
+    def fapiPublicGetTickerPrice(self, params=None):
+        return [{'symbol': 'BTCUSDT', 'price': '50000.5'},
+                {'symbol': 'ETHUSDT', 'price': '3000.25'},
+                {'symbol': 'BTCUSDC', 'price': '49999.0'}]
+    def fapiPrivateGetIncome(self, params=None):
+        self.income_calls = getattr(self, 'income_calls', [])
+        self.income_calls.append(dict(params or {}))
+        return [
+            {'symbol': 'BTCUSDT', 'incomeType': 'FUNDING_FEE', 'income': '-0.5',
+             'time': 2000},
+            {'symbol': 'ETHUSDT', 'incomeType': 'FUNDING_FEE', 'income': '0.3',
+             'time': 1000},
+            {'symbol': 'XRPUSDT', 'incomeType': 'FUNDING_FEE', 'income': '9.9',
+             'time': 1500},
+        ]
 
 
 def _binance(client=None):
@@ -118,3 +139,44 @@ def test_fetch_ohlcv_empty():
     c.fapiPublicGetKlines = lambda params=None: []
     df = _binance(c).fetch_ohlcv('BTC/USDT:USDT', '1h', 0, 10**13)
     assert df.empty
+
+
+def test_fetch_open_orders_all_single_call():
+    c = FakeBinanceClient()
+    calls = []
+    def fetch_open_orders(symbol=None, params=None):
+        calls.append(symbol)
+        return [{'id': '7', 'clientOrderId': '1:0:0', 'symbol': 'BTC/USDT:USDT',
+                 'side': 'buy', 'price': 1.0, 'amount': 2.0, 'filled': 0.0,
+                 'status': 'open'},
+                {'id': '8', 'clientOrderId': '2:0:0', 'symbol': 'DOGE/USDT:USDT',
+                 'side': 'buy', 'price': 1.0, 'amount': 2.0, 'filled': 0.0,
+                 'status': 'open'}]
+    c.fetch_open_orders = fetch_open_orders
+    out = _binance(c).fetch_open_orders_all(['BTC/USDT:USDT'])
+    assert calls == [None]                       # 无 symbol=全账户一次（权重40）
+    assert [o.symbol for o in out] == ['BTC/USDT:USDT']   # 只回请求的 symbols
+
+
+def test_fetch_positions_all_signed():
+    out = _binance().fetch_positions_all(['BTC/USDT:USDT', 'ETH/USDT:USDT',
+                                          'SOL/USDT:USDT'])
+    assert out['BTC/USDT:USDT'] == 3.0
+    assert out['ETH/USDT:USDT'] == -2.0          # short → 负
+    assert 'SOL/USDT:USDT' not in out            # 无持仓行=缺省（调用方按0处理）
+
+
+def test_fetch_prices_all_ticker_price():
+    out = _binance().fetch_prices_all(['BTC/USDT:USDT', 'ETH/USDT:USDT'])
+    assert out == {'BTC/USDT:USDT': 50000.5, 'ETH/USDT:USDT': 3000.25}
+
+
+def test_fetch_funding_payments_all_income_grouped():
+    c = FakeBinanceClient()
+    out = _binance(c).fetch_funding_payments_all(
+        ['BTC/USDT:USDT', 'ETH/USDT:USDT'], since_ms=500)
+    # income 正=收入 → 统一"支付为正"取负；按币分组、ts 升序；XRP 不在请求内被丢弃
+    assert [(p.ts, p.amount) for p in out['BTC/USDT:USDT']] == [(2000, 0.5)]
+    assert [(p.ts, p.amount) for p in out['ETH/USDT:USDT']] == [(1000, -0.3)]
+    assert c.income_calls[0]['incomeType'] == 'FUNDING_FEE'
+    assert c.income_calls[0]['startTime'] == 500
