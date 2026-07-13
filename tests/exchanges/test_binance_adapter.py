@@ -28,6 +28,16 @@ class FakeBinanceClient(FakeCcxtClient):
     def fapiPublicGetPing(self, params=None):
         self.pinged += 1
         return {}
+    def fapiPublicGetKlines(self, params=None):
+        self.kline_calls = getattr(self, 'kline_calls', [])
+        self.kline_calls.append(dict(params or {}))
+        # 原生 12 列（数值为字符串——忠实币安响应）
+        return [
+            [1704067200000, "1.0", "2.0", "0.5", "1.5", "10.0", 1704070799999,
+             "13.7", 5, "4.0", "5.5", "0"],
+            [1704070800000, "1.5", "2.5", "1.0", "2.0", "20.0", 1704074399999,
+             "36.2", 8, "9.0", "16.3", "0"],
+        ]
 
 
 def _binance(client=None):
@@ -85,3 +95,26 @@ def test_from_credentials_testnet_sandbox():
     assert isinstance(a.client, ccxt.binanceusdm)
     # sandbox 模式生效：api url 指向 testnet
     assert 'testnet' in str(a.client.urls['api']).lower()
+
+
+def test_fetch_ohlcv_real_quote_volume():
+    from gridtrade.exchanges.base import CANDLE_COLS
+    c = FakeBinanceClient()
+    a = _binance(c)
+    df = a.fetch_ohlcv('BTC/USDT:USDT', '1h', 0, 10**13)
+    assert list(df.columns) == CANDLE_COLS
+    # 真实 quote_volume（第8列），非 (open+close)/2*vol 估算（spec §5.4）
+    assert df['quote_volume'].tolist() == [13.7, 36.2]
+    assert df['volCcy'].tolist() == [10.0, 20.0]
+    assert df['close'].tolist() == [1.5, 2.0]
+    # 原生 id + interval 直传
+    assert c.kline_calls[0]['symbol'] == 'BTCUSDT'
+    assert c.kline_calls[0]['interval'] == '1h'
+    assert c.kline_calls[0]['limit'] == 1500
+
+
+def test_fetch_ohlcv_empty():
+    c = FakeBinanceClient()
+    c.fapiPublicGetKlines = lambda params=None: []
+    df = _binance(c).fetch_ohlcv('BTC/USDT:USDT', '1h', 0, 10**13)
+    assert df.empty
