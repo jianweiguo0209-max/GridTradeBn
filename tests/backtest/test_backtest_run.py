@@ -88,28 +88,6 @@ def test_select_grids_then_assemble_equals_build_grid_tasks(tmp_path):
     assert key(a) == key(b)
 
 
-def test_pick_1h_source_boundaries():
-    import pandas as pd
-    from gridtrade.backtest.backtest_run import _pick_1h_source
-    now = pd.Timestamp('2026-07-05 00:00:00')
-    assert _pick_1h_source(now - pd.Timedelta(days=199), now) == 'api'        # API 可达 → 现路径
-    assert _pick_1h_source(now - pd.Timedelta(days=201), now) == 'reservoir'  # 超滚动范围 → 归档
-
-
-def test_main_reservoir_guard_before_network(monkeypatch):
-    # warm_start < RESERVOIR_START → SystemExit，且守卫先于任何网络调用（_hl_datasource_1h 不被触发）
-    import pytest
-    import gridtrade.backtest.backtest_run as B
-
-    def _no_network(cache):
-        raise AssertionError('守卫应在触网之前生效')
-    monkeypatch.setattr(B, '_hl_datasource_1h', _no_network)
-    with pytest.raises(SystemExit) as ei:
-        B.main(['2025-07-01', '2025-07-20', '1m'])   # warm_start=2025-06-17 < 2025-07-31
-    msg = str(ei.value)
-    assert 'Reservoir' in msg and '2025-08-14' in msg   # 报错含归档起点换算出的最早窗口起点
-
-
 def test_filter_tasks_symbol_lock_semantics():
     # 镜像实盘 SymbolLockGate：同币 12h 锁窗内再选中 → 剔除且不递补；跨币不互扰；顺序保持。
     import pandas as pd
@@ -185,3 +163,12 @@ def test_run_backtest_shock_brake_wiring(tmp_path):
     blocked = blocked_rts(cache, syms, ws, we, '1h', 4, 0.04, 2)
     assert not set(pd.to_datetime(brk['run_time'])) & blocked   # 被拦 rt 上无格
     assert len(brk) <= len(base)
+
+
+def test_default_fee_rates_binance_vip0():
+    import inspect
+    from gridtrade.backtest.backtest_run import simulate_tasks, run_backtest
+    for fn in (simulate_tasks, run_backtest):
+        sig = inspect.signature(fn)
+        assert sig.parameters['fee_rate'].default == 0.0002
+        assert sig.parameters['taker_rate'].default == 0.0005

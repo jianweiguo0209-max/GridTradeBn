@@ -3,12 +3,11 @@
 
 本模块是**唯一预热+回测入口**：
   - run_backtest(...)         纯离线核心（只读 cache，无网络）——测试/复用都走它。
-  - prewarm_1h(...)           phase1：全市场(−黑名单) 1h 选币 OHLCV(HL API，含暖机)，幂等按天缓存复用。
-  - prewarm_sim_and_funding() phase2：仅选中币 持仓(1m 走 Reservoir S3 / 其它走 HL API) + funding。
-                              1m 用 Reservoir 需 AWS 凭证（requester-pays）。
+  - prewarm_1h(...)           phase1：全市场(−黑名单) 1h 选币 OHLCV(Vision 归档+API 尾补)，幂等按天缓存复用。
+  - prewarm_sim_and_funding() phase2：仅选中币 持仓K线+funding(Vision 归档+API 尾补)。
   - main()                    CLI：全市场解析+1h预热 → select_grids(一次) → 仅选中币预热 → 回测 → summarize → CSV。
                               跑：TZ=Asia/Shanghai .venv/bin/python -m gridtrade.backtest.backtest_run [days] [sim_tf]
-网络依赖（ccxt/adapter/reservoir）全部在 prewarm_1h/prewarm_sim_and_funding/main 内**惰性导入**，保持核心离线可测。
+网络依赖（ccxt/adapter/vision）全部在 prewarm_1h/prewarm_sim_and_funding/main 内**惰性导入**，保持核心离线可测。
 """
 import heapq
 import os
@@ -21,16 +20,16 @@ from gridtrade.config import DEFAULT_STOP_CFG, DEFAULT_STRATEGY_CONFIG
 from gridtrade.core.grid_engine import simulate_grid_engine
 from gridtrade.core.grid_params import calc_grid_params_v1, calc_grid_params_v2
 
-# HL 回测默认策略（镜像 gridtrade.config 已验证参数；stop_loss_config 补 funding 止损）
-HL_STRATEGY = {**DEFAULT_STRATEGY_CONFIG,
+# 回测默认策略（镜像 gridtrade.config 已验证参数；stop_loss_config 补 funding 止损）
+BT_STRATEGY = {**DEFAULT_STRATEGY_CONFIG,
                'stop_loss_config': dict(DEFAULT_STOP_CFG),
                'active_stop_mode': 'pv',   # 主动止损默认 pv（回测扫描最优）
                'pv_config': {'mult': DEFAULT_STOP_CFG['pv_mult'], 'pnl_thr': DEFAULT_STOP_CFG['pv_pnl_thr'],
                              'period': DEFAULT_STOP_CFG['pv_period'], 'n': DEFAULT_STOP_CFG['pv_n']}}
-HL_FACTORS = dict(DEFAULT_STRATEGY_CONFIG['factors'])
+BT_FACTORS = dict(DEFAULT_STRATEGY_CONFIG['factors'])
 
 # 回测票池口径对齐 prod：全市场动态 −黑名单 −逐 run_time PIT $1M 成交额地板。
-# 票池在 main() 里由 resolve_universe 解析全市场（见 main）；此处只放阈值/黑名单常量（可 env 覆写）。
+# 票池在 main() 里由 vision.list_archive_symbols 解析全市场（归档含退市，见 main）；此处只放阈值/黑名单常量（可 env 覆写）。
 BT_MIN_QUOTE_VOLUME_24H = float(os.environ.get('BT_MIN_QUOTE_VOLUME_24H', '1000000'))
 BT_BLACKLIST = tuple(s.strip() for s in os.environ.get('BT_BLACKLIST', '').split(',') if s.strip())
 
@@ -65,15 +64,6 @@ def _tiers_from_env():
         tier0=_csv(t0v) if t0v is not None else DEFAULT_TIER_POLICY.tier0,
         tier1=_csv(t1v) if t1v is not None else DEFAULT_TIER_POLICY.tier1,
         tier2_cap=int(t2v) if t2v is not None else DEFAULT_TIER_POLICY.tier2_cap)
-
-# 1h 选币数据源自动切换：HL API 1h 滚动 ~5000 根≈208 天；更早窗口自动改走 Reservoir 归档。
-RESERVOIR_START = pd.Timestamp('2025-07-31')   # Reservoir 1s 归档起点（实测列桶）
-_API_1H_MAX_DAYS = 200                          # API 滚动可达阈值（208 天留余量）
-
-
-def _pick_1h_source(warm_start, now):
-    """纯函数：暖机起点早于 API 滚动可达范围 → 'reservoir'，否则 'api'（现路径字节不变）。"""
-    return 'reservoir' if warm_start < now - pd.Timedelta(days=_API_1H_MAX_DAYS) else 'api'
 
 
 def holding_bars(series_df, run_time, period):
@@ -127,7 +117,7 @@ def _simulate_grid_task(payload):
     (rt, offset, sym, entry, gp, bars_df, funding_df), cfg = payload
     pv_cfg = cfg['pv_cfg']
     sim = simulate_grid_engine(bars_df, gp, cap=1000.0, leverage=cfg['lev'], fee=cfg['fee_rate'],
-                               c_rate_taker=cfg.get('taker_rate', 0.00045),
+                               c_rate_taker=cfg.get('taker_rate', 0.0005),
                                max_rate=cfg['max_rate'], min_amount=0.0, stop_cfg=cfg['stop_cfg'],
                                funding_df=funding_df, neutral_init=False,
                                active_stop_mode=cfg['active_stop_mode'],
@@ -227,13 +217,13 @@ def build_grid_tasks(cache, universe, window_start, window_end, strategy_config,
                                sim_timeframe=sim_timeframe, timeframe=timeframe, log=log)
 
 
-def simulate_tasks(data_tasks, *, leverage, fee_rate=0.00015, taker_rate=0.00045,
+def simulate_tasks(data_tasks, *, leverage, fee_rate=0.0002, taker_rate=0.0005,
                    max_rate=0.68, stop_cfg=None,
                    active_stop_mode='pv', pv_cfg=None, workers=1):
     """对已组装的 data_tasks 跑仿真（可并行）→ 明细 DataFrame。仿真配置在此传入，故同一批
     data_tasks 可反复用不同 (active_stop_mode/pv_cfg/stop_cfg) 仿真——扫参提速的关键。
-    fee_rate=maker（网格挂单成交，默认 1.5bps）、taker_rate=taker（平仓/止损/破网，默认
-    4.5bps）——对齐 HL base 档实盘费率（见 memory backtest-fee-overcharge）。"""
+    fee_rate=maker（网格挂单成交，默认 2bps）、taker_rate=taker（平仓/止损/破网，默认
+    5bps）——对齐币安 USDT-M VIP0 无折扣费率（maker 2bps/taker 5bps，用户定 2026-07-14）。"""
     cfg = {'lev': leverage, 'fee_rate': fee_rate, 'taker_rate': taker_rate,
            'max_rate': max_rate, 'stop_cfg': stop_cfg,
            'active_stop_mode': active_stop_mode, 'pv_cfg': pv_cfg or {}}
@@ -314,7 +304,7 @@ def allocate_with_tiers(ranked_picks, tiers, period='12H'):
 
 
 def run_backtest(cache, universe, window_start, window_end, strategy_config, factors,
-                 *, timeframe='1h', sim_timeframe=None, fee_rate=0.00015, taker_rate=0.00045,
+                 *, timeframe='1h', sim_timeframe=None, fee_rate=0.0002, taker_rate=0.0005,
                  max_rate=0.68, leverage=None, min_quote_volume=0.0, blacklist=(),
                  workers=1, symbol_lock=False, tiers=None, tier_cand_k=5,
                  shock_brake=None, log=print):
@@ -382,70 +372,78 @@ def run_backtest(cache, universe, window_start, window_end, strategy_config, fac
                           pv_cfg=strategy_config.get('pv_config', {}), workers=workers)
 
 
-def _hl_datasource_1h(cache):
-    """构造带退避的 HL 适配器 + 1h DataSource（网络；惰性导入）。返回 (adapter, ds_1h)。"""
+def _binance_datasource_1h(cache):
+    """构造带退避的币安公共适配器 + 1h DataSource（网络；惰性导入；无需 API key）。"""
     import time
     import ccxt
     from gridtrade.backtest.datasource import DataSource
-    from gridtrade.exchanges.hyperliquid import HyperliquidAdapter
+    from gridtrade.exchanges.binance import BinanceAdapter
 
-    class _RetryHL(HyperliquidAdapter):
-        """对 HL /info 间歇 5xx/网络错误做指数退避（预热用；不污染 core/live）。"""
+    class _RetryBinance(BinanceAdapter):
+        """对间歇 5xx/网络错误指数退避（预热用；不污染 core/live）。"""
         def _retry(self, fn, *a, **k):
             last = None
             for i in range(12):
                 try:
                     return fn(*a, **k)
-                except (ccxt.ExchangeNotAvailable, ccxt.NetworkError, ccxt.RequestTimeout) as e:
+                except (ccxt.ExchangeNotAvailable, ccxt.NetworkError,
+                        ccxt.RequestTimeout) as e:
                     last = e
                     time.sleep(min(2.0 * (i + 1), 8.0))
             raise last
 
         def fetch_ohlcv(self, symbol, timeframe, start_ms, end_ms):
-            return self._retry(super().fetch_ohlcv, symbol, timeframe, start_ms, end_ms)
+            return self._retry(super().fetch_ohlcv, symbol, timeframe,
+                               start_ms, end_ms)
 
         def fetch_funding_history(self, symbol, start_ms, end_ms):
-            return self._retry(super().fetch_funding_history, symbol, start_ms, end_ms)
+            return self._retry(super().fetch_funding_history, symbol,
+                               start_ms, end_ms)
 
-    adapter = _RetryHL(ccxt.hyperliquid({'enableRateLimit': True, 'timeout': 30000}))
-    # builder-dex 白名单（spec 2026-07-12 阶段1，仅回测层）：BT_BUILDER_DEXES=xyz,mkts…
-    # 放行进候选票池（适配器仍强制 结算币==USDC）；默认空=现状零变化，live factory 不读此键。
-    bd = os.environ.get('BT_BUILDER_DEXES', '')
-    if bd.strip():
-        adapter.builder_dexes = tuple(x.strip() for x in bd.split(',') if x.strip())
+    adapter = _RetryBinance(ccxt.binanceusdm({'enableRateLimit': True,
+                                              'timeout': 30000}))
     return adapter, DataSource(adapter, cache, timeframe='1h')
 
 
 def prewarm_1h(cache, universe, warm_start_ms, end_ms, *, log=print):
-    """phase1：全市场 1h 选币 OHLCV(含暖机)。返回 adapter（复用于 phase2）。"""
+    """phase1：全市场 1h 选币 OHLCV——Vision 归档批量 + API 尾补(归档滞后1-2天)。
+    返回 adapter（复用于 phase2）。"""
     from gridtrade.backtest import prewarm as PW
-    adapter, ds_1h = _hl_datasource_1h(cache)
-    log('[prewarm] 1h 选币(全市场 %d): %s'
-        % (len(universe), PW.prewarm_ohlcv(ds_1h, universe, warm_start_ms, end_ms)))
+    from gridtrade.backtest import vision as V
+    adapter, ds_1h = _binance_datasource_1h(cache)
+    st = V.warm_vision(cache, universe, warm_start_ms, end_ms,
+                       timeframes=('1h',), log=log)
+    log('[prewarm] 1h@Vision(全市场 %d): %s' % (len(universe), st))
+    log('[prewarm] 1h 尾补@API: %s'
+        % PW.prewarm_ohlcv(ds_1h, universe, warm_start_ms, end_ms))
     return adapter
 
 
 def prewarm_sim_and_funding(cache, adapter, selected, win_start_ms, end_ms, *,
                             sim_timeframe='1m', log=print):
-    """phase2：仅选中币的持仓 OHLCV(1m 走 Reservoir / 其它走 HL) + funding。
-    sim_timeframe=='1m' 时 Reservoir 是 requester-pays，需已配 AWS 凭证。网络依赖惰性导入。"""
+    """phase2：仅选中币 持仓K线(Vision+API 尾补) + funding(Vision+API 尾补)。
+    funding 月度归档无日度文件，当月尾部天然由 API 补（spec §6.2）。"""
     from gridtrade.backtest import prewarm as PW
+    from gridtrade.backtest import vision as V
     from gridtrade.backtest.datasource import DataSource
-    from gridtrade.backtest.reservoir import warm_reservoir_1m
     sim_tf = sim_timeframe or '1h'
-    if sim_tf == '1m':
-        sr = warm_reservoir_1m(cache, selected, win_start_ms, end_ms, log=log)
-        log('[prewarm] 1m@Reservoir(选中 %d): %s' % (len(selected), sr))
-        if sr['rows'] == 0 and sr['skipped_cached'] == 0:
-            raise RuntimeError('Reservoir 未拉到任何 1m 数据——检查 AWS 凭证/桶权限/币种 '
-                               '(retry_later=%d)' % sr['retry_later'])
-    elif sim_tf != '1h':
+    if sim_tf != '1h':
+        st = V.warm_vision(cache, selected, win_start_ms, end_ms,
+                           timeframes=(sim_tf,), log=log)
+        log('[prewarm] %s@Vision(选中 %d): %s' % (sim_tf, len(selected), st))
         ds = DataSource(adapter, cache, timeframe=sim_tf)
-        log('[prewarm] %s 持仓(选中 %d): %s'
-            % (sim_tf, len(selected), PW.prewarm_ohlcv(ds, selected, win_start_ms, end_ms)))
+        api = PW.prewarm_ohlcv(ds, selected, win_start_ms, end_ms)
+        log('[prewarm] %s 尾补@API: %s' % (sim_tf, api))
+        if selected and st[sim_tf]['rows'] == 0 and st['skipped_cached'] == 0 \
+                and api['rows'] == 0:
+            raise RuntimeError('%s 数据完全缺失——检查网络/币种/窗口 (retry_later=%d)'
+                               % (sim_tf, st['retry_later']))
+    fst = V.warm_vision(cache, selected, win_start_ms, end_ms,
+                        timeframes=('funding',), log=log)
+    log('[prewarm] funding@Vision(选中 %d): %s' % (len(selected), fst))
     ds_1h = DataSource(adapter, cache, timeframe='1h')
-    log('[prewarm] funding(选中 %d): %s'
-        % (len(selected), PW.prewarm_funding(ds_1h, selected, win_start_ms, end_ms)))
+    log('[prewarm] funding 尾补@API: %s'
+        % PW.prewarm_funding(ds_1h, selected, win_start_ms, end_ms))
 
 
 _WARMUP_DAYS = 14   # 选币 1h 暖机（窗口前多取的天数）
@@ -486,23 +484,15 @@ def main(argv=None):
     def _ms(ts):
         return int(ts.value // 1_000_000)
 
-    root = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'data', 'hl_validate')
+    from gridtrade.backtest import vision as V
+    root = V.default_cache_root()
     cache = ParquetCache(root)
     workers = int(os.environ.get('BT_WORKERS', '1'))
     print('[BT] window %s -> %s | sim_tf=%s' % (win_start, win_end, sim_tf))
 
-    from gridtrade.backtest.prewarm import resolve_universe
-
     t0 = time.time()
-    # 1h 数据源按窗口自动切换（单 run 单源无拼缝）；守卫先于任何网络调用
-    source = _pick_1h_source(warm_start, pd.Timestamp.utcnow().tz_localize(None))
-    print('[BT] 1h 数据源: %s' % source)
-    if source == 'reservoir' and warm_start < RESERVOIR_START:
-        raise SystemExit('[BT] 窗口过早：Reservoir 归档起点 %s，含 %d 天暖机最早窗口起点 %s'
-                         % (RESERVOIR_START.date(), _WARMUP_DAYS,
-                            (RESERVOIR_START + pd.Timedelta(days=_WARMUP_DAYS)).date()))
     # phase1: 解析全市场票池(−黑名单) + 预热全市场 1h
-    _adapter, _ds1h = _hl_datasource_1h(cache)
+    _adapter, _ds1h = _binance_datasource_1h(cache)
     tiers = _tiers_from_env()
     if tiers is not None and os.environ.get('BT_SYMBOL_LOCK', '').lower() in ('1', 'true', 'on'):
         raise SystemExit('BT_TIER* 与 BT_SYMBOL_LOCK 互斥（两套口径不叠加）')
@@ -512,21 +502,20 @@ def main(argv=None):
         bt_blacklist = effective_blacklist(BT_BLACKLIST, tiers)
         print('[BT] tiers 启用: tier0=%d tier1=%d cap=%d' %
               (len(tiers.tier0), len(tiers.tier1), tiers.tier2_cap))
-    universe = resolve_universe(_ds1h, blacklist=bt_blacklist)
-    print('[BT] 全市场票池 %d 币(−黑名单 %d)' % (len(universe), len(bt_blacklist)))
-    if source == 'reservoir':
-        from gridtrade.backtest import reservoir as RV
-        print('[BT] 1h+1m 预热@Reservoir: %s'
-              % RV.warm_reservoir_ohlcv(cache, universe, _ms(warm_start), _ms(win_end),
-                                        timeframes=('1h', '1m')))
-    else:
-        from gridtrade.backtest import prewarm as PW
-        print('[BT] 1h 预热: %s' % PW.prewarm_ohlcv(_ds1h, universe, _ms(warm_start), _ms(win_end)))
+    # 票池=归档全量合约（含退市，无幸存者偏差，spec §6.1）−黑名单
+    universe = sorted(set(V.list_archive_symbols()) - set(bt_blacklist))
+    print('[BT] 全市场票池 %d 币(归档含退市,−黑名单 %d)' % (len(universe), len(bt_blacklist)))
+    st1h = V.warm_vision(cache, universe, _ms(warm_start), _ms(win_end),
+                         timeframes=('1h',))
+    print('[BT] 1h 预热@Vision: %s' % st1h)
+    from gridtrade.backtest import prewarm as PW
+    print('[BT] 1h 尾补@API: %s'
+          % PW.prewarm_ohlcv(_ds1h, universe, _ms(warm_start), _ms(win_end)))
 
     # 选币(1h + PIT $1M 地板 + 黑名单)——一次；权重/方向可经 BT_WEIGHTS/BT_SGCZ_DESC 覆盖
     _cand_k = int(os.environ.get('BT_TIER_CAND_K', 5)) if tiers is not None else 1
-    _sc, _fac = _weights_from_env(HL_STRATEGY, HL_FACTORS)
-    if _sc is not HL_STRATEGY or _fac is not HL_FACTORS:
+    _sc, _fac = _weights_from_env(BT_STRATEGY, BT_FACTORS)
+    if _sc is not BT_STRATEGY or _fac is not BT_FACTORS:
         print('[BT] 权重覆盖: weights=%s Sgcz_asc=%s'
               % (_sc['weight_list'], _fac.get('Sgcz_5')))
     grids = select_grids(cache, universe, win_start, win_end, _sc, _fac,
@@ -534,7 +523,7 @@ def main(argv=None):
                          blacklist=bt_blacklist, workers=workers,
                          candidates_per_rt=_cand_k)
     if tiers is not None:
-        grids, _ts = allocate_with_tiers(grids, tiers, period=HL_STRATEGY['period'])
+        grids, _ts = allocate_with_tiers(grids, tiers, period=BT_STRATEGY['period'])
         print('[BT] tiers: rejected t1=%d t2=%d fallback=%s empty=%d'
               % (_ts['rejected_tier1'], _ts['rejected_tier2'],
                  _ts['fallback_hist'], _ts['empty_rounds']))
@@ -547,18 +536,18 @@ def main(argv=None):
     print('[BT] prewarm done %.1fs' % (time.time() - t0))
 
     t0 = time.time()
-    tasks = assemble_grid_tasks(cache, grids, HL_STRATEGY,
+    tasks = assemble_grid_tasks(cache, grids, BT_STRATEGY,
                                 sim_timeframe=(None if sim_tf == '1h' else sim_tf), timeframe='1h')
     if os.environ.get('BT_SYMBOL_LOCK', '').lower() in ('1', 'true', 'on'):
-        tasks, n_rej = filter_tasks_symbol_lock(tasks, period=HL_STRATEGY['period'])
+        tasks, n_rej = filter_tasks_symbol_lock(tasks, period=BT_STRATEGY['period'])
         print('[BT] symbol_lock: rejected %d tasks (每币≤1，与实盘 SymbolLockGate 同口径)' % n_rej)
-    df = simulate_tasks(tasks, leverage=HL_STRATEGY['leverage'],
-                        stop_cfg=HL_STRATEGY['stop_loss_config'],
-                        active_stop_mode=HL_STRATEGY.get('active_stop_mode', 'pv'),
-                        pv_cfg=HL_STRATEGY.get('pv_config', {}), workers=workers)
+    df = simulate_tasks(tasks, leverage=BT_STRATEGY['leverage'],
+                        stop_cfg=BT_STRATEGY['stop_loss_config'],
+                        active_stop_mode=BT_STRATEGY.get('active_stop_mode', 'pv'),
+                        pv_cfg=BT_STRATEGY.get('pv_config', {}), workers=workers)
     print('[BT] backtest %.1fs (workers=%d)' % (time.time() - t0, workers))
 
-    tag = '@Reservoir+funding' if sim_tf == '1m' else ''
+    tag = '@Vision+funding' if sim_tf == '1m' else ''
     print('\n===== 回测汇总（选币1h + 持仓%s%s）=====' % (sim_tf, tag))
     for k, v in summarize(df).items():
         print('  %s: %s' % (k, v))

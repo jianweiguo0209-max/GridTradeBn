@@ -94,16 +94,3 @@ def test_builder_dex_whitelist_allows_usdc_dex_only():
     assert 'HYNA-BTC/USDE:USDE' not in syms                                # ③ USDE 硬剔
     assert 'MKTS-US500/USDC:USDC' not in syms                              # ④ 白名单外仍剔
     assert 'BTC/USDC:USDC' in syms                                         # 主 dex 恒在
-
-
-def test_bt_builder_dexes_env_plumb(monkeypatch, tmp_path):
-    """BT_BUILDER_DEXES 只作用于回测数据源适配器；默认空=不设属性（现状）。"""
-    from gridtrade.backtest.backtest_run import _hl_datasource_1h
-    from gridtrade.backtest.cache import ParquetCache
-    cache = ParquetCache(str(tmp_path))
-    monkeypatch.delenv('BT_BUILDER_DEXES', raising=False)
-    ad, _ = _hl_datasource_1h(cache)
-    assert ad.builder_dexes == ()
-    monkeypatch.setenv('BT_BUILDER_DEXES', 'xyz, mkts')
-    ad2, _ = _hl_datasource_1h(cache)
-    assert ad2.builder_dexes == ('xyz', 'mkts')
