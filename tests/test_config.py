@@ -32,7 +32,7 @@ def test_defaults_when_env_empty():
 
 def test_parses_env_with_type_coercion():
     env = {
-        'EXCHANGE': 'binance',
+        'EXCHANGE': 'fake',
         'BINANCE_API_KEY': '0xabc',
         'BINANCE_API_SECRET': 'deadbeef',
         'BINANCE_TESTNET': 'true',
@@ -46,7 +46,7 @@ def test_parses_env_with_type_coercion():
         'DEFAULT_CAP': '200',
     }
     cfg = load_deploy_config(env=env)
-    assert cfg.exchange == 'binance'
+    assert cfg.exchange == 'fake'
     assert cfg.api_key == '0xabc' and cfg.api_secret == 'deadbeef'
     assert cfg.testnet is True
     assert cfg.database_url == 'postgresql+psycopg2://u:p@h/db'

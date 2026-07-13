@@ -121,8 +121,8 @@ def main():
         from gridtrade.config import load_deploy_config
         from gridtrade.exchanges.registry import build_adapter
         cfg = load_deploy_config()
-        ad = build_adapter({'exchange': cfg.exchange, 'wallet_address': cfg.wallet_address,
-                            'private_key': cfg.private_key, 'testnet': cfg.testnet,
+        ad = build_adapter({'exchange': cfg.exchange, 'api_key': cfg.api_key,
+                            'secret': cfg.api_secret, 'testnet': cfg.testnet,
                             'quote_currency': cfg.quote_currency})
         b = ad.fetch_balance()
         print('  equity=%.4f %s  cash=%.4f' % (b.equity, ad.quote_currency, b.cash))
