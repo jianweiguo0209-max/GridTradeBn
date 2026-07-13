@@ -104,7 +104,8 @@ class ExchangeAdapter(ABC):
 
     # ---- 账户/交易（私有）----
     @abstractmethod
-    def fetch_balance(self) -> Balance: ...
+    def fetch_balance(self) -> Balance:
+        """账户权益快照（quote_currency 计价）。"""
 
     @abstractmethod
     def fetch_positions(self, symbol: str) -> Position: ...
@@ -183,8 +184,13 @@ class ExchangeAdapter(ABC):
         """{canonical symbol: 24h 计价币成交额}。默认空 dict（无数据 → resolve_live_universe fail-open 跳过）。"""
         return {}
 
-    # ---- 账户级批量读（monitor 快照用）：默认逐 symbol 合成；HL 等账户级端点交易所覆写 ----
+    # ---- 账户级批量读（monitor 快照唯一读取口，spec 2026-07-14 §四）----
+    # 契约：返回调用时刻的最新已知状态（只读幂等，不要求强一致）；键/symbol 一律
+    # canonical；列表按 ts 升序；实现不得让上层感知分页游标/权重/调用时序。
+    # 未来 WsFeedAdapter 以内存镜像覆写本组方法即可无感升级（契约测试
+    # tests/exchanges/test_snapshot_contract.py 为开发基准）。默认逐 symbol 合成。
     def fetch_my_trades_all(self, symbols, since_ms: Optional[int] = None) -> List[Trade]:
+        """指定 symbols 的成交流水快照，ts 升序。"""
         out: List[Trade] = []
         for s in symbols:
             out.extend(self.fetch_my_trades(s, since_ms=since_ms))
@@ -192,16 +198,20 @@ class ExchangeAdapter(ABC):
         return out
 
     def fetch_open_orders_all(self, symbols) -> List[Order]:
+        """指定 symbols 的当前挂单快照（只含请求的 symbols）。"""
         out: List[Order] = []
         for s in symbols:
             out.extend(self.fetch_open_orders(s))
         return out
 
     def fetch_positions_all(self, symbols) -> dict:
+        """{canonical: 带符号净仓}；无持仓可缺省（调用方按 0 处理）。"""
         return {s: float(self.fetch_positions(s).net_size) for s in symbols}
 
     def fetch_prices_all(self, symbols) -> dict:
+        """{canonical: 最新价 float}。"""
         return {s: float(self.fetch_price(s)) for s in symbols}
 
     def fetch_funding_payments_all(self, symbols, since_ms: Optional[int] = None) -> dict:
+        """{canonical: [FundingPayment]}，各列表 ts 升序，支付为正。"""
         return {s: self.fetch_funding_payments(s, since_ms=since_ms) for s in symbols}
