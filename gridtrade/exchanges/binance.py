@@ -5,7 +5,7 @@ import re
 
 from gridtrade.exchanges.ccxt_adapter import CcxtAdapter
 
-# 币安 futures newClientOrderId 官方正则 ^[\.A-Z\:/a-z0-9_-]{1,36}$（含 ':' '.'）。
+# 币安 futures newClientOrderId 官方正则 ^[\.A-Z\:/a-z0-9_-]{1,36}$（含 ':' '.'）（spec §5.1）。
 # 内部 '{gid}:{line}:{seq}' 直传合法；非法字符确定性替换 '-'（testnet 实测见冒烟脚本）。
 _CLOID_BAD = re.compile(r'[^\.A-Z\:/a-z0-9_-]')
 
@@ -24,7 +24,11 @@ class BinanceAdapter(CcxtAdapter):
     def encode_cloid(self, client_oid):
         if client_oid is None:
             return None
-        s = _CLOID_BAD.sub('-', str(client_oid))[:36]
+        s = _CLOID_BAD.sub('-', str(client_oid))
+        # 越界断言（spec §5.1）：内部格式 ~13 字符远低于 36 上限；超限=上游 ID 生成异常，
+        # 静默截断可能产生跨单碰撞（假去重），宁可 fail-loud 拒单。
+        if len(s) > 36:
+            raise ValueError('client_oid 超长(%d>36): %r' % (len(s), client_oid))
         return s or None
 
     def exchange_status(self) -> str:

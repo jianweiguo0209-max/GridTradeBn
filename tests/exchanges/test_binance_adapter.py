@@ -60,10 +60,12 @@ def test_encode_cloid_legal_passthrough():
     assert a.encode_cloid(None) is None
 
 
-def test_encode_cloid_sanitizes_and_truncates():
+def test_encode_cloid_sanitizes_and_rejects_overlong():
+    import pytest
     a = _binance()
     assert a.encode_cloid('a b中') == 'a-b-'       # 非法字符确定性替换 '-'
-    assert len(a.encode_cloid('x' * 50)) == 36          # 36 上限截断
+    with pytest.raises(ValueError):
+        a.encode_cloid('x' * 37)                    # 超长断言防越界（spec §5.1）
 
 
 def test_exchange_status_ping():
