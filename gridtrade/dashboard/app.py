@@ -234,7 +234,8 @@ def create_app(store, adapter, *, username: str, password_hash: str,
         else:
             cutoff = {'7d': 7 * 86400_000, '30d': 30 * 86400_000}.get(range, 0)
             start_ms = (now_ms() - cutoff) if cutoff else 0
-        realized = an.realized_curve(store, start_ms=start_ms, end_ms=end_ms)
+        # 逐笔实现口径(2026-07-13 用户定):含激活格、按成交时刻入账;终值与关格口径一致
+        realized = an.realized_curve_by_fill(store, start_ms=start_ms, end_ms=end_ms)
         dist = an.fill_distribution(store, start_ms=start_ms, end_ms=end_ms)
         ctx = {
             'range': range,

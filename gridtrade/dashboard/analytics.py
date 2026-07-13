@@ -24,6 +24,57 @@ def realized_curve(store, *, start_ms: int = 0, end_ms: Optional[int] = None) ->
     return out
 
 
+def realized_fill_events(store, *, start_ms: int = 0, end_ms=None) -> List[Tuple]:
+    """逐笔实现事件流（2026-07-13 用户定曲线口径）：每格（含激活格）成交序列经
+    LiveEquity 直算（记账唯一口径，零复制）取当笔实现增量、扣该笔手续费，按成交
+    时刻入账；已关格在 closed_at 追加尾差事件（total_pnl − Σ逐笔），承接 funding/
+    收尾费——曲线终值与旧"关格时点 total_pnl"口径逐分一致，路径按真实实现时间展开。
+    返回 [(ts, delta)] 未累加、未过滤窗口（由调用方裁剪，保证窗口内累加从 0 起）。"""
+    from gridtrade.execution.live_equity import LiveEquity
+    with store.engine.connect() as c:
+        fills = c.execute(
+            select(grid_fills.c.grid_id, grid_fills.c.ts, grid_fills.c.side,
+                   grid_fills.c.price, grid_fills.c.size, grid_fills.c.fee)
+            .order_by(grid_fills.c.grid_id, grid_fills.c.ts)
+        ).all()
+        recs = c.execute(
+            select(order_records.c.grid_id, order_records.c.closed_at,
+                   order_records.c.total_pnl)
+            .where(order_records.c.closed_at.isnot(None))
+        ).all()
+    events = []
+    grid_sum = {}
+    cur_gid, le, prev = None, None, 0.0
+    for gid, ts, side, price, size, fee in fills:
+        if gid != cur_gid:
+            cur_gid, prev = gid, 0.0
+            le = LiveEquity(cap=1.0)
+        le.record_fill(price, side, size, ts, fee)
+        realized = le.pnl_exact(0.0)['realized']          # 毛额；与 mark 无关
+        delta = (realized - prev) - float(fee or 0.0)
+        prev = realized
+        events.append((int(ts), delta))
+        grid_sum[gid] = grid_sum.get(gid, 0.0) + delta
+    for gid, closed_at, total_pnl in recs:                # 已关格：尾差记在关格时点
+        adj = float(total_pnl or 0.0) - grid_sum.get(gid, 0.0)
+        if abs(adj) > 1e-12:
+            events.append((int(closed_at), adj))
+    events.sort(key=lambda e: e[0])
+    return events
+
+
+def realized_curve_by_fill(store, *, start_ms: int = 0, end_ms=None) -> List[Tuple]:
+    """逐笔实现口径的累计曲线（窗口内从 0 起累加，与旧 realized_curve 约定一致）。"""
+    out = []
+    cum = 0.0
+    for ts, delta in realized_fill_events(store):
+        if ts < start_ms or (end_ms is not None and ts > end_ms):
+            continue
+        cum += delta
+        out.append((ts, cum))
+    return out
+
+
 def equity_curve(store, *, start_ms: int = 0) -> List[Tuple]:
     snaps = EquitySnapshotRepository(store).list_range(start_ms)
     return [(s.ts, s.equity) for s in snaps]
