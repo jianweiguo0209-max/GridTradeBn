@@ -244,6 +244,20 @@ def test_set_leverage_swallows_no_need_to_change():
     assert lev_calls == [5]
 
 
+def test_set_leverage_reraises_unrelated_margin_errors():
+    # 变异守卫（评审实证）：非 -4046 异常必须重抛且不得走到设杠杆——防"吞一切"回归
+    import pytest
+    c = FakeBinanceClient()
+    def boom(mode, symbol=None, params=None):
+        raise RuntimeError('binanceusdm {"code":-2015,"msg":"Invalid API-key"}')
+    c.set_margin_mode = boom
+    lev_calls = []
+    c.set_leverage = lambda lev, symbol=None, params=None: lev_calls.append(lev)
+    with pytest.raises(RuntimeError):
+        _binance(c).set_leverage('BTC/USDT:USDT', 5)
+    assert lev_calls == []
+
+
 def test_assert_account_mode_ok_and_rejects():
     import pytest
     c = FakeBinanceClient()
