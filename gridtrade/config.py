@@ -158,14 +158,14 @@ from gridtrade.core.tier_policy import TierPolicy
 # 三档名单唯一事实源（spec 2026-07-06-tiered-*）：实盘默认与回测默认都取此处；
 # env（实盘 BLACKLIST_SYMBOLS / 回测 BT_TIER0 等）只作覆盖（运维紧急面/扫参面）。
 DEFAULT_TIER_POLICY = TierPolicy(
-    tier0=('BTC/USDC:USDC', 'ETH/USDC:USDC', 'VINE/USDC:USDC', 'NEO/USDC:USDC',
-           'PEOPLE/USDC:USDC', 'KNEIRO/USDC:USDC', 'MOODENG/USDC:USDC',
-           'FARTCOIN/USDC:USDC', 'CFX/USDC:USDC'),
-    # legacy black_dict["0"] 25 币中 HL 在市 9 个（NEIRO→k 前缀 KNEIRO）；未上市 16 币
-    # 不猜译名（PI/DEGEN/ALCH/MAX/OL/MASK/ACT/SONIC/BR/RDNT/MAGIC/CSPR/LOOKS/MEW/
-    # NEIROETH/IP），上市巡检再补。
+    # 币安迁移映射(2026-07-14 fapi 实查,spec §5.5)：HL 9 币直译,KNEIRO(k 前缀千倍币)→
+    # 币安 NEIRO(NEIROUSDT TRADING)；VINE 为 SETTLING(退市中)留名单无害(黑名单 fail-safe)。
+    tier0=('BTC/USDT:USDT', 'ETH/USDT:USDT', 'VINE/USDT:USDT', 'NEO/USDT:USDT',
+           'PEOPLE/USDT:USDT', 'NEIRO/USDT:USDT', 'MOODENG/USDT:USDT',
+           'FARTCOIN/USDT:USDT', 'CFX/USDT:USDT'),
+    # legacy black_dict["0"] 其余 16 币未上币安永续，不猜译名，上市巡检再补。
     tier1=(),
-    tier2_cap=2,   # ←4→2(2026-07-12 用户定恢复):同币开仓上限回 2;lev_caps 叠加后 lev3 币=1、其余=2;曲线数据留档 tiercap.csv 供将来复用
+    tier2_cap=2,   # 同币开仓上限(2026-07-12 用户定)
 )
 
 DEFAULT_STRATEGY_CONFIG = {

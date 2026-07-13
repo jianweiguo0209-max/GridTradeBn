@@ -80,10 +80,18 @@ def test_blacklist_defaults_to_tier0_env_overrides():
 
 def test_default_tier_policy_content():
     from gridtrade.config import DEFAULT_TIER_POLICY
-    assert 'FARTCOIN/USDC:USDC' in DEFAULT_TIER_POLICY.tier0     # legacy 档0 移植
-    assert 'KNEIRO/USDC:USDC' in DEFAULT_TIER_POLICY.tier0       # NEIRO→HL k 前缀
+    assert 'FARTCOIN/USDT:USDT' in DEFAULT_TIER_POLICY.tier0     # 币安迁移 USDT 后缀
+    assert 'NEIRO/USDT:USDT' in DEFAULT_TIER_POLICY.tier0        # KNEIRO→NEIRO(币安 TRADING)
     assert len(DEFAULT_TIER_POLICY.tier0) == 9
-    assert DEFAULT_TIER_POLICY.tier1 == () and DEFAULT_TIER_POLICY.tier2_cap == 2  # 恢复 cap2(2026-07-12 用户定;lev_caps 叠加后 lev3=1)
+    assert DEFAULT_TIER_POLICY.tier1 == () and DEFAULT_TIER_POLICY.tier2_cap == 2  # 同币开仓上限(2026-07-12 用户定)
+
+
+def test_tier0_binance_usdt_symbols():
+    from gridtrade.config import DEFAULT_TIER_POLICY
+    t0 = DEFAULT_TIER_POLICY.tier0
+    assert 'BTC/USDT:USDT' in t0 and 'NEIRO/USDT:USDT' in t0
+    assert all(s.endswith('/USDT:USDT') for s in t0)     # 无 USDC 残留
+    assert len(t0) == 9
 
 
 def test_whitelist_parsing():
