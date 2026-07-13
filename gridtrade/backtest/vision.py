@@ -202,3 +202,146 @@ def list_available_months(native, kind, tf=None, *, session=None):
 def _default_session():
     import requests
     return requests.Session()
+
+
+def _month_days(month, start_ms, end_ms, now_ms):
+    """该月 ∩ 窗口、且已过完(UTC)的天列表（'YYYY-MM-DD'）。"""
+    m0 = pd.Timestamp(month + '-01')
+    m1 = m0 + pd.offsets.MonthBegin(1)
+    lo = max(m0, pd.to_datetime(start_ms, unit='ms').normalize())
+    hi = min(m1 - pd.Timedelta(days=1),
+             pd.to_datetime(end_ms, unit='ms').normalize())
+    if lo > hi:
+        return []
+    days = [d.strftime('%Y-%m-%d') for d in pd.date_range(lo, hi, freq='D')]
+    return [d for d in days
+            if int((pd.Timestamp(d) + pd.Timedelta(days=1)).value // 1_000_000)
+            <= now_ms]
+
+
+def _day_bounds_ms(day):
+    d0 = pd.Timestamp(day)
+    return (int(d0.value // 1_000_000),
+            int((d0 + pd.Timedelta(days=1)).value // 1_000_000) - 1)
+
+
+def _write_day(cache, ns, sym, day, df, cols, time_col, st):
+    d_lo, d_hi = _day_bounds_ms(day)
+    if df.empty:
+        cache.write_empty(ns, sym, day, cols)
+        st['empty_days'] += 1
+        return
+    ms = (df[time_col].astype('int64') if time_col == 'ts'
+          else df[time_col].view('int64') // 1_000_000)
+    day_df = df[(ms >= d_lo) & (ms <= d_hi)]
+    if day_df.empty:
+        cache.write_empty(ns, sym, day, cols)
+        st['empty_days'] += 1
+    else:
+        cache.write(ns, sym, day, day_df.reset_index(drop=True))
+        st['rows'] += int(len(day_df))
+
+
+def _fetch_month(native, ns, month, session):
+    """月度 zip（含尽力 CHECKSUM 校验）→ bytes / None。"""
+    url = (funding_month_url(native, month) if ns == 'funding'
+           else kline_month_url(native, ns, month))
+    data = _get(url, session)
+    if data is None:
+        return None
+    cs = _get(url + '.CHECKSUM', session)
+    if cs is not None and not verify_checksum(data, cs.decode('utf-8', 'ignore')):
+        return None
+    return data
+
+
+_UNSET = object()
+
+
+def _warm_symbol(cache, sym, ns, months, start_ms, end_ms, now_ms, session, log):
+    native = native_of(sym)
+    kind = 'fundingRate' if ns == 'funding' else 'klines'
+    avail = _UNSET   # 惰性加载：整窗全命中缓存时零 HTTP（幂等重跑不浪费 530×ns 次列举）
+    parse = parse_funding_zip if ns == 'funding' else parse_kline_zip
+    cols = FUNDING_COLS if ns == 'funding' else CANDLE_COLS
+    time_col = 'ts' if ns == 'funding' else 'candle_begin_time'
+    st = {'rows': 0, 'files': 0, 'skipped_cached': 0, 'retry_later': 0,
+          'empty_days': 0}
+    for month in months:
+        days = _month_days(month, start_ms, end_ms, now_ms)
+        if not days:                      # 当月全部天未过完 → 下次重取
+            st['retry_later'] += 1
+            continue
+        missing = [d for d in days if not cache.exists(ns, sym, d)]
+        if not missing:
+            st['skipped_cached'] += 1
+            continue
+        if avail is _UNSET:
+            avail = list_available_months(native, kind,
+                                          tf=None if ns == 'funding' else ns,
+                                          session=session)
+        if avail is not None and month not in avail:
+            if avail and month < min(avail):
+                # 上市前月份：真·无数据 → 空哨兵（不再反复重试）
+                for d in missing:
+                    cache.write_empty(ns, sym, d, cols)
+                    st['empty_days'] += 1
+                continue
+            # 月度未发布（近月）：kline 日度回退；funding 无日度 → 尾部交 API 补
+            if ns == 'funding':
+                st['retry_later'] += 1
+                continue
+            for d in missing:
+                data = _get(kline_day_url(native, ns, d), session)
+                if data is None:
+                    st['retry_later'] += 1
+                    continue
+                st['files'] += 1
+                _write_day(cache, ns, sym, d, parse(data, sym), cols, time_col, st)
+            continue
+        data = _fetch_month(native, ns, month, session)
+        if data is None:                  # 404/校验不符 → 不落哨兵，下次重取
+            st['retry_later'] += 1
+            continue
+        st['files'] += 1
+        df = parse(data, sym)
+        for d in missing:
+            _write_day(cache, ns, sym, d, df, cols, time_col, st)
+    return st
+
+
+def warm_vision(cache, universe, start_ms, end_ms, *, timeframes=('1m',),
+                quote='USDT', workers=None, session=None, log=print):
+    """把窗口内归档数据写入 cache 各命名空间（'1m'/'1h'/'funding'）。幂等：
+    整月全命中即跳过；失败/未发布不落哨兵（retry_later）。线程池按 (ns,symbol)
+    并行（BT_VISION_WORKERS，默认 8）。返回 stats（形状见测试）。"""
+    from concurrent.futures import ThreadPoolExecutor
+    sess = session or _default_session()
+    now_ms = int(pd.Timestamp.utcnow().value // 1_000_000)
+    months = month_list(start_ms, end_ms)
+    nworkers = int(workers if workers is not None
+                   else os.environ.get('BT_VISION_WORKERS', '8'))
+    stats = {ns: {'rows': 0, 'files': 0} for ns in timeframes}
+    stats.update({'skipped_cached': 0, 'retry_later': 0, 'empty_days': 0})
+    units = [(ns, s) for ns in timeframes for s in universe]
+
+    def run(unit):
+        ns, s = unit
+        return ns, _warm_symbol(cache, s, ns, months, start_ms, end_ms,
+                                now_ms, sess, log)
+
+    if nworkers > 1 and len(units) > 1:
+        with ThreadPoolExecutor(max_workers=nworkers) as ex:
+            results = list(ex.map(run, units))
+    else:
+        results = [run(u) for u in units]
+    done = 0
+    for ns, st in results:
+        stats[ns]['rows'] += st['rows']
+        stats[ns]['files'] += st['files']
+        for k in ('skipped_cached', 'retry_later', 'empty_days'):
+            stats[k] += st[k]
+        done += 1
+        if done % 50 == 0:
+            log('[vision] %d/%d units done' % (done, len(units)))
+    return stats
