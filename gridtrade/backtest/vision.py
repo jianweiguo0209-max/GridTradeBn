@@ -110,12 +110,16 @@ def parse_funding_zip(data, symbol):
     df = pd.DataFrame([{'ts': int(float(r[0])), 'symbol': symbol,
                         'fundingRate': float(r[2]), 'realizedRate': float(r[2])}
                        for r in rows])
+    if len(df) and int(df['ts'].iloc[0]) > 10 ** 14:   # µs 防御，与 kline 同构（评审补齐）
+        df['ts'] = df['ts'] // 1000
     return df[FUNDING_COLS].sort_values('ts').reset_index(drop=True)
 
 
 def verify_checksum(data, checksum_text):
-    want = (checksum_text or '').strip().split()[0].lower()
-    return hashlib.sha256(data).hexdigest() == want
+    toks = (checksum_text or '').split()
+    if not toks:
+        return False        # 空/畸形 CHECKSUM 视为校验失败（勿 IndexError）
+    return hashlib.sha256(data).hexdigest() == toks[0].lower()
 
 
 def _get(url, session, *, tries=3, timeout=60):
@@ -125,13 +129,15 @@ def _get(url, session, *, tries=3, timeout=60):
         try:
             r = session.get(url, timeout=timeout)
         except Exception:
-            _t.sleep(1.0 + i)
+            if i < tries - 1:
+                _t.sleep(1.0 + i)
             continue
         if r.status_code == 404:
             return None
         if r.status_code == 200:
             return r.content
-        _t.sleep(1.0 + i)
+        if i < tries - 1:
+            _t.sleep(1.0 + i)
     return None
 
 

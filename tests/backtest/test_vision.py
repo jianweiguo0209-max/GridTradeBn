@@ -74,12 +74,27 @@ def test_parse_funding_zip():
     assert df['ts'].tolist() == [1577836800000, 1577865600000]
 
 
+def test_parse_funding_zip_microsecond_defense():
+    from gridtrade.backtest import vision as V
+    text = ("calc_time,funding_interval_hours,last_funding_rate\n"
+            "1577836800000000,8,-0.0001\n")
+    df = V.parse_funding_zip(_zip_bytes('f.csv', text), 'BTC/USDT:USDT')
+    assert df['ts'].tolist() == [1577836800000]
+
+
 def test_verify_checksum():
     from gridtrade.backtest import vision as V
     data = b'hello'
     good = hashlib.sha256(data).hexdigest() + '  file.zip'
     assert V.verify_checksum(data, good)
     assert not V.verify_checksum(data, 'deadbeef  file.zip')
+
+
+def test_verify_checksum_malformed_returns_false():
+    from gridtrade.backtest import vision as V
+    assert not V.verify_checksum(b'x', '')
+    assert not V.verify_checksum(b'x', None)
+    assert not V.verify_checksum(b'x', '   ')
 
 
 class _FakeResp:
