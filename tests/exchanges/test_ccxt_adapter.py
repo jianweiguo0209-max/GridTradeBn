@@ -50,7 +50,7 @@ class FakeCcxtClient:
     def load_markets(self):
         return {'BTC/USDT:USDT': {}}
     markets = {'BTC/USDT:USDT': {'swap': True, 'precision': {'price': 0.1, 'amount': 0.001},
-                                 'limits': {'amount': {'min': 0.001}},
+                                 'limits': {'amount': {'min': 0.001}, 'cost': {'min': 5.0}},
                                  'active': True, 'info': {'listTime': '0'}}}
 
 
@@ -192,3 +192,16 @@ def test_quantize_amount_uses_precision_table():
             raise RuntimeError('boom')
     b = CcxtAdapter(_Broken(), name='x')
     assert b.quantize_amount('BTC/USDT:USDT', 35.10441977) == 35.10441977   # fail-open
+
+
+def test_list_instruments_fills_min_cost():
+    # Instrument.min_cost 取 ccxt limits.cost.min（币安 MIN_NOTIONAL 语义，spec §5.3）
+    insts = _adapter().list_instruments()
+    assert insts[0].min_cost == 5.0
+
+
+def test_instrument_min_cost_defaults_zero():
+    from gridtrade.exchanges.base import Instrument
+    i = Instrument(symbol='X/USDT:USDT', tick=0.1, lot=0.1, min_size=0.1,
+                   state='live', list_ts=0)
+    assert i.min_cost == 0.0

@@ -23,6 +23,7 @@ class Instrument:
     min_size: float
     state: str
     list_ts: int  # 上市时间，毫秒
+    min_cost: float = 0.0  # 单笔最小名义额（币安 MIN_NOTIONAL；0=交易所无此约束/未知）
 
 
 @dataclass
