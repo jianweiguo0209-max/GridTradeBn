@@ -151,26 +151,37 @@ class BinanceAdapter(CcxtAdapter):
 
     def fetch_funding_payments_all(self, symbols, since_ms=None):
         """income(FUNDING_FEE) 账户级单流（权重30）——币安按 symbol 正确打标，
-        分组回各币种。无 since → 币安默认近7天。统一"支付为正"（income 正=收入取负）。"""
+        分组回各币种。无 since → 币安默认近7天。统一"支付为正"（income 正=收入取负）。
+        分页含边界重取+tranId 去重：资金费全仓位同刻并结，+1 前进会丢页界并列行（评审实证）。"""
         idmap = self._id_map()
         out = {s: [] for s in symbols}
         params = {'incomeType': 'FUNDING_FEE', 'limit': 1000}
         if since_ms is not None:
             params['startTime'] = int(since_ms)
+        seen = set()
         guard = 0
         while guard < 50:
             guard += 1
             rows = self.client.fapiPrivateGetIncome(dict(params))
+            new_any = False
             for r in rows:
                 ts = int(r['time'])
                 if since_ms is not None and ts < since_ms:
                     continue
+                key = (str(r.get('tranId')), r.get('symbol'), ts, str(r.get('income')))
+                if key in seen:
+                    continue
+                seen.add(key)
+                new_any = True
                 sym = idmap.get(r.get('symbol'))
                 if sym in out:
                     out[sym].append(FundingPayment(ts=ts, amount=-float(r['income'])))
             if len(rows) < 1000:
                 break
-            params['startTime'] = int(rows[-1]['time']) + 1
+            nxt = int(rows[-1]['time'])
+            if not new_any and nxt == params.get('startTime'):
+                break        # 整页并列且无新行：防死转（理论病态，防御性护栏）
+            params['startTime'] = nxt   # 含边界重取（勿 +1：并列行会被跳过）
         for s in out:
             out[s].sort(key=lambda p: p.ts)
         return out

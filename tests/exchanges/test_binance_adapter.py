@@ -180,3 +180,26 @@ def test_fetch_funding_payments_all_income_grouped():
     assert [(p.ts, p.amount) for p in out['ETH/USDT:USDT']] == [(1000, -0.3)]
     assert c.income_calls[0]['incomeType'] == 'FUNDING_FEE'
     assert c.income_calls[0]['startTime'] == 500
+
+
+def test_fetch_funding_payments_all_pagination_tie_no_loss():
+    # 页界(1000)切在 8 行同刻并列组中间：含边界重取+去重后零丢失（评审实证场景）
+    c = FakeBinanceClient()
+    rows = []
+    for i in range(997):
+        rows.append({'symbol': 'BTCUSDT', 'incomeType': 'FUNDING_FEE',
+                     'income': '0.001', 'time': 1000 + i, 'tranId': i})
+    for j in range(8):
+        rows.append({'symbol': ('BTCUSDT' if j % 2 else 'ETHUSDT'),
+                     'incomeType': 'FUNDING_FEE', 'income': '0.001',
+                     'time': 5000, 'tranId': 2000 + j})
+    def income(params=None):
+        p = dict(params or {})
+        start = int(p.get('startTime', 0))
+        eligible = [r for r in rows if int(r['time']) >= start]
+        return eligible[:int(p.get('limit', 1000))]
+    c.fapiPrivateGetIncome = income
+    out = _binance(c).fetch_funding_payments_all(
+        ['BTC/USDT:USDT', 'ETH/USDT:USDT'], since_ms=0)
+    total = len(out['BTC/USDT:USDT']) + len(out['ETH/USDT:USDT'])
+    assert total == 1005
