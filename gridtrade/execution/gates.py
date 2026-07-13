@@ -103,23 +103,42 @@ class RiskBudgetGate(AdmissionGate):
 
 
 class MinNotionalGate(AdmissionGate):
-    """最小名义额门：预检每笔挂单名义额 ≥ 交易所最小下单额（HL 全市场 cost.min=$10）。
+    """最小名义额门：预检每笔挂单名义额 ≥ 下限。下限 = max(全局 env MIN_ORDER_NOTIONAL,
+    该币 Instrument.min_cost)——币安各币 MIN_NOTIONAL 不同（多数 5、BTC 50、ETH 20 USDT，
+    2026-07-14 fapi 实测），单一全局值必漏（spec 2026-07-14 §5.3）。
 
-    动机（mainnet 2026-07-05 实证）：全市场票池里高波动/低价币 v2 布网可达 41~149 档，
-    cap×lev×max_rate 摊到每档后单笔 < $10 → 开仓首单即被拒 → 留零挂单死 OPENING（靠
-    stuck-OPENING 自愈清理但整轮漏开仓）。在门链预检直接拒提案：不建死网格、拒因可观测。
+    动机（mainnet 2026-07-05 实证）：单笔 < 交易所下限 → 开仓首单即被拒 → 留零挂单死
+    OPENING。门链预检直接拒提案：不建死网格、拒因可观测。
 
-    口径与 executor.open 同源：grid_order_info(cap, gearing, low, high, grid_count, ...,    min_amount, max_rate)，cap 用 executor._resolve_cap()（与真实开仓同一动态 cap）；
-    最低档名义额 = 每笔数量 × low_price（等量挂单，最低价档名义额最小）。
-    min_notional<=0 = 停用（默认，向后兼容：无此约束的交易所不受影响）。"""
+    口径与 executor.open 同源：grid_order_info + executor._resolve_cap()；
+    最低档名义额 = 每笔数量 × low_price。adapter=None 且 env<=0 = 停用（向后兼容）。
+    begin_batch 刷新按币映射；取数失败 fail-open 退回全局下限。"""
 
-    def __init__(self, executor, min_notional, *, log=None):
+    def __init__(self, executor, min_notional, *, adapter=None, log=None):
         self.executor = executor
         self.min_notional = float(min_notional)
+        self.adapter = adapter          # 可选：按币 min_cost 来源（Instrument.min_cost）
+        self._min_cost = None           # None=未加载；{}=无数据（fail-open 只用全局下限）
         self.log = log
 
+    def begin_batch(self) -> None:
+        if self.adapter is None:
+            self._min_cost = {}
+            return
+        try:
+            self._min_cost = {i.symbol: float(getattr(i, 'min_cost', 0.0) or 0.0)
+                              for i in self.adapter.list_instruments()}
+        except Exception as exc:        # fail-open：精度表读不到只退化，不拒单
+            self._min_cost = {}
+            if self.log is not None:
+                self.log('[gate] MinNotionalGate: list_instruments failed %r' % (exc,))
+
     def check(self, proposal: GridProposal) -> GateResult:
-        if self.min_notional <= 0:
+        if self._min_cost is None:      # 未经 begin_batch 的独立 evaluate → 惰性加载一次
+            self.begin_batch()
+        floor = max(self.min_notional,
+                    (self._min_cost or {}).get(proposal.symbol, 0.0))
+        if floor <= 0:
             return GateResult(True, 'MinNotionalGate')
         from gridtrade.core.grid_engine import grid_order_info
         gp = proposal.grid_params
@@ -134,10 +153,10 @@ class MinNotionalGate(AdmissionGate):
             return GateResult(False, 'MinNotionalGate',
                               'cap %.2f 无法建网（每笔数量<=0）' % cap)
         worst = float(gi['每笔数量']) * float(gp['low_price'])   # 最低档名义额
-        if worst < self.min_notional:
+        if worst < floor:
             return GateResult(False, 'MinNotionalGate',
                               'per-order notional %.2f < min %.2f '
-                              '(cap=%.2f grids=%d)' % (worst, self.min_notional,
+                              '(cap=%.2f grids=%d)' % (worst, floor,
                                                        cap, int(gp['grid_count'])))
         return GateResult(True, 'MinNotionalGate')
 

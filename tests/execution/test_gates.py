@@ -312,3 +312,67 @@ def test_margin_gate_without_executor_falls_back_to_default_cap():
     assert gate.check(_proposal()).passed is True       # 250 >= 100
 
 
+def test_min_notional_gate_per_symbol_floor():
+    # env 全局下限 0，但该币 Instrument.min_cost=50（如 BTCUSDT）→ 仍按 50 拒
+    from gridtrade.execution.gates import MinNotionalGate, GridProposal
+    from gridtrade.exchanges.base import Instrument
+    from gridtrade.exchanges.fake import FakeExchange
+
+    class _Ex:   # 最小 executor 桩：与该文件既有用例同形
+        gearing = 3.4
+        min_amount = 0.0
+        def _resolve_cap(self):
+            return 100.0
+
+    fake = FakeExchange(instruments=[
+        Instrument(symbol='BTC/USDT:USDT', tick=0.1, lot=0.001, min_size=0.001,
+                   state='live', list_ts=0, min_cost=50.0)])
+    gate = MinNotionalGate(_Ex(), 0.0, adapter=fake)
+    gate.begin_batch()
+    gp = dict(low_price=100.0, high_price=120.0, grid_count=20,
+              stop_low_price=95.0, stop_high_price=125.0)
+    res = gate.check(GridProposal(exchange='binance', symbol='BTC/USDT:USDT',
+                                  grid_params=gp))
+    assert not res.passed and 'min 50' in res.reason
+
+
+def test_min_notional_gate_env_floor_still_applies():
+    # 币无 min_cost（映射缺省）→ 退回全局 env 下限。
+    # 下限取 1000（远高于 cap100×gearing3.4 摊到 21 档的最坏名义额 ≤16.2），必拒——
+    # 不依赖 grid_order_info 精确数学，测试稳健。
+    from gridtrade.execution.gates import MinNotionalGate, GridProposal
+    from gridtrade.exchanges.fake import FakeExchange
+
+    class _Ex:
+        gearing = 3.4
+        min_amount = 0.0
+        def _resolve_cap(self):
+            return 100.0
+
+    gate = MinNotionalGate(_Ex(), 1000.0, adapter=FakeExchange())
+    gate.begin_batch()
+    gp = dict(low_price=100.0, high_price=120.0, grid_count=20,
+              stop_low_price=95.0, stop_high_price=125.0)
+    res = gate.check(GridProposal(exchange='binance', symbol='X/USDT:USDT',
+                                  grid_params=gp))
+    assert not res.passed and 'min 1000' in res.reason
+    # 微小下限 → 放行（同一提案两个下限对照，锁住 max(env, min_cost) 的方向性）
+    gate2 = MinNotionalGate(_Ex(), 0.001, adapter=FakeExchange())
+    gate2.begin_batch()
+    assert gate2.check(GridProposal(exchange='binance', symbol='X/USDT:USDT',
+                                    grid_params=gp)).passed
+
+
+def test_min_notional_gate_disabled_when_no_floor():
+    from gridtrade.execution.gates import MinNotionalGate, GridProposal
+    class _Ex:
+        gearing = 3.4
+        min_amount = 0.0
+        def _resolve_cap(self):
+            return 100.0
+    gate = MinNotionalGate(_Ex(), 0.0)           # 无 adapter、env=0 → 停用
+    gp = dict(low_price=100.0, high_price=120.0, grid_count=20,
+              stop_low_price=95.0, stop_high_price=125.0)
+    assert gate.check(GridProposal(exchange='binance', symbol='X/USDT:USDT',
+                                   grid_params=gp)).passed
+

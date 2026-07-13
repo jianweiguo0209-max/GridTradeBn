@@ -66,7 +66,8 @@ def build_runtime(config) -> Runtime:
     gates = GateChain([
         MaxConcurrentGate(executor.grids, config.max_concurrent),
         RiskBudgetGate(executor.grids, config.total_budget, config.default_cap),
-        MinNotionalGate(executor, config.min_order_notional, log=_flush_log),
+        MinNotionalGate(executor, config.min_order_notional, adapter=adapter,
+                        log=_flush_log),
         MarginGate(adapter, config.default_cap, executor=executor, log=_flush_log),
     ], log=_flush_log)
     bus = EventBus()
