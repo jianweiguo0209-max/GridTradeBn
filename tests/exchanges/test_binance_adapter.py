@@ -59,6 +59,13 @@ class FakeBinanceClient(FakeCcxtClient):
             {'symbol': 'XRPUSDT', 'incomeType': 'FUNDING_FEE', 'income': '9.9',
              'time': 1500},
         ]
+    def set_margin_mode(self, mode, symbol=None, params=None):
+        self.margin_calls = getattr(self, 'margin_calls', [])
+        self.margin_calls.append((mode, symbol))
+    def fapiPrivateGetPositionSideDual(self, params=None):
+        return {'dualSidePosition': getattr(self, 'dual', False)}
+    def fapiPrivateGetMultiAssetsMargin(self, params=None):
+        return {'multiAssetsMargin': getattr(self, 'multi', False)}
 
 
 def _binance(client=None):
@@ -203,3 +210,60 @@ def test_fetch_funding_payments_all_pagination_tie_no_loss():
         ['BTC/USDT:USDT', 'ETH/USDT:USDT'], since_ms=0)
     total = len(out['BTC/USDT:USDT']) + len(out['ETH/USDT:USDT'])
     assert total == 1005
+
+
+def test_create_stop_order_stop_market():
+    c = FakeBinanceClient()
+    a = _binance(c)
+    a.create_stop_order('BTC/USDT:USDT', 'sell', 1.5, 95.0, client_oid='9:fuse:low')
+    sym, typ, side, amount, price, params = c.created[-1]
+    assert typ == 'market' and price is None            # STOP_MARKET：无限价
+    assert params['stopLossPrice'] == 95.0
+    assert params['reduceOnly'] is True
+    assert params['clientOrderId'] == '9:fuse:low'
+    assert 'slippage' not in params                     # 币安无滑点底线参数（spec §5.2）
+
+
+def test_set_leverage_cross_then_int():
+    c = FakeBinanceClient()
+    lev_calls = []
+    c.set_leverage = lambda lev, symbol=None, params=None: lev_calls.append((lev, symbol))
+    _binance(c).set_leverage('BTC/USDT:USDT', 5.0)
+    assert c.margin_calls == [('cross', 'BTC/USDT:USDT')]
+    assert lev_calls == [(5, 'BTC/USDT:USDT')]          # 币安要求整数杠杆
+
+
+def test_set_leverage_swallows_no_need_to_change():
+    c = FakeBinanceClient()
+    def boom(mode, symbol=None, params=None):
+        raise RuntimeError('binanceusdm {"code":-4046,"msg":"No need to change margin type."}')
+    c.set_margin_mode = boom
+    lev_calls = []
+    c.set_leverage = lambda lev, symbol=None, params=None: lev_calls.append(lev)
+    _binance(c).set_leverage('BTC/USDT:USDT', 5)        # 不抛
+    assert lev_calls == [5]
+
+
+def test_assert_account_mode_ok_and_rejects():
+    import pytest
+    c = FakeBinanceClient()
+    a = _binance(c)
+    a.assert_account_mode()                             # 单向+单币 → 通过
+    c.dual = True
+    with pytest.raises(RuntimeError):
+        a.assert_account_mode()
+    c.dual = False; c.multi = 'true'                    # 字符串布尔也要识别
+    with pytest.raises(RuntimeError):
+        a.assert_account_mode()
+
+
+def test_base_and_resilient_assert_account_mode():
+    from gridtrade.exchanges.fake import FakeExchange
+    from gridtrade.exchanges.resilient_adapter import ResilientAdapter
+    FakeExchange().assert_account_mode()                # 基类默认 no-op
+    called = []
+    class Probe(FakeExchange):
+        def assert_account_mode(self):
+            called.append(1)
+    ResilientAdapter(Probe()).assert_account_mode()     # 直通转发
+    assert called == [1]

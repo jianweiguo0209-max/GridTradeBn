@@ -48,6 +48,7 @@ def run_monitor(runtime, *, once=False, sleep=time.sleep, log=print,
 
 def main() -> None:   # composition root（不单测）
     rt = build_runtime(load_deploy_config())
+    rt.adapter.assert_account_mode()   # 账户模式不符→boot 失败（fail-fast，勿带病起跑）
     print('[monitor] exchange=%s testnet=%s endpoint=%s interval=%ss'
           % (rt.config.exchange, rt.config.testnet, adapter_endpoint(rt.adapter),
              rt.config.monitor_interval_sec), flush=True)

@@ -55,6 +55,39 @@ class BinanceAdapter(CcxtAdapter):
             client.set_sandbox_mode(True)
         return cls(client)
 
+    def create_stop_order(self, symbol, side, size, trigger_price, *,
+                          reduce_only=True, slippage=0.15, client_oid=None):
+        """STOP_MARKET 触发市价单（灾难保险丝）。币安无滑点底线参数——slippage
+        接受但忽略（语义差已文档化，spec §5.2；软止损仍是主刹车）。"""
+        p = self._params(reduce_only, client_oid)
+        p['stopLossPrice'] = trigger_price
+        r = self.client.create_order(self.to_native(symbol), 'market', side, size,
+                                     None, p)
+        return self._to_order(r)
+
+    def set_leverage(self, symbol, leverage) -> None:
+        """先确保 CROSSED 全仓（幂等，吞 -4046 无需更改），再设杠杆（币安要求整数）。
+        全仓对齐 账户杠杆/gearing 仓位体系假设（spec §3.1）。"""
+        native = self.to_native(symbol)
+        try:
+            self.client.set_margin_mode('cross', native)
+        except Exception as exc:
+            msg = str(exc)
+            if '-4046' not in msg and 'No need to change' not in msg:
+                raise
+        self.client.set_leverage(int(leverage), native)
+
+    def assert_account_mode(self) -> None:
+        """单向持仓 + 关闭联合保证金（引擎净仓/单币权益假设，spec §3.1）。"""
+        dual = self.client.fapiPrivateGetPositionSideDual() or {}
+        if str(dual.get('dualSidePosition')).lower() in ('true', '1'):
+            raise RuntimeError('币安账户为双向持仓(hedge)模式：执行引擎按净仓语义工作，'
+                               '请在合约偏好设置切换为单向持仓后重启')
+        multi = self.client.fapiPrivateGetMultiAssetsMargin() or {}
+        if str(multi.get('multiAssetsMargin')).lower() in ('true', '1'):
+            raise RuntimeError('币安联合保证金(Multi-Assets)开启：权益口径须为单一 %s，'
+                               '请关闭后重启' % self.quote_currency)
+
     def _market_id(self, symbol):
         """canonical → 币安原生 id（'BTC/USDT:USDT'→'BTCUSDT'）。markets 惰性加载；
         查不到（极新上市）按命名规则回退拼接。"""

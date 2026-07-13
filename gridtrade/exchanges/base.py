@@ -80,6 +80,11 @@ class ExchangeAdapter(ABC):
         """下单时发给交易所的 client order id。默认原样；返回 None=省略（如 HL）。"""
         return client_oid
 
+    def assert_account_mode(self) -> None:
+        """启动断言：账户模式满足引擎假设（净仓语义/单币保证金）。默认无约束。
+        monitor/scheduler 启动时调用一次；不满足抛 RuntimeError 拒绝起跑。"""
+        return None
+
     # ---- 行情（公共）----
     @abstractmethod
     def list_instruments(self) -> List[Instrument]: ...

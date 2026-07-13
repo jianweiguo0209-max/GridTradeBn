@@ -168,6 +168,7 @@ def run_scheduler(runtime, *, once=False, sleep=time.sleep, now_fn=time.time,
 
 def main() -> None:   # composition root（不单测）
     rt = build_runtime(load_deploy_config())
+    rt.adapter.assert_account_mode()   # 账户模式不符→boot 失败（fail-fast，勿带病起跑）
     print('[scheduler] exchange=%s testnet=%s endpoint=%s run_on_start=%s period=%s'
           % (rt.config.exchange, rt.config.testnet, adapter_endpoint(rt.adapter),
              rt.config.scheduler_run_on_start, rt.config.scheduler_period),

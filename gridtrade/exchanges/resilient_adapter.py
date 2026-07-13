@@ -154,6 +154,10 @@ class ResilientAdapter(ExchangeAdapter):
         量化修复在线上失效(2026-07-12 mainnet 核验实证,memory quantized-size-fallback-bug)。"""
         return self._inner.quantize_amount(symbol, amount)
 
+    def assert_account_mode(self):
+        """启动一次性断言，直通 inner（不套重试/熔断——失败须原样抛出拒绝起跑）。"""
+        return self._inner.assert_account_mode()
+
     def order_status(self, symbol, order_id):
         return self._call('order_status', symbol, order_id)
 
