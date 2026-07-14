@@ -102,7 +102,8 @@ stop_high, min_amount=min_amount, max_rate=1.0)`,`worst = 每笔数量 × grid_c
   设计("手动指令不经票池、保留实验自由度",fly.toml 注释),给它响亮日志而非拦截;自动路径
   已被门链保障,此告警只应在手动/fail-open 时出现。
 - **选币轮审计**(scheduler,resolve_live_universe 之后):当前 cap 下票池里**几个币不足额、
-  最差币与其覆盖率**,一行 log。零额外 API(复用 list_instruments)。作用:让"逼近 $36.7k
+  最差币与其覆盖率**,一行 log。limits 复用 ccxt 缓存 markets(零权重);价格走 fetch_prices_all
+  (权重 2,每选币轮一次 → 可忽略,非"零额外 API")。作用:让"逼近 $36.7k
   临界"提前数月可见,而非等出事;也是 §七 回测偏离的报警信号。
 
 ## 七、配置与回测口径

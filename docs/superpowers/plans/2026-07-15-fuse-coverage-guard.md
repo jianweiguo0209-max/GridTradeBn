@@ -713,7 +713,8 @@ Run: `.venv/bin/python -m pytest tests/exchanges/test_binance_adapter.py::test_s
 ② `gridtrade/runtime/scheduler.py`——在 `run_scheduler_once` 里 `universe = resolve_live_universe(...)` 之后、票池后续处理之前插入：
 
 ```python
-    # 保险丝覆盖审计（spec 2026-07-15 §六）：零额外权重（复用 list_instruments + 批量价）。
+    # 保险丝覆盖审计（spec 2026-07-15 §六）：limits 复用 ccxt 缓存 markets（零权重）；
+    # 价格走 fetch_prices_all（币安全市场 ticker/price，权重 2/轮，选币轮每小时一次 → 可忽略）。
     # 报出不足额币 = 权益已跨临界（≈$36.7k）→ 门链开始降 cap，且实盘几何开始偏离回测（§七）。
     try:
         from gridtrade.execution.fuse_policy import audit_fuse_coverage
