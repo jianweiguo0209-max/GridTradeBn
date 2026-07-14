@@ -216,9 +216,11 @@ def test_warm_vision_prelisting_month_empty_sentinel(tmp_path):
     assert cache.exists('1m', 'BTC/USDT:USDT', '2019-12-30')
 
 
-def test_warm_vision_missing_month_daily_fallback(tmp_path):
+def test_warm_vision_stale_month_daily_fallback_sentinels(tmp_path):
     from gridtrade.backtest import vision as V
-    # 月度缺且窗口月 > 首个可用月（近月未发布），走日度：1/1 有文件、1/2 404 → retry_later
+    # 月度缺且窗口月 > 首个可用月，走日度回退：1/1 有文件；1/2 404 且该月早已超过
+    # 45 天发布滞后冗余（陈年月）→ 空哨兵，不再是 retry_later（终审实证：否则退市币
+    # 全历史重跑无限 404）。
     csv = "1577836800000,1.0,2.0,0.5,1.5,10.0,1577836859999,13.7,5,4.0,5.5,0\n"
     months_url = (V.LIST_URL + '?delimiter=/&prefix=data/futures/um/monthly/'
                   'klines/BTCUSDT/1m/')
@@ -233,8 +235,46 @@ def test_warm_vision_missing_month_daily_fallback(tmp_path):
     st = V.warm_vision(cache, ['BTC/USDT:USDT'], ms('2020-01-01'), ms('2020-01-02'),
                        timeframes=('1m',), workers=1, session=sess)
     assert st['1m']['rows'] == 1
-    assert st['retry_later'] == 1                      # 1/2 未发布，下次重取
-    assert not cache.exists('1m', 'BTC/USDT:USDT', '2020-01-02')
+    assert st['retry_later'] == 0
+    assert st['empty_days'] == 1
+    assert cache.exists('1m', 'BTC/USDT:USDT', '2020-01-02')
+    empty = cache.read('1m', 'BTC/USDT:USDT', '2020-01-02')
+    assert empty is not None and empty.empty
+
+
+def test_warm_vision_postdelist_month_sentinels(tmp_path):
+    from gridtrade.backtest import vision as V
+    # 可用月={'2020-01'}(退市于 1 月);目标月 2020-03 远超发布滞后 → 日度 404 落空哨兵,零重试
+    months_url = (V.LIST_URL + '?delimiter=/&prefix=data/futures/um/monthly/'
+                  'klines/BTCUSDT/1m/')
+    xml_only_jan = MONTHS_XML.replace('2020-02', '2020-01')
+    sess = _FakeSession({months_url: xml_only_jan.encode()})
+    cache = _cache(tmp_path)
+    ms = lambda s: int(pd.Timestamp(s).value // 1_000_000)
+    st = V.warm_vision(cache, ['BTC/USDT:USDT'], ms('2020-03-01'), ms('2020-03-02'),
+                       timeframes=('1m',), workers=1, session=sess)
+    assert st['empty_days'] == 2 and st['retry_later'] == 0
+    n = len(sess.calls)          # 幂等:第二遍零 HTTP
+    V.warm_vision(cache, ['BTC/USDT:USDT'], ms('2020-03-01'), ms('2020-03-02'),
+                  timeframes=('1m',), workers=1, session=sess)
+    assert len(sess.calls) == n
+
+
+def test_warm_vision_recent_month_404_still_retries(tmp_path):
+    from gridtrade.backtest import vision as V
+    # 近月(发布滞后窗口内)404 仍是 retry_later,不落哨兵——尾部补拉语义保留
+    end = pd.Timestamp.utcnow().tz_localize(None).normalize() - pd.Timedelta(days=2)
+    start = end - pd.Timedelta(days=1)
+    month_prefix = (V.LIST_URL + '?delimiter=/&prefix=data/futures/um/monthly/'
+                    'klines/BTCUSDT/1m/')
+    xml_ancient = MONTHS_XML.replace('2020-02', '2020-01')   # 可用月远古 → 近月走回退
+    sess = _FakeSession({month_prefix: xml_ancient.encode()})
+    cache = _cache(tmp_path)
+    ms = lambda t: int(t.value // 1_000_000)
+    st = V.warm_vision(cache, ['BTC/USDT:USDT'], ms(start), ms(end),
+                       timeframes=('1m',), workers=1, session=sess)
+    assert st['retry_later'] == 2 and st['empty_days'] == 0
+    assert not cache.exists('1m', 'BTC/USDT:USDT', start.strftime('%Y-%m-%d'))
 
 
 def test_warm_vision_funding_namespace(tmp_path):

@@ -51,6 +51,9 @@ class BinanceAdapter(CcxtAdapter):
             'timeout': timeout, 'enableRateLimit': True,
             'proxies': proxies or {},
         })
+        # ccxt 对无 symbol 的 fetchOpenOrders 默认抛错(权重防呆护栏)；账户级快照本就要
+        # 全账户一次(权重40,spec §3.1)——显式关闭护栏(终审实证:不关则 monitor 快照上线即死)。
+        client.options['warnOnFetchOpenOrdersWithoutSymbol'] = False
         if testnet:
             client.set_sandbox_mode(True)
         return cls(client)
@@ -135,6 +138,19 @@ class BinanceAdapter(CcxtAdapter):
         df['symbol'] = symbol
         df['volCcy'] = df['vol']
         return df[CANDLE_COLS].sort_values('candle_begin_time').reset_index(drop=True)
+
+    # 币安 userTrades:startTime 过旧时 ccxt 自动加 endTime=startTime+7d 封顶——since=0 会查
+    # 1970 年第一周返回空(终审实证)。网格生命周期 ≤12h,过旧 since 收敛到近 6.5 天。
+    # fetch_my_trades_all 继承基类逐 symbol 循环(调用 self.fetch_my_trades)——下面的收敛
+    # 对全账户批量读自动生效,无需覆写 fetch_my_trades_all。
+    _TRADES_LOOKBACK_MS = int(6.5 * 24 * 3600 * 1000)
+
+    def fetch_my_trades(self, symbol, since_ms=None):
+        if since_ms is not None:
+            floor_ms = self._now_ms() - self._TRADES_LOOKBACK_MS
+            if since_ms < floor_ms:
+                since_ms = floor_ms
+        return super().fetch_my_trades(symbol, since_ms=since_ms)
 
     # ---- 账户级批量读（monitor 5s 快照权重预算核心，spec §3.1）----
     def _id_map(self):

@@ -190,7 +190,9 @@ def run_monitor_cycle(reconciler, manager, log=print, *,
         try:
             # 游标口径与逐格路径严格等价：trade 用 fills.max_ts（无成交=0，同旧行为；
             # 勿用 created_at 兜底——FakeExchange 等测试替身的成交 ts 是逻辑计数器，与
-            # epoch 不可比较，且 HL since=0 也只回最近 2000 条，代价同现状）。
+            # epoch 不可比较；各交易所 since 语义由适配器翻译，此处 since=0 语义="尽可能
+            # 早，由适配器翻译"——币安 7 天窗由 BinanceAdapter.fetch_my_trades 收敛过旧
+            # since，代价同现状）。
             # funding 游标读 DB（单元里的惰性 restore 尚未发生，不能依赖内存态），
             # created_at 兜底与 restore 语义一致。
             t_base, f_base = [], []

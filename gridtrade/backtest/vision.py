@@ -287,14 +287,27 @@ def _warm_symbol(cache, sym, ns, months, start_ms, end_ms, now_ms, session, log)
                     cache.write_empty(ns, sym, d, cols)
                     st['empty_days'] += 1
                 continue
-            # 月度未发布（近月）：kline 日度回退；funding 无日度 → 尾部交 API 补
+            # 归档发布滞后实测 1-2 天,取 45 天冗余:月末早于阈值仍未发布=退市尾部/永缺
+            # → 空哨兵(终审实证:不落哨兵则全历史重跑对退市币无限 404)。近月保留 retry 语义。
+            month_end_ms = int((pd.Timestamp(month + '-01')
+                                + pd.offsets.MonthBegin(1)).value // 1_000_000)
+            stale = month_end_ms < now_ms - 45 * 86400 * 1000
             if ns == 'funding':
-                st['retry_later'] += 1
+                if stale:
+                    for d in missing:
+                        cache.write_empty(ns, sym, d, cols)
+                        st['empty_days'] += 1
+                else:
+                    st['retry_later'] += 1
                 continue
             for d in missing:
                 data = _get(kline_day_url(native, ns, d), session)
                 if data is None:
-                    st['retry_later'] += 1
+                    if stale:
+                        cache.write_empty(ns, sym, d, cols)
+                        st['empty_days'] += 1
+                    else:
+                        st['retry_later'] += 1
                     continue
                 st['files'] += 1
                 _write_day(cache, ns, sym, d, parse(data, sym), cols, time_col, st)

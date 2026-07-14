@@ -37,6 +37,7 @@ class FakeAdapter:
 
     def fetch_funding_history(self, symbol, start_ms, end_ms):
         self.funding_calls += 1
+        self.last_funding = (int(start_ms), int(end_ms))
         if self.raise_funding:
             raise RuntimeError('boom')
         return self._funding
@@ -124,3 +125,21 @@ def test_full_window_baseline_detects_spike_vs_long_history():
     prov = LiveSignalProvider(adp, mult=3, period='15min', n=100, now_fn=lambda: 1_000_000.0)
     pv, _ = prov.get('g1', 'X', open_ms=999_940_000)    # 开格才 1 分钟,旧语义必 0
     assert pv == 1
+
+
+def test_funding_rate_lookback_matches_settlement_interval_plus_1h():
+    """回看窗=结算周期+1h(终审 Important 4)：FakeAdapter 无 FUNDING_INTERVAL_HOURS→
+    getattr 默认 8h→9h 窗，而非旧固定 3h。7h 前的最新费率行落在 9h 窗内被取到；
+    旧 3h 窗（[now-3h, now]）早于该行时间戳，会漏判、悄悄退回默认值 0.0。"""
+    now_ms = 1_700_000_000_000 + 7 * 3600_000       # "现在" = 该费率行之后 7h
+    row_ts = 1_700_000_000_000
+    funding = pd.DataFrame({'ts': [row_ts], 'symbol': 'X',
+                           'fundingRate': [0.00042], 'realizedRate': [0.00042]})
+    adp = FakeAdapter(bars=_bars_with_spike(), funding=funding)
+    prov = LiveSignalProvider(adp, now_fn=lambda: now_ms / 1000.0)
+    _, fr = prov.get('g1', 'X', open_ms=0)
+    start_ms, end_ms = adp.last_funding
+    assert end_ms - start_ms == 9 * 3600_000         # 8h 结算 + 1h,非旧固定 3h
+    assert start_ms <= row_ts <= end_ms               # 7h 前的行落在 9h 窗内
+    assert row_ts < now_ms - 3 * 3600_000             # 旧固定 3h 窗会早于该行,漏判
+    assert abs(fr - 0.00042) < 1e-12                  # 确实取到该行,而非默认 0.0

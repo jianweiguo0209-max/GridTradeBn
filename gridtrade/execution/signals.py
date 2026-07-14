@@ -61,7 +61,10 @@ class LiveSignalProvider:
 
     def _funding_rate(self, symbol, now_ms):
         try:
-            fh = self.adapter.fetch_funding_history(symbol, now_ms - 3 * 3600_000, now_ms)
+            # 回看窗=结算周期+1h——币安 8h 结算下固定 3h 窗有 5/8 时间取不到最新费率(终审实证)。
+            hours = float(getattr(self.adapter, 'FUNDING_INTERVAL_HOURS', 8)) + 1.0
+            fh = self.adapter.fetch_funding_history(
+                symbol, now_ms - int(hours * 3600_000), now_ms)
             if fh is None or len(fh) == 0:
                 return 0.0
             return float(fh.sort_values('ts')['fundingRate'].iloc[-1])

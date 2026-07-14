@@ -125,6 +125,14 @@ def test_from_credentials_testnet_sandbox():
     assert 'testnet' in str(a.client.urls['api']).lower()
 
 
+def test_from_credentials_allows_accountwide_open_orders():
+    # ccxt binanceusdm 默认对无 symbol 的 fetchOpenOrders 抛错护栏；账户级快照需要全账户
+    # 一次(权重40)，必须显式关闭，否则 monitor 快照上线即死（终审 Critical 1）。
+    from gridtrade.exchanges.binance import BinanceAdapter
+    a = BinanceAdapter.from_credentials('k', 's')
+    assert a.client.options['warnOnFetchOpenOrdersWithoutSymbol'] is False
+
+
 def test_fetch_ohlcv_real_quote_volume():
     from gridtrade.exchanges.base import CANDLE_COLS
     c = FakeBinanceClient()
@@ -146,6 +154,24 @@ def test_fetch_ohlcv_empty():
     c.fapiPublicGetKlines = lambda params=None: []
     df = _binance(c).fetch_ohlcv('BTC/USDT:USDT', '1h', 0, 10**13)
     assert df.empty
+
+
+def test_fetch_my_trades_clamps_ancient_since():
+    # 币安 7 天窗语义:since=0(=1970) 必须收敛到近 6.5 天,近期 since 原样,None 透传
+    c = FakeBinanceClient()
+    seen = {}
+    def my_trades(symbol=None, since=None, limit=None, params=None):
+        seen['since'] = since
+        return []
+    c.fetch_my_trades = my_trades
+    c.milliseconds = lambda: 10_000_000_000_000
+    a = _binance(c)
+    a.fetch_my_trades('BTC/USDT:USDT', since_ms=0)
+    assert seen['since'] == 10_000_000_000_000 - int(6.5 * 24 * 3600 * 1000)
+    a.fetch_my_trades('BTC/USDT:USDT', since_ms=10_000_000_000_000 - 1000)
+    assert seen['since'] == 10_000_000_000_000 - 1000
+    a.fetch_my_trades('BTC/USDT:USDT')
+    assert seen['since'] is None
 
 
 def test_fetch_open_orders_all_single_call():
