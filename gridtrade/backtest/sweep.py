@@ -427,11 +427,11 @@ def expand_arms(family, df, *, n_new=3, windows=None):
             cand = [tested[-1] + step * (i + 1) for i in range(n_new)]
             cand = [c for c in cand if c <= hi_lim + 1e-12]
             edge = '上界 %s' % _num(tested[-1])
+        cand = [int(round(c)) if dim in _INT_DIMS else round(float(c), 6) for c in cand]
         if not cand:
             notes.append('%s 赢家在%s但已撞硬限 %s' % (dim, edge, (lo_lim, hi_lim)))
             continue
         for c in cand:
-            c = int(round(c)) if dim in _INT_DIMS else round(float(c), 6)
             coord = dict(win, **{dim: c})
             key = tuple(sorted(coord.items()))
             if key in seen:
