@@ -29,7 +29,11 @@
 - 既有测试桩：`tests/exchanges/test_binance_adapter.py:15` 的 `FakeBinanceClient` BTC markets 已含 `'market': {'min': 0.001, 'max': 120.0}`，ETH **无** `market` 键（fail-open 用例）。
 - `tests/exchanges/test_ccxt_adapter.py:54-56` 的 `FakeCcxtClient.markets` 只有 `amount`/`cost` limits，**无 `market` 键**（Task 1 要加）。
 - `GridExecutor` 已有属性：`gearing`、`min_amount`、`cap_min`、`_resolve_cap()`。
-- `GridProposal` 已有 `cap` 字段；`RiskBudgetGate`/`MarginGate`/`executor.open`/`LiveEquity` 都已 honor 它。
+- `GridProposal` 已有 `cap` 字段；`RiskBudgetGate`/`MarginGate`/`LiveEquity` 已 honor 它。
+  ⚠ **但 `GridManager.open_proposals` 从不把 `proposal.cap` 传给 `executor.open`**（manager.py:32-34，
+  评审实测 2026-07-15）——`executor.open(cap=...)` 的参数只有**手动 OPEN_GRID**（commands.py）在用。
+  自动路径不接上这一行，降档 cap 只影响"准入判断"、**真实网格仍按原始 cap 建仓**，本功能等于没做。
+  Task 3 必须补这条转发（见 Task 3 Step 3⑥）。
 - `ResilientAdapter.list_instruments` 已转发（`_call('list_instruments')`）⇒ 新字段自动流过，**无需改转发**。
 
 ---
@@ -373,6 +377,7 @@ git commit -m "feat(execution): fuse_policy 纯函数——覆盖率/降档 cap/
 - Modify: `gridtrade/execution/gates.py`（新增 `FuseCoverageGate` 类，置于 `MinNotionalGate` 之前）
 - Modify: `gridtrade/config.py`（`DeployConfig.fuse_min_coverage` + `load_deploy_config`）
 - Modify: `gridtrade/runtime/factory.py`（门链插入 + 传参）
+- Modify: `gridtrade/execution/manager.py`（`open_proposals` 转发 `cap=proposal.cap` + 建网失败逐提议隔离）
 - Modify: `deploy/fly.toml`、`deploy/fly.prod.toml`（`FUSE_MIN_COVERAGE = "1.0"`）
 - Modify: `.env.example`（新键注释）
 - Test: `tests/execution/test_gates.py`、`tests/test_config.py`
@@ -482,6 +487,38 @@ def test_fuse_gate_disabled_when_min_coverage_zero():
     gate.begin_batch()
     p = GridProposal(exchange='binance', symbol='BTC/USDT:USDT', grid_params=gp)
     assert gate.check(p).passed and p.cap is None
+
+
+def test_manager_forwards_capped_cap_to_executor():
+    # 集成守卫（评审实测 2026-07-15）：门链降档的 cap 必须真的传到 executor.open——
+    # 不传则真实网格按原始 cap 建仓、保险丝照旧超限，本功能等于没做。
+    from gridtrade.execution.gates import GateChain, GridProposal
+    from gridtrade.execution.manager import GridManager
+    seen = {}
+    class _Exec:
+        def open(self, exchange, symbol, grid_params, *, offset=0, tag='', cap=None):
+            seen['cap'] = cap
+            return 'gid1'
+    mgr = GridManager(_Exec(), GateChain([]))
+    p = GridProposal(exchange='binance', symbol='BTC/USDT:USDT',
+                     grid_params=_fuse_gp(), cap=42.0)     # 模拟 FuseCoverageGate 降档结果
+    assert mgr.open_proposals([p]) == ['gid1']
+    assert seen['cap'] == 42.0                             # 定稿 cap 到达执行器
+
+
+def test_manager_isolates_build_failure_per_proposal():
+    # 建网失败逐提议隔离（用户定 2026-07-15）：一个密网币不阻断整轮换仓
+    from gridtrade.execution.gates import GateChain, GridProposal
+    from gridtrade.execution.manager import GridManager
+    class _Exec:
+        def open(self, exchange, symbol, grid_params, *, offset=0, tag='', cap=None):
+            if symbol == 'BAD/USDT:USDT':
+                raise RuntimeError('建网失败：保证金不足')
+            return 'gid-ok'
+    mgr = GridManager(_Exec(), GateChain([]))
+    bad = GridProposal(exchange='binance', symbol='BAD/USDT:USDT', grid_params=_fuse_gp())
+    ok = GridProposal(exchange='binance', symbol='OK/USDT:USDT', grid_params=_fuse_gp())
+    assert mgr.open_proposals([bad, ok]) == ['gid-ok']     # 坏币跳过、好币照开
 
 
 def test_fuse_gate_then_min_notional_gate_rejects_unviable_capdown():
@@ -669,6 +706,35 @@ from gridtrade.execution.gates import (FuseCoverageGate, GateChain, MarginGate,
   # 保险丝覆盖率门槛（spec 2026-07-15）：worst>MARKET_LOT_SIZE.maxQty 时降 cap 护全额、
   # 降到 CAP_MIN 之下才拒币。主网当前恒不触发（临界权益 ≈$36.7k）；demo 会真实触发。0=停用（仅审计）。
   FUSE_MIN_COVERAGE = "1.0"
+```
+
+⑥ `gridtrade/execution/manager.py`——`open_proposals` **转发定稿 cap**（否则门链降档对真实开仓无效，
+评审实测；同时按既有 `SlotExhausted` 惯例做逐提议隔离，防单币建网失败搞挂整轮换仓）：
+
+```python
+    def open_proposals(self, proposals) -> List[str]:
+        opened: List[str] = []
+        for proposal in self.gates.filter(proposals):
+            try:
+                # cap=proposal.cap：门链定稿 cap（FuseCoverageGate 降档护全额，spec 2026-07-15 §五）。
+                # None=未干预 → executor 回退自己的动态 cap（原行为）。不传即降档失效（评审实测）。
+                gid = self.executor.open(
+                    proposal.exchange, proposal.symbol, proposal.grid_params,
+                    offset=proposal.offset, tag=proposal.tag, cap=proposal.cap)
+            except SlotExhausted as exc:
+                # 同币并发 cap 的唯一裁决层=DB 槽位（SymbolLockGate 已删，spec
+                # 2026-07-06-tiered-*）：逐提议隔离——跳过本提议、其余照开；
+                # 可观测性沿用 [gate] 口径（该开未开必须留痕）。
+                print('[gate] rejected %s tag=%s by SlotCap: %s'
+                      % (proposal.symbol, proposal.tag, exc), flush=True)
+                continue
+            except RuntimeError as exc:
+                # 建网失败（降档后 cap 太小；MinNotionalGate 停用时才漏到这）：同样逐提议隔离
+                # ——一个密网币不该阻断整轮换仓（用户定 2026-07-15）。
+                print('[gate] rejected %s tag=%s by BuildFail: %s'
+                      % (proposal.symbol, proposal.tag, exc), flush=True)
+                continue
+            opened.append(gid)
 ```
 
 ⑤ `.env.example`——在 `MIN_ORDER_NOTIONAL` 行之后加：
