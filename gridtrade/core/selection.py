@@ -85,8 +85,8 @@ def select_grid_coin(data, factor_info, weight_list, choose_symbols, run_time):
     # 删除选币因子为空的数据
     data.dropna(subset=list(factor_info.keys()), inplace=True)
 
-    # 交易额过滤
-    data = data[data['交易额分位占比'] <= 0.55]
+    # 选币层交易额过滤已取消（2026-07-14 用户定，偏离 legacy）：票池层已做逐 rt 24h 成交额
+    # 前 55% 相对口径（resolve_live_universe / build_pit_candidates），不再复合过滤。
 
     # 均线死叉过滤
     # data['标识信号'] = True

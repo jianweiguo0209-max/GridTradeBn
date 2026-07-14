@@ -39,8 +39,9 @@ primary_region = "nrt"
   # resolve_live_universe = 全部 live 永续 swap（list_instruments 只留 swap + canonical
   # 去重）−黑名单(BLACKLIST_SYMBOLS，无条件生效)−**24h 成交额前 55% 相对口径**
   # (UNIVERSE_TOP_VOLUME_PCT，取代旧 $1M 绝对地板 MIN_QUOTE_VOLUME_24H——机制保留可叠加，
-  # 用户定 2026-07-14，spec 2026-07-14-universe-top-volume-pct)，再由 select_grid_coin 做
-  # 55% 相对成交额过滤 + 因子排名选出当轮开仓币种（两层复合，时间尺度不同）。设计见
+  # 用户定 2026-07-14，spec 2026-07-14-universe-top-volume-pct)，再由 select_grid_coin
+  # 因子排名选出当轮开仓币种（选币层原「交易额分位占比 ≤0.55」复合过滤已取消——票池层
+  # 相对口径接管，用户定 2026-07-14）。设计见
   # docs/superpowers/specs/2026-07-04-candidate-universe-port-design.md。
   UNIVERSE_TOP_VOLUME_PCT = "0.55"
   MIN_ORDER_NOTIONAL = "5"          # 开仓预检全局下限，与按币 MIN_NOTIONAL 取 max（spec 2026-07-14 §5.3，密网币直接门链拒，不留死 OPENING）

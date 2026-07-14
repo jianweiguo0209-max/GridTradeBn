@@ -89,20 +89,22 @@ class PositionLedger:
 
     # ── 合成成交 ──
 
-    def _record_synthetic(self, grid_id, side, qty, px, event, eid=None):
+    def _record_synthetic(self, grid_id, side, qty, px, event, eid=None, fee=0.0):
         """单边合成行:落 grid_fills(去重)+ 已加载的 live 账本同步 record_fill。
         eid(spec 2026-07-11 组件三):转仓对由 settle_transfer 生成一次、两行共享 →
-        审计可精确配对;None=自生成(reduce 等单边行)。格式 'ts-seq'。"""
+        审计可精确配对;None=自生成(reduce 等单边行)。格式 'ts-seq'。
+        fee(2026-07-14 testnet 实证补):reduce 单边行背后是真实市价单,携真实 taker 费
+        入账(调用方经 _reduce_fill_px_fee 回捞);转仓双边行(内部净额化,无真实成交)恒 0。"""
         ts = now_ms()
         if eid is None:
             eid = '%d-%d' % (ts, next(self._seq))
         fill = Fill(trade_id='%s%s:%s:%s' % (LEDGER_PREFIX, event, grid_id, eid),
                     grid_id=grid_id, line_index=-1, side=side,
-                    price=float(px), size=abs(float(qty)), fee=0.0, ts=ts)
+                    price=float(px), size=abs(float(qty)), fee=float(fee), ts=ts)
         if self.ex.fills.add_if_new(fill):
             live = self.ex.live.get(grid_id)
             if live is not None:
-                live.record_fill(fill.price, fill.side, fill.size, fill.ts, 0.0)
+                live.record_fill(fill.price, fill.side, fill.size, fill.ts, float(fee))
                 self.ex._book_ids.setdefault(grid_id, set()).add(fill.trade_id)
 
     def settle_transfer(self, from_gid, to_gid, symbol, qty, mark_px, event):
@@ -140,10 +142,10 @@ class PositionLedger:
                and attempt < 3):
             qty = min(abs(remaining), abs(pos.net_size))
             side = 'sell' if remaining > 0 else 'buy'
-            ex.adapter.create_market_order(symbol, side, qty, reduce_only=True,
-                                           client_oid='%s:close:%d' % (grid_id, attempt))
-            self._record_synthetic(grid_id, side, qty,
-                                   float(ex.adapter.fetch_price(symbol)), 'reduce')
+            o = ex.adapter.create_market_order(symbol, side, qty, reduce_only=True,
+                                               client_oid='%s:close:%d' % (grid_id, attempt))
+            r_px, r_fee = ex._reduce_fill_px_fee(symbol, o)   # 真实成交均价+真实费
+            self._record_synthetic(grid_id, side, qty, r_px, 'reduce', fee=r_fee)
             remaining -= qty if remaining > 0 else -qty
             attempt += 1
             pos = ex.adapter.fetch_positions(symbol)

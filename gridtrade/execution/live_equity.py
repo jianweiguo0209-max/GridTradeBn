@@ -106,7 +106,8 @@ class LiveEquity:
         """Mark-to-market snapshot,全字段逐笔精确直算(spec 2026-07-12-honest-record-pnl):
         record/accounting/止损判定共用本口径。引擎 cal_equity_curve 已移出记账链路
         (回测均匀 lot/线价语义,对部分成交/合成行失真——三次同族事故实证,见 _replay_exact);
-        不含平仓 taker 费(实际退出时由 executor 落真实费)。"""
+        平仓 taker 费经 ledger:reduce 合成行携真实费入账(executor._reduce_fill_px_fee
+        按 order_id 回捞 userTrades——2026-07-14 兑现,此前合成行恒 0 费致关格漏计)。"""
         if not self._fills:
             return {'net_value': 1.0, 'pnl_ratio': 0.0, 'net_position': 0.0,
                     'avg_price': 0.0, 'realized_pnl': 0.0, 'fee_paid': 0.0,

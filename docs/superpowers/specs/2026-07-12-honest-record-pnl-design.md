@@ -1,5 +1,12 @@
 # 关格记录诚实化(pnl 直算收编)+ 外部干预检测 设计
 
+> **2026-07-14 追加(testnet 实证)**:ledger:reduce 合成行原恒 fee=0 且用 mark 价——真实市价
+> 减仓单的 taker 费(SKYAI 实证 $0.198,5bps)与成交价差双双丢失,record/fee_paid/面板费用列
+> 系统性高估盈亏;snapshot 注释"退出时由 executor 落真实费"当时未实现。已修:两处 reduce 站点
+> (grid_executor._flatten_symbol / position_ledger.close_share)经 _reduce_fill_px_fee 按
+> order_id 回捞 userTrades,合成行携真实 vwap+真实费;回捞失败回退 mark+0 费(fail-open)。
+> 转仓双边行(closeshare/closeset,内部净额化无真实成交)保持 0 费不变。
+
 > 状态:**已获用户批准(2026-07-12)**;待决策①按推荐=引擎彻底移出 snapshot;②(resolve 形态)实现 plan 评审时问用户;③按本文组件四口径(v39 后自动修,更早只报告)。实现前如遇本文未覆盖的分歧点,**不确定就问,勿猜**。
 > 事故:2026-07-11 mainnet manual 关格 VVV gt00/gt02 记录 +$15/+$11,交易所真实 −$51.7/−$52.5。
 

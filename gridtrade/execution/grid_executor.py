@@ -357,22 +357,40 @@ class GridExecutor:
                                          exchange_order_id=o.exchange_order_id,
                                          filled=o.filled))
 
+    def _reduce_fill_px_fee(self, symbol, order):
+        """真实市价减仓单的成交均价与真实 taker 费——兑现 live_equity.snapshot 注释的
+        "退出时由 executor 落真实费"(testnet 实证 2026-07-14:SKYAI 关格真实费 $0.198
+        曾丢失,合成行只记 mark 价+0 费)。按 order_id 过滤 userTrades 聚合 vwap+费;
+        拉不到成交(接口抖动/时延)回退 mark 价+0 费(原语义,fail-open)并留痕。"""
+        try:
+            trades = [t for t in self.adapter.fetch_my_trades(symbol)
+                      if t.order_id is not None and str(t.order_id) == str(order.id)]
+        except Exception as exc:
+            print('[ledger] reduce 真实费回捞失败 %s: %r(回退 mark+0 费)' % (symbol, exc),
+                  flush=True)
+            trades = []
+        tot = sum(float(t.size) for t in trades)
+        if tot <= 0:
+            return float(self.adapter.fetch_price(symbol)), 0.0
+        vwap = sum(float(t.price) * float(t.size) for t in trades) / tot
+        return float(vwap), float(sum(float(t.fee) for t in trades))
+
     def _flatten_symbol(self, grid_id, symbol):
         """无兄弟收尾段:symbol 级扫平(孤儿仓卫生,旧行为);reduce 市价单可能部分成交,
         重拉持仓补 reduce 直至 <= min_amount。每步落 ledger:reduce 合成行(spec
         2026-07-12 补):此前扫平退出不入 grid_fills → 账本重放 net≠0,record 只能靠
         snapshot 的 mark 兜、verify-ledger --records 离线不可重验;补行后关格流水自洽,
-        与 close_share reduce 同规范(mark 价合成,真实滑点差留给交易所快照)。"""
+        与 close_share reduce 同规范(真实成交 vwap+真实费,回捞失败回退 mark+0 费——
+        2026-07-14 兑现,原为 mark 价+0 费漏计关格 taker 费)。"""
         pos = self.adapter.fetch_positions(symbol)
         attempt = 0
         while abs(pos.net_size) > self.min_amount and attempt < 3:
             side = 'sell' if pos.net_size > 0 else 'buy'
             qty = abs(pos.net_size)
-            self.adapter.create_market_order(symbol, side, qty, reduce_only=True,
-                                             client_oid='%s:close:%d' % (grid_id, attempt))
-            self.ledger._record_synthetic(grid_id, side, qty,
-                                          float(self.adapter.fetch_price(symbol)),
-                                          'reduce')
+            o = self.adapter.create_market_order(symbol, side, qty, reduce_only=True,
+                                                 client_oid='%s:close:%d' % (grid_id, attempt))
+            r_px, r_fee = self._reduce_fill_px_fee(symbol, o)
+            self.ledger._record_synthetic(grid_id, side, qty, r_px, 'reduce', fee=r_fee)
             attempt += 1
             pos = self.adapter.fetch_positions(symbol)
 

@@ -15,7 +15,8 @@ _ROOT = os.path.abspath(os.path.join(_HERE, '..', '..'))
 # legacy 实盘已 archive 到 legacy/（见 docs/STATUS.md §10）；此脚本仅在重生成金标时运行。
 for _p in (os.path.join(_ROOT, 'legacy', 'account_0'),
            os.path.join(_ROOT, 'legacy', 'account_0', 'utils'),
-           os.path.join(_ROOT, 'legacy', 'account_0', 'api')):
+           os.path.join(_ROOT, 'legacy', 'account_0', 'api'),
+           _ROOT):   # gridtrade 本体：§2 选币金标改用新 core 生成（见下方注释）
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -45,7 +46,14 @@ def main():
     from utils.fancy_grid_function import cal_factor  # 原始实现
     from utils.functions import (proceed_calc_symbol_factor,
                                  calc_grid_params_v1, calc_grid_params_v2)
-    from utils.fancy_grid_function import select_grid_coin
+    # §2 截面选币金标改由新 core 整段生成（2026-07-14 用户定）：选币层「交易额分位
+    # 占比 ≤ 0.55」过滤已取消（票池层 55% 相对口径接管，不再复合），legacy 冻结保留旧
+    # 过滤 → cross_select 金标自此为「现行为回归钉」，不再是 legacy 等价钉；且 legacy
+    # 截面管线对机器 TZ/pandas 版本敏感（12H 桶随 TZ 平移），新 core 恒 UTC。
+    # legacy 等价锚保留在 §1 因子金标与 §3 网格参数金标（仍从 legacy 生成）。
+    from gridtrade.core.selection import (proceed_calc_symbol_factor as
+                                          core_proceed_calc_symbol_factor,
+                                          select_grid_coin as core_select_grid_coin)
 
     # ---- 1) 单币因子金标 ----
     df = make_symbol_df('BTC/USDT:USDT', n=240, seed=1)
@@ -61,9 +69,9 @@ def main():
     run_time = pd.Timestamp('2024-01-09 00:00:00')
     symbols = ['AAA/USDT:USDT', 'BBB/USDT:USDT', 'CCC/USDT:USDT', 'DDD/USDT:USDT']
     scd = {s: make_symbol_df(s, n=240, seed=i + 10) for i, s in enumerate(symbols)}
-    all_df = proceed_calc_symbol_factor(scd, run_time, period, offset)
+    all_df = core_proceed_calc_symbol_factor(scd, run_time, period, offset)
     factors = {"Reg_v2_5": True, "Sgcz_5": True, "Er_2": True}
-    sel = select_grid_coin(all_df.copy(), factors, [1, 1, 1], 2, run_time)
+    sel = core_select_grid_coin(all_df.copy(), factors, [1, 1, 1], 2, run_time)
     keep = ['symbol', 'time', 'rank', 'rank_sum', 'close', 'Atr_5', 'middle_5'] + list(factors.keys())
     sel = sel[[c for c in keep if c in sel.columns]].reset_index(drop=True)
     sel.to_parquet(os.path.join(_HERE, 'cross_select_golden.parquet'), index=False)
