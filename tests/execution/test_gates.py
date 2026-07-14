@@ -475,6 +475,38 @@ def test_fuse_gate_disabled_when_min_coverage_zero():
     assert gate.check(p).passed and p.cap is None
 
 
+def test_manager_forwards_capped_cap_to_executor():
+    # 集成守卫（评审实测 2026-07-15）：门链降档的 cap 必须真的传到 executor.open——
+    # 不传则真实网格按原始 cap 建仓、保险丝照旧超限，本功能等于没做。
+    from gridtrade.execution.gates import GateChain, GridProposal
+    from gridtrade.execution.manager import GridManager
+    seen = {}
+    class _Exec:
+        def open(self, exchange, symbol, grid_params, *, offset=0, tag='', cap=None):
+            seen['cap'] = cap
+            return 'gid1'
+    mgr = GridManager(_Exec(), GateChain([]), stop_cfg={})   # open_proposals 不读 stop_cfg
+    p = GridProposal(exchange='binance', symbol='BTC/USDT:USDT',
+                     grid_params=_fuse_gp(), cap=42.0)     # 模拟 FuseCoverageGate 降档结果
+    assert mgr.open_proposals([p]) == ['gid1']
+    assert seen['cap'] == 42.0                             # 定稿 cap 到达执行器
+
+
+def test_manager_isolates_build_failure_per_proposal():
+    # 建网失败逐提议隔离（用户定 2026-07-15）：一个密网币不阻断整轮换仓
+    from gridtrade.execution.gates import GateChain, GridProposal
+    from gridtrade.execution.manager import GridManager
+    class _Exec:
+        def open(self, exchange, symbol, grid_params, *, offset=0, tag='', cap=None):
+            if symbol == 'BAD/USDT:USDT':
+                raise RuntimeError('建网失败：保证金不足')
+            return 'gid-ok'
+    mgr = GridManager(_Exec(), GateChain([]), stop_cfg={})   # open_proposals 不读 stop_cfg
+    bad = GridProposal(exchange='binance', symbol='BAD/USDT:USDT', grid_params=_fuse_gp())
+    ok = GridProposal(exchange='binance', symbol='OK/USDT:USDT', grid_params=_fuse_gp())
+    assert mgr.open_proposals([bad, ok]) == ['gid-ok']     # 坏币跳过、好币照开
+
+
 def test_fuse_gate_then_min_notional_gate_rejects_unviable_capdown():
     # DRY 分工验证：FuseCoverage 只降 cap，"降后每笔名义额不够"由 MinNotionalGate 自然拒
     from gridtrade.execution.fuse_policy import fuse_worst

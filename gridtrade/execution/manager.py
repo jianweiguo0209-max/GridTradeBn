@@ -29,14 +29,22 @@ class GridManager:
         opened: List[str] = []
         for proposal in self.gates.filter(proposals):
             try:
+                # cap=proposal.cap：门链定稿 cap（FuseCoverageGate 降档护全额，spec 2026-07-15 §五）。
+                # None=未干预 → executor 回退自己的动态 cap（原行为）。不传即降档失效（评审实测）。
                 gid = self.executor.open(
                     proposal.exchange, proposal.symbol, proposal.grid_params,
-                    offset=proposal.offset, tag=proposal.tag)
+                    offset=proposal.offset, tag=proposal.tag, cap=proposal.cap)
             except SlotExhausted as exc:
                 # 同币并发 cap 的唯一裁决层=DB 槽位（SymbolLockGate 已删，spec
                 # 2026-07-06-tiered-*）：逐提议隔离——跳过本提议、其余照开；
                 # 可观测性沿用 [gate] 口径（该开未开必须留痕）。
                 print('[gate] rejected %s tag=%s by SlotCap: %s'
+                      % (proposal.symbol, proposal.tag, exc), flush=True)
+                continue
+            except RuntimeError as exc:
+                # 建网失败（降档后 cap 太小；MinNotionalGate 停用时才漏到这）：同样逐提议隔离
+                # ——一个密网币不该阻断整轮换仓（用户定 2026-07-15）。
+                print('[gate] rejected %s tag=%s by BuildFail: %s'
                       % (proposal.symbol, proposal.tag, exc), flush=True)
                 continue
             opened.append(gid)

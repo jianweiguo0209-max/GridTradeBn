@@ -1,7 +1,9 @@
 """准入门链（Chain of Responsibility）—— 开网格提议的无冲突第一道闸。
 
 触发器产出 GridProposal -> GateChain 顺序过闸 -> 放行的提议交 GridManager 开仓。
-门只读状态、不下单、不写库。MarginGate/RiskBudgetGate 待保证金/风险口径决策后补。
+门只读状态、不下单、不写库。门可写 proposal 自身字段（如 cap）作门间传递——GridProposal
+本就是门链的通信载体（FuseCoverageGate 定稿 cap，spec 2026-07-15 §五）；"不写库/不下单"
+仍严格成立。MarginGate/RiskBudgetGate 待保证金/风险口径决策后补。
 """
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
