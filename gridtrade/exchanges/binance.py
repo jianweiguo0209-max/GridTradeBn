@@ -28,9 +28,17 @@ class BinanceAdapter(CcxtAdapter):
     def encode_cloid(self, client_oid):
         if client_oid is None:
             return None
-        s = _CLOID_BAD.sub('-', str(client_oid))
-        # 越界断言（spec §5.1）：内部格式 ~13 字符远低于 36 上限；超限=上游 ID 生成异常，
-        # 静默截断可能产生跨单碰撞（假去重），宁可 fail-loud 拒单。
+        s = str(client_oid)
+        # gid 段压缩（testnet 实证 2026-07-14）：grid_id 实为 32-hex uuid（spec §5.1 原按
+        # 6 位整数建模长度是错的）——'{gid}:0:0' 恰 36 字符压线、'{gid}:fuse:low' 41 字符
+        # 必越界 → 保险丝下单失败、格卡 OPENING。取 gid 前 12 hex（16^12≈2.8e14，同账户
+        # 并发格碰撞可忽略），确定性单向映射；成交/对账走 exchange order id，无回读依赖。
+        parts = s.split(':', 1)
+        if len(parts) == 2 and len(parts[0]) > 12:
+            s = parts[0][:12] + ':' + parts[1]
+        s = _CLOID_BAD.sub('-', s)
+        # 越界断言（spec §5.1）：压缩后内部格式 ≤22 字符远低于 36 上限；仍超限=上游 ID
+        # 生成异常，静默截断可能产生跨单碰撞（假去重），宁可 fail-loud 拒单。
         if len(s) > 36:
             raise ValueError('client_oid 超长(%d>36): %r' % (len(s), client_oid))
         return s or None

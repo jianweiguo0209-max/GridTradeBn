@@ -365,3 +365,18 @@ def test_cancel_all_clears_both_books():
     c.cancel_all_orders = lambda symbol=None, params=None: calls.append(dict(params or {}))
     _binance(c).cancel_all('BTC/USDT:USDT')
     assert calls == [{}, {'trigger': True}]
+
+
+def test_encode_cloid_compresses_uuid_gid():
+    # testnet 实证（2026-07-14）：grid_id 为 32-hex uuid，'{gid}:fuse:low' 全长 41 字符
+    # 越界致保险丝下单失败、格卡 OPENING——gid 段压缩到前 12 hex 后全格式 ≤22 字符
+    a = _binance()
+    gid = '1fc96ed264af48319fba276ea8d240b0'
+    assert a.encode_cloid('%s:0:0' % gid) == '%s:0:0' % gid[:12]
+    assert a.encode_cloid('%s:fuse:low' % gid) == '%s:fuse:low' % gid[:12]
+    assert a.encode_cloid('%s:close:3' % gid) == '%s:close:3' % gid[:12]
+    assert len(a.encode_cloid('%s:fuse:high' % gid)) == 22
+    # 短 gid（冒烟脚本 '999999:1:1'）不受压缩影响
+    assert a.encode_cloid('999999:1:1') == '999999:1:1'
+    # 确定性：同输入恒同输出（交易所端幂等去重语义保持）
+    assert a.encode_cloid('%s:5:2' % gid) == a.encode_cloid('%s:5:2' % gid)
