@@ -472,17 +472,22 @@ def expand_arms(family, df, *, n_new=3, windows=None):
         if not cand:
             notes.append('%s 赢家在%s但已撞硬限 %s' % (dim, edge, (lo_lim, hi_lim)))
             continue
+        added = []
         for c in cand:
             coord = dict(win, **{dim: c})
             key = tuple(sorted(coord.items()))
             if key in seen:
-                continue
+                continue                       # 已跑过（缺窗的由 arms_missing_window 自愈补齐）
             seen.add(key)
             ov = {k: val for k, val in coord.items() if val != baseline()[k]}
             if not ov:
                 continue
+            added.append(_num(c))
             new_arms.append(Arm(family, _arm_label(family, ov), ov))
-        notes.append('%s 赢家在%s → 外推 %s' % (dim, edge, [_num(c) for c in cand]))
+        skipped = len(cand) - len(added)
+        notes.append('%s 赢家在%s → 外推 %s%s'
+                     % (dim, edge, added if added else '[]',
+                        '（%d 个候选已跑过、跳过）' % skipped if skipped else ''))
     if not new_arms:
         notes.append('最优在网格内部（或已撞硬限）→ 无需扩边')
     return new_arms, '; '.join(notes)
