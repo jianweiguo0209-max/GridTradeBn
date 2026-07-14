@@ -33,7 +33,9 @@ def fuse_capped_cap(cap, gearing, grid_params, market_max_qty, *,
     供审计）。
 
     fail-open：maxQty 未知（<=0）或建不了网 → 原样返回、coverage=None，绝不因限额表读不到
-    而干预（交易所自会校验；MinNotionalGate 兜底拒建不了网的 cap）。"""
+    而干预（交易所自会校验；MinNotionalGate 兜底拒建不了网的 cap）。
+    只降不升：护栏绝不放大仓位——min_coverage>1 时已足额币（coverage>1）进到干预分支后被 clamp 成
+    不动（coverage' 保持 >1，非 1.0）。配置层已把 FUSE_MIN_COVERAGE>1 拒在 boot（见 config.py）。"""
     cap = float(cap)
     mx = float(market_max_qty or 0.0)
     if mx <= 0:

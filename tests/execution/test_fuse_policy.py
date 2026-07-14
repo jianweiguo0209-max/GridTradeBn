@@ -60,7 +60,7 @@ def test_capdown_never_increases_cap():
     for mc, mx_mult in ((1.2, 1.10), (2.0, 1.90)):      # 已足额（coverage>1）却低于 mc
         cap2, cov = fuse_capped_cap(100.0, GEARING, GP, w * mx_mult, min_coverage=mc)
         assert cov == pytest.approx(mx_mult)
-        assert cap2 <= 100.0                            # 只降不升（此处应恰为不动）
+        assert cap2 == pytest.approx(100.0)             # 只降不升（此处应恰为不动，非仅 <=）
 
 
 def test_unknown_max_qty_fails_open():

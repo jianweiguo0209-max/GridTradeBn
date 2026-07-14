@@ -73,6 +73,7 @@ class DeployConfig:
     cap_max: float = 100000.0
     min_quote_volume_24h: float = 0.0   # >0 → 24h 成交额绝对地板（0=停用）；与相对口径可叠加（先地板后相对）
     universe_top_volume_pct: float = 0.0  # >0 → 票池按 24h 成交额取前 ceil(pct×N)（相对口径，spec 2026-07-14-universe-top-volume-pct）；生产设 0.55
+    fuse_min_coverage: float = 1.0  # 保险丝覆盖率门槛（spec 2026-07-15）：<该值即降 cap 护全额；0=停用（仅审计）。合法区间 (0, 1.0]——>1 无意义（覆盖率>1 只是余量，护栏已 clamp 成只降不升）
     min_order_notional: float = 0.0     # >0 → 开仓预检单笔名义额下限（币安按币 5/20/50，与 Instrument.min_cost 取 max）；0=停用
     scheduler_fetch_pace_ms: float = 2000.0   # 选币取数币间间隔（HL 权重制推导，见 scheduler.py）；0=关
     monitor_parallel: int = 4           # monitor per-grid 并行 worker 数；1=退回全串行（保底开关）
@@ -110,6 +111,13 @@ def load_deploy_config(env=None) -> DeployConfig:
                          ('HL_TESTNET', 'BINANCE_TESTNET')):
         if legacy in env:
             raise RuntimeError('env %s 已退役,请改用 %s' % (legacy, repl))
+    # 保险丝覆盖率门槛（spec 2026-07-15）：接受 <=0（停用，仅审计）或 (0, 1.0]。
+    # >1 无意义——coverage>1 只是余量（丝本就能全平最大持仓），设 1.2 这类"留余量"的自然
+    # 误读只会把已足额的币白缩一个 lot 步。禁静默 clamp：配置错了要响亮（沿退役键守卫惯例）。
+    _fmc = _f(env, 'FUSE_MIN_COVERAGE', 1.0)
+    if _fmc > 1.0:
+        raise RuntimeError('FUSE_MIN_COVERAGE=%s 无效：>1 无意义（覆盖率>1 只是余量，'
+                           '丝本就能全平最大持仓）；取 (0, 1.0] 或 <=0（停用，仅审计）' % _fmc)
     cap = _f(env, 'CAP', 100.0)
     return DeployConfig(
         exchange=_s(env, 'EXCHANGE', 'binance'),
@@ -144,6 +152,7 @@ def load_deploy_config(env=None) -> DeployConfig:
         cap_max=_f(env, 'CAP_MAX', 100000.0),
         min_quote_volume_24h=_f(env, 'MIN_QUOTE_VOLUME_24H', 0.0),
         universe_top_volume_pct=_f(env, 'UNIVERSE_TOP_VOLUME_PCT', 0.0),
+        fuse_min_coverage=_fmc,
         min_order_notional=_f(env, 'MIN_ORDER_NOTIONAL', 0.0),
         scheduler_fetch_pace_ms=_f(env, 'SCHEDULER_FETCH_PACE_MS', 2000.0),
         monitor_parallel=_i(env, 'MONITOR_PARALLEL', 4),
