@@ -509,6 +509,14 @@ def test_fuse_min_coverage_parsed():
     from gridtrade.config import load_deploy_config
     assert load_deploy_config({}).fuse_min_coverage == 1.0
     assert load_deploy_config({'FUSE_MIN_COVERAGE': '0'}).fuse_min_coverage == 0.0
+
+
+def test_fuse_min_coverage_above_one_rejected():
+    # >1 无意义且是语义陷阱（"留 20% 余量"的自然误读会把已足额币白缩仓）→ boot 直接报错
+    import pytest
+    from gridtrade.config import load_deploy_config
+    with pytest.raises(RuntimeError):
+        load_deploy_config({'FUSE_MIN_COVERAGE': '1.2'})
 ```
 
 **同时**改 `tests/runtime/test_factory.py:31` 的既有用例——它钉死了"四门、Margin 最后"，现为五门（**改名 + 改断言**，保持其原意图：门链形状与顺序被守卫）：
@@ -611,6 +619,20 @@ class FuseCoverageGate(AdmissionGate):
 
 ```python
         fuse_min_coverage=_f(env, 'FUSE_MIN_COVERAGE', 1.0),
+```
+
+**并在 `load_deploy_config` 开头的退役键守卫之后、`cap = _f(env, 'CAP', 100.0)` 之前**追加合法
+区间守卫（沿本仓 fail-fast 惯例；评审+实现者双指出 >1 是语义陷阱：覆盖率>1 只是余量、丝本就
+能全平，设 1.2 只会把已足额的币白白缩仓）：
+
+```python
+    # 保险丝覆盖率门槛合法区间 (0, 1.0]（spec 2026-07-15）：>1 无意义——coverage>1 只是余量
+    # （丝本就能全平最大持仓），设 1.2 这类"留余量"的自然误读只会把已足额的币白缩一个 lot 步。
+    # 0/负 = 停用（仅审计）。禁静默 clamp：配置错了要响亮。
+    _fmc = _f(env, 'FUSE_MIN_COVERAGE', 1.0)
+    if _fmc > 1.0:
+        raise RuntimeError('FUSE_MIN_COVERAGE=%s 无效：合法区间 (0, 1.0]（>1 无意义，'
+                           '覆盖率>1 只是余量；0=停用仅审计）' % _fmc)
 ```
 
 ③ `gridtrade/runtime/factory.py`——import 增补 `FuseCoverageGate`，门链按新序：
