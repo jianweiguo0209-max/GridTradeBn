@@ -38,7 +38,9 @@ class FakeCcxtClient:
         self.canceled.append((id, symbol))
     def cancel_all_orders(self, symbol=None, params=None):
         self.canceled.append(('ALL', symbol))
-    def fetch_open_orders(self, symbol=None, params=None):
+    def fetch_open_orders(self, symbol=None, since=None, limit=None, params=None):
+        # 签名对齐真实 ccxt：位置传 params 会错落到 since——桩必须能暴露这类错位
+        assert since is None or isinstance(since, (int, float)), '错位: params 传进了 since'
         return [{'id': '7', 'clientOrderId': 'g:0', 'symbol': symbol, 'side': 'buy',
                  'price': 1.0, 'amount': 2.0, 'filled': 0.0, 'status': 'open'}]
     def fetch_my_trades(self, symbol=None, since=None, limit=None, params=None):

@@ -22,6 +22,10 @@ def main():
     a.assert_account_mode()
     print('   OK（单向持仓/单币保证金）')
 
+    print('== 清理上次残留（幂等；崩溃遗留孤儿单会以 -4067 挡 marginType）==')
+    a.cancel_all(SYM)
+    print('   cleaned')
+
     print('== 行情/精度 ==')
     px = a.fetch_price(SYM)
     qty = a.quantize_amount(SYM, 0.002)

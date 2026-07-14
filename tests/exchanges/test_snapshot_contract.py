@@ -27,7 +27,7 @@ def adapter(request):
         return ex
     c = FakeBinanceClient()
     # 账户级 openOrders 含未请求币（DOGE）→ 过滤契约非空载（评审：原桩回 symbol=None 行致空载）
-    def open_orders(symbol=None, params=None):
+    def open_orders(symbol=None, since=None, limit=None, params=None):
         return [
             {'id': '7', 'clientOrderId': '1:0:0', 'symbol': 'BTC/USDT:USDT',
              'side': 'buy', 'price': 1.0, 'amount': 2.0, 'filled': 0.0,

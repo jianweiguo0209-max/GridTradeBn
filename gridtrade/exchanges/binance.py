@@ -199,7 +199,9 @@ class BinanceAdapter(CcxtAdapter):
         # 保险丝对账依赖看得见触发单。
         native = self.to_native(symbol)
         rows = list(self.client.fetch_open_orders(native))
-        rows += list(self.client.fetch_open_orders(native, {'trigger': True}))
+        # ccxt 签名 (symbol, since, limit, params)：params 必须关键字传——位置传会落到
+        # since 上，algo 簿静默查不到（demo 实测 2026-07-14 TypeError 抓获）
+        rows += list(self.client.fetch_open_orders(native, params={'trigger': True}))
         return [self._to_order(r) for r in rows]
 
     def cancel_all(self, symbol) -> None:
@@ -213,7 +215,7 @@ class BinanceAdapter(CcxtAdapter):
         # 2400——若见 429 优先调大 MONITOR_INTERVAL_SEC）
         want = set(symbols)
         rows = list(self.client.fetch_open_orders(None))
-        rows += list(self.client.fetch_open_orders(None, {'trigger': True}))
+        rows += list(self.client.fetch_open_orders(None, params={'trigger': True}))
         return [o for o in (self._to_order(r) for r in rows) if o.symbol in want]
 
     def fetch_positions_all(self, symbols):

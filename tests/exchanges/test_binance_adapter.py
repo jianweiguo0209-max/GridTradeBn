@@ -184,7 +184,8 @@ def test_fetch_my_trades_clamps_ancient_since():
 def test_fetch_open_orders_all_single_call():
     c = FakeBinanceClient()
     calls = []
-    def fetch_open_orders(symbol=None, params=None):
+    def fetch_open_orders(symbol=None, since=None, limit=None, params=None):
+        assert since is None, '错位: params 传进了 since'
         calls.append(symbol)
         return [{'id': '7', 'clientOrderId': '1:0:0', 'symbol': 'BTC/USDT:USDT',
                  'side': 'buy', 'price': 1.0, 'amount': 2.0, 'filled': 0.0,
@@ -342,7 +343,8 @@ def test_cancel_order_regular_success_no_fallback():
 def test_fetch_open_orders_merges_trigger_book():
     # 保险丝可见性：单币挂单=常规簿+algo 簿并读（不并读→对账器误判丝丢失反复重挂）
     c = FakeBinanceClient()
-    def open_orders(symbol=None, params=None):
+    def open_orders(symbol=None, since=None, limit=None, params=None):
+        assert since is None, '错位: params 传进了 since'
         if (params or {}).get('trigger'):
             return [{'id': '9', 'clientOrderId': '1:fuse:low', 'symbol': 'BTC/USDT:USDT',
                      'side': 'sell', 'price': 95.0, 'amount': 1.0, 'filled': 0.0,
