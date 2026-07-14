@@ -254,3 +254,30 @@ def test_expand_no_subdivision_when_edge_equals_limit():
     df = _res('funding', [('fr=0.0001', 30.0, 0.07), ('fr=0.0005', 26.4, 0.066)])
     arms, note = SW.expand_arms('funding', df, n_new=3)
     assert arms == [] and '硬限' in note
+
+
+def test_arms_missing_window_backfills_incomplete_arms():
+    """逐窗分次跑 + 中途扩边 → CSV 里会出现「只跑了部分窗」的臂；必须能补跑。
+
+    死锁实证（2026-07-15）：扩边臂在 OOS 生成并跑完，后续窗口的扩边判定发现它已在 CSV 里
+    （seen 命中）→ 不再提议 → 而 complete_only 排名又把它排除（缺窗）→ 永远补不齐、成为死行。
+    """
+    rows = [{'family': 'pv', 'window': w, 'arm': 'BASE(现值)', 'calmar': 20.0, 'ret': 0.05,
+             'mdd': 0.02, 'n_broke': 0, 'n_blown': 0} for w in ('OOS', 'W1', 'W2', 'IS')]
+    rows.append({'family': 'pv', 'window': 'OOS', 'arm': 'mult=5', 'calmar': 50.0,
+                 'ret': 0.09, 'mdd': 0.02, 'n_broke': 0, 'n_blown': 0})   # 只跑了 OOS
+    df = pd.DataFrame(rows)
+    assert [a.label for a in SW.arms_missing_window('pv', df, 'OOS')] == []
+    for w in ('W1', 'W2', 'IS'):
+        miss = SW.arms_missing_window('pv', df, w)
+        assert [a.label for a in miss] == ['mult=5'], w
+        assert miss[0].overrides == {'pv_mult': 5}, '补跑臂须还原出正确的覆盖项'
+
+
+def test_arms_missing_window_recovers_off_arms():
+    """OFF 类臂（无数值坐标）也要能从 build_arms 找回来补跑。"""
+    rows = [{'family': 'pv', 'window': 'OOS', 'arm': 'pv=OFF', 'calmar': 5.0, 'ret': 0.01,
+             'mdd': 0.03, 'n_broke': 0, 'n_blown': 0}]
+    miss = SW.arms_missing_window('pv', pd.DataFrame(rows), 'W1')
+    assert [a.label for a in miss] == ['pv=OFF']
+    assert miss[0].overrides == {'active_stop_mode': 'none'}

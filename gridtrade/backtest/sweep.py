@@ -481,6 +481,31 @@ def read_results(out_dir, family):
     return pd.read_csv(path) if os.path.exists(path) else pd.DataFrame()
 
 
+def arms_missing_window(family, df, wname):
+    """CSV 里已存在、但**本窗缺结果**的臂 → 补跑（自愈）。
+
+    没有它会死锁：逐窗分次跑时若某窗漏跑了某臂（中途改代码/中断/新扩的臂晚于该窗生成），
+    该臂就永远不完整 → complete_only 排名把它排除 → 下一轮扩边又因它已在 CSV 里(seen 命中)
+    而不再提议 → 补不齐、成为死行（funding 的 0.0001~0.0004 实证）。"""
+    if df.empty:
+        return []
+    have = set(zip(df['arm'], df['window']))
+    by_label = {a.label: a for a in build_arms(family)}      # OFF/模式臂只能从这里找回
+    out = []
+    for lb in sorted(set(df['arm'])):
+        if (lb, wname) in have:
+            continue
+        if lb in by_label:
+            out.append(by_label[lb])
+            continue
+        c = parse_coord(family, lb)
+        if c is None:
+            continue                                        # 无坐标又不在网格里 → 弃
+        ov = {k: v for k, v in c.items() if v != baseline()[k]}
+        out.append(Arm(family, lb, ov))                     # 保留原 label（=合并键）
+    return out
+
+
 def sweep(cache, universe, families, window_names, *, workers=1, out_dir=None,
           mode='base', log=print):
     """按族扫描 → 每族一份 CSV（arm × window × 指标）。返回 {family: DataFrame}。
@@ -505,21 +530,34 @@ def sweep(cache, universe, families, window_names, *, workers=1, out_dir=None,
         return preloaded[wname]
 
     for fam in families:
+        new_arms = []
+        hist = pd.DataFrame()
         if mode == 'base':
-            arms = build_arms(fam)
+            new_arms = build_arms(fam)
         else:
             hist = read_results(out_dir, fam)
             if hist.empty:
                 log('[sweep] %s 无历史结果，跳过扩边（先跑 --mode base）' % fam)
                 continue
             judge = sorted(set(hist['window']))
-            arms, note = expand_arms(fam, hist, windows=judge)
+            new_arms, note = expand_arms(fam, hist, windows=judge)
             log('[sweep] %s 扩边判定(依据窗口 %s): %s' % (fam, ','.join(judge), note))
-            if not arms:
-                continue
         rows = []
         for wname in window_names:
+            # 先自愈：CSV 里已有、但本窗缺结果的臂（逐窗分次跑天然会产生这种空洞）
+            arms = list(new_arms)
+            if not hist.empty:
+                miss = arms_missing_window(fam, hist, wname)
+                miss = [a for a in miss if a.label not in {n.label for n in new_arms}]
+                if miss:
+                    log('[sweep] %s %s 补跑缺窗臂 %d 个: %s'
+                        % (fam, wname, len(miss), [a.label for a in miss]))
+                arms = miss + arms
+            if not arms:
+                continue
             rows += _run_arms(_wd(wname), arms, fam, {}, workers=workers, log=log)
+        if not rows:
+            continue
         df = pd.DataFrame(rows)
         out[fam] = _merge_csv(out_dir, fam, df) if out_dir else df
     return out
