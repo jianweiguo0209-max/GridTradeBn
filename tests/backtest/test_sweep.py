@@ -128,3 +128,17 @@ def test_metrics_matches_summarize_portfolio_return():
 def test_metrics_empty_is_safe():
     m = SW.metrics(pd.DataFrame(), days=30)
     assert m['n_grids'] == 0 and m['calmar'] == 0.0
+
+
+def test_merge_csv_accumulates_across_windows(tmp_path):
+    """逐窗分次跑须累积、不覆盖（16G 机器一次只驻留一窗序列）；同键重跑=覆盖旧行。"""
+    d = str(tmp_path)
+    a = pd.DataFrame([{'family': 'stop', 'window': 'OOS', 'arm': 'BASE', 'ret': 0.05}])
+    SW._merge_csv(d, 'stop', a)
+    b = pd.DataFrame([{'family': 'stop', 'window': 'IS', 'arm': 'BASE', 'ret': 0.14}])
+    out = SW._merge_csv(d, 'stop', b)
+    assert set(out['window']) == {'OOS', 'IS'}, '第二窗须累积、不覆盖第一窗'
+    c = pd.DataFrame([{'family': 'stop', 'window': 'OOS', 'arm': 'BASE', 'ret': 0.99}])
+    out = SW._merge_csv(d, 'stop', c)
+    assert len(out) == 2 and float(out[(out['window'] == 'OOS')]['ret'].iloc[0]) == 0.99, \
+        '同 (window,arm) 重跑须覆盖旧行'

@@ -301,6 +301,20 @@ def sweep(cache, universe, families, window_names, *, workers=1, out_dir=None, l
                        m['calmar'], time.time() - t0))
         out[fam] = pd.DataFrame(rows)
         if out_dir:
-            os.makedirs(out_dir, exist_ok=True)
-            out[fam].to_csv(os.path.join(out_dir, '%s_results.csv' % fam), index=False)
+            out[fam] = _merge_csv(out_dir, fam, out[fam])
     return out
+
+
+def _merge_csv(out_dir, family, df):
+    """按 (family, window, arm) 合并进已有 CSV——逐窗分次跑（16G 机器上一次只能驻留一窗
+    的 1m 序列）不会互相覆盖；同键重跑=覆盖旧行（断点续跑/改网格后重跑都安全）。"""
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, '%s_results.csv' % family)
+    if os.path.exists(path):
+        old = pd.read_csv(path)
+        keys = set(zip(df['window'], df['arm']))
+        old = old[~old.apply(lambda r: (r['window'], r['arm']) in keys, axis=1)]
+        df = pd.concat([old, df], ignore_index=True)
+    df = df.sort_values(['window', 'arm']).reset_index(drop=True)
+    df.to_csv(path, index=False)
+    return df
