@@ -53,6 +53,16 @@ def test_capdown_never_raises_on_lot_step_boundary():
     assert w2 is not None and w2 <= mx * (1 + 1e-9)     # 取整后仍足额
 
 
+def test_capdown_never_increases_cap():
+    # 护栏绝不放大仓位（评审实证 2026-07-15）：min_coverage>1 时已足额币（coverage∈[1,mc)）
+    # 也会进干预分支——必须 clamp 成不动，否则 cap 会被放大到 worst==maxQty。
+    w = fuse_worst(100.0, GEARING, GP)
+    for mc, mx_mult in ((1.2, 1.10), (2.0, 1.90)):      # 已足额（coverage>1）却低于 mc
+        cap2, cov = fuse_capped_cap(100.0, GEARING, GP, w * mx_mult, min_coverage=mc)
+        assert cov == pytest.approx(mx_mult)
+        assert cap2 <= 100.0                            # 只降不升（此处应恰为不动）
+
+
 def test_unknown_max_qty_fails_open():
     # maxQty 未知（0/None）→ 不干预（交易所自会校验）
     for mx in (0.0, None):
