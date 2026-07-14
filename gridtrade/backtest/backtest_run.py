@@ -17,7 +17,7 @@ import pandas as pd
 from gridtrade.backtest import selection_replay as SR
 from gridtrade.backtest.cache import ParquetCache
 from gridtrade.config import DEFAULT_STOP_CFG, DEFAULT_STRATEGY_CONFIG
-from gridtrade.core.grid_engine import simulate_grid_engine
+from gridtrade.core.grid_engine import calc_pv_spike, simulate_grid_engine
 from gridtrade.core.grid_params import calc_grid_params_v1, calc_grid_params_v2
 
 # 回测默认策略（镜像 gridtrade.config 已验证参数；stop_loss_config 补 funding 止损）
@@ -112,16 +112,22 @@ _RESULT_COLS = ['run_time', 'offset', 'symbol', 'entry', 'grid_num', 'low', 'hig
                 'unreal_pnl', 'funding_missing']
 
 
+# data_task 元组布局（下游按位取用，勿改序；新增字段一律追加在尾部）
+TASK_PV_IDX = 7          # pv_spike_df（按 27h 前置历史预算，见 _pv_spike_for_window）
+
+
 def _simulate_grid_task(payload):
     """单个网格仿真（顶层函数，可 pickle → 供进程池并行）。
     payload=(data_task, cfg)：data_task 是选币/数据（可跨参数组合复用），cfg 是仿真配置。
-    funding_df 已在父进程按持仓窗预切片（等价、payload 小）。"""
-    (rt, offset, sym, entry, gp, bars_df, funding_df), cfg = payload
+    funding_df 已在父进程按持仓窗预切片（等价、payload 小）；pv_spike_df 已在父进程按
+    27h 前置历史预算（实盘同源语义，见 assemble_grid_tasks）。"""
+    (rt, offset, sym, entry, gp, bars_df, funding_df, pv_spike_df), cfg = payload
     pv_cfg = cfg['pv_cfg']
     sim = simulate_grid_engine(bars_df, gp, cap=1000.0, leverage=cfg['lev'], fee=cfg['fee_rate'],
                                c_rate_taker=cfg.get('taker_rate', 0.0005),
                                max_rate=cfg['max_rate'], min_amount=0.0, stop_cfg=cfg['stop_cfg'],
                                funding_df=funding_df, neutral_init=False,
+                               pv_spike_df=pv_spike_df,
                                active_stop_mode=cfg['active_stop_mode'],
                                pv_pnl_thr=pv_cfg.get('pnl_thr', -0.015),
                                pv_mult=pv_cfg.get('mult', 3), pv_n=pv_cfg.get('n', 233),
@@ -174,15 +180,41 @@ def select_grids(cache, universe, window_start, window_end, strategy_config, fac
     return grids
 
 
+def pv_spike_for_window(series_df, bars_df, pv_cfg):
+    """按**实盘同源语义**逐格算 pv 量能尖峰（spec 2026-07-15-binance-param-sweep §0）。
+
+    实盘 LiveSignalProvider 取原生 15m 的 n+8 根（n=100 → ≈27h）算 rolling(n) 基线；回测若
+    只喂 12h 持仓窗（48 根 15m、min_periods=1），基线退化为「窗内扩张均值」——开窗头几根
+    样本仅 1-2 根、且看不到开仓前量能水位 → 系统性误报尖峰（pv 是最大单项退出驱动，实测
+    砍 ~49% 的格）。此处从完整 1m 序列取窗前 (n+8)×15min 前置历史拼进去再算，然后裁回持仓窗。
+    sim_tf 非 1m（如 1h）时前置历史根数不足，退化为可用范围——1h 模式本就是粗略口径。"""
+    n = int(pv_cfg.get('n', 100))
+    lookback = pd.Timedelta(minutes=(n + 8) * 15)
+    t0 = bars_df['candle_begin_time'].min()
+    pre = series_df[(series_df['candle_begin_time'] < t0)
+                    & (series_df['candle_begin_time'] >= t0 - lookback)]
+    src = pd.concat([pre, bars_df], ignore_index=True) if len(pre) else bars_df
+    sp = calc_pv_spike(src.sort_values('candle_begin_time'),
+                       active_period=pv_cfg.get('period', '15min'),
+                       mult=pv_cfg.get('mult', 3), n=n,
+                       body_ratio_min=pv_cfg.get('con2', 0.0))
+    if sp is None:
+        return None
+    hi = bars_df['candle_begin_time'].max()
+    return sp[(sp['candle_begin_time'] >= t0) & (sp['candle_begin_time'] <= hi)].reset_index(drop=True)
+
+
 def assemble_grid_tasks(cache, grids, strategy_config, *, sim_timeframe=None,
                         timeframe='1h', log=print):
-    """由选中 grids 组装每格 data_task（载选中币 sim 序列 + holding_bars + funding 切片）。offline。"""
+    """由选中 grids 组装每格 data_task（载选中币 sim 序列 + holding_bars + funding 切片
+    + **前置历史 pv 尖峰**）。offline。元组布局见 TASK_PV_IDX。"""
     sim_tf = sim_timeframe or timeframe
     period = strategy_config['period']
     price_limit = strategy_config['price_limit']
     stop_limit = strategy_config['stop_limit']
     grid_version = strategy_config.get('grid_version', 1)
     v2cfg = strategy_config.get('grid_v2_config', {})
+    pv_cfg = strategy_config.get('pv_config', {})
     calc_fn = calc_grid_params_v2 if grid_version == 2 else calc_grid_params_v1
 
     selected = sorted({row['symbol'] for _, _, row in grids})
@@ -207,7 +239,8 @@ def assemble_grid_tasks(cache, grids, strategy_config, *, sim_timeframe=None,
             lo = int(bars_df['candle_begin_time'].min().value // 1_000_000)
             hi = int(bars_df['candle_begin_time'].max().value // 1_000_000)
             fd = fd[(fd['ts'] >= lo) & (fd['ts'] <= hi)]
-        data_tasks.append((rt, int(offset), sym, float(row['close']), gp, bars_df, fd))
+        pv_df = pv_spike_for_window(series[sym], bars_df, pv_cfg)
+        data_tasks.append((rt, int(offset), sym, float(row['close']), gp, bars_df, fd, pv_df))
     return data_tasks
 
 
