@@ -305,3 +305,18 @@ def test_scheduler_audits_fuse_coverage_ok(capsys):
                        fetch_candles=lambda *a, **k: {})
     out = capsys.readouterr().out
     assert '保险丝覆盖 OK' in out
+
+
+def test_scheduler_audit_failure_never_breaks_round(capsys):
+    # 审计绝不能搞挂选币轮（spec 2026-07-15 §六）：内部任一调用抛异常 → 只记日志、照常跑完
+    from gridtrade.runtime.scheduler import run_scheduler_once
+    rt = _rt()
+    _seed_universe(rt, 'LOW/USDT:USDT', price=1.0, max_qty=1.0)
+    def _boom(symbols):
+        raise RuntimeError('ticker endpoint down')
+    rt.adapter.fetch_prices_all = _boom          # 审计内部调用炸掉
+    out = run_scheduler_once(rt, now_fn=lambda: 1_750_000_000.0,
+                             fetch_candles=lambda *a, **k: {})
+    txt = capsys.readouterr().out
+    assert '保险丝覆盖审计跳过' in txt            # 降级留痕
+    assert out.get('opened') == [] and out.get('closed') == []   # 选币轮照常完成（未抛出）
