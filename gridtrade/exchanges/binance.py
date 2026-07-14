@@ -3,6 +3,7 @@ spec: docs/superpowers/specs/2026-07-14-binance-migration-design.md §3.1
 """
 import re
 
+import ccxt
 import pandas as pd
 
 from gridtrade.exchanges.base import CANDLE_COLS, FundingPayment
@@ -176,12 +177,44 @@ class BinanceAdapter(CcxtAdapter):
             self._id_map_cache = m2
         return self._id_map_cache
 
+    # ---- 触发单(algo/conditional)独立订单簿适配（demo 冒烟实测 2026-07-14 发现）----
+    # 币安 USDT-M 已把 STOP_MARKET 等触发单放入独立 algo 订单簿（ccxt 4.5.61：
+    # stopLossPrice → fapiPrivatePostAlgoOrder，返回 algoId 号段与常规 orderId 不同）。
+    # 三个后果必须适配，否则重演 HL 时代孤儿触发单事故：
+    # ①常规撤单端点对 algoId 报 -2011 → cancel_order 先常规后 trigger 回退；
+    # ②常规 openOrders 看不见触发单 → 不并读 algo 簿，对账器会误判保险丝丢失反复重挂；
+    # ③常规 cancelAll 杀不掉触发单 → 关格必须两簿齐清，防残留丝在关格后触发。
+
+    def cancel_order(self, symbol, order_id) -> None:
+        native = self.to_native(symbol)
+        try:
+            self.client.cancel_order(order_id, native)
+        except ccxt.OrderNotFound:
+            # 可能是 algo 簿的触发单（保险丝）：走 trigger 路径重试；
+            # 仍不存在则由 algo 路径原样抛 OrderNotFound（语义=确实已不在）。
+            self.client.cancel_order(order_id, native, {'trigger': True})
+
+    def fetch_open_orders(self, symbol):
+        # 两簿并读（常规限价 + algo 触发单）——镜像 fake/HL 的"挂单含触发单"既有语义，
+        # 保险丝对账依赖看得见触发单。
+        native = self.to_native(symbol)
+        rows = list(self.client.fetch_open_orders(native))
+        rows += list(self.client.fetch_open_orders(native, {'trigger': True}))
+        return [self._to_order(r) for r in rows]
+
+    def cancel_all(self, symbol) -> None:
+        # 两簿齐清：常规 allOpenOrders + algo algoOpenOrders
+        native = self.to_native(symbol)
+        self.client.cancel_all_orders(native)
+        self.client.cancel_all_orders(native, {'trigger': True})
+
     def fetch_open_orders_all(self, symbols):
-        # 无 symbol 的 openOrders：全账户一次（权重40），替代逐币 N 次
+        # 账户级两簿并读（常规 40 + algo 40 权重；5s 轮预算升至 ~2180/min，仍低于
+        # 2400——若见 429 优先调大 MONITOR_INTERVAL_SEC）
         want = set(symbols)
-        return [o for o in (self._to_order(r)
-                            for r in self.client.fetch_open_orders(None))
-                if o.symbol in want]
+        rows = list(self.client.fetch_open_orders(None))
+        rows += list(self.client.fetch_open_orders(None, {'trigger': True}))
+        return [o for o in (self._to_order(r) for r in rows) if o.symbol in want]
 
     def fetch_positions_all(self, symbols):
         # positionRisk 全账户（权重5）；无持仓行=缺省（monitor 按 0 处理）

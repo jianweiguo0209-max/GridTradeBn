@@ -194,8 +194,9 @@ def test_fetch_open_orders_all_single_call():
                  'status': 'open'}]
     c.fetch_open_orders = fetch_open_orders
     out = _binance(c).fetch_open_orders_all(['BTC/USDT:USDT'])
-    assert calls == [None]                       # 无 symbol=全账户一次（权重40）
-    assert [o.symbol for o in out] == ['BTC/USDT:USDT']   # 只回请求的 symbols
+    # 无 symbol=全账户，两簿各一次（常规 + algo 触发单；demo 实测 2026-07-14）
+    assert calls == [None, None]
+    assert all(o.symbol == 'BTC/USDT:USDT' for o in out)   # 只回请求的 symbols
 
 
 def test_fetch_positions_all_signed():
@@ -314,3 +315,51 @@ def test_base_and_resilient_assert_account_mode():
             called.append(1)
     ResilientAdapter(Probe()).assert_account_mode()     # 直通转发
     assert called == [1]
+
+
+def test_cancel_order_falls_back_to_trigger_book():
+    # demo 实测(2026-07-14)：STOP_MARKET 在独立 algo 簿，常规撤单 -2011 → trigger 回退
+    import ccxt
+    c = FakeBinanceClient()
+    calls = []
+    def cancel(order_id, symbol=None, params=None):
+        calls.append((order_id, dict(params or {})))
+        if not (params or {}).get('trigger'):
+            raise ccxt.OrderNotFound('binanceusdm {"code":-2011,"msg":"Unknown order sent."}')
+    c.cancel_order = cancel
+    _binance(c).cancel_order('BTC/USDT:USDT', '1000000135187438')
+    assert calls[0][1] == {} and calls[1][1] == {'trigger': True}
+
+
+def test_cancel_order_regular_success_no_fallback():
+    c = FakeBinanceClient()
+    calls = []
+    c.cancel_order = lambda oid, symbol=None, params=None: calls.append(dict(params or {}))
+    _binance(c).cancel_order('BTC/USDT:USDT', '123')
+    assert calls == [{}]                       # 常规成功不再多打 algo 簿
+
+
+def test_fetch_open_orders_merges_trigger_book():
+    # 保险丝可见性：单币挂单=常规簿+algo 簿并读（不并读→对账器误判丝丢失反复重挂）
+    c = FakeBinanceClient()
+    def open_orders(symbol=None, params=None):
+        if (params or {}).get('trigger'):
+            return [{'id': '9', 'clientOrderId': '1:fuse:low', 'symbol': 'BTC/USDT:USDT',
+                     'side': 'sell', 'price': 95.0, 'amount': 1.0, 'filled': 0.0,
+                     'status': 'open', 'info': {'reduceOnly': True}}]
+        return [{'id': '7', 'clientOrderId': '1:0:0', 'symbol': 'BTC/USDT:USDT',
+                 'side': 'buy', 'price': 1.0, 'amount': 2.0, 'filled': 0.0,
+                 'status': 'open'}]
+    c.fetch_open_orders = open_orders
+    a = _binance(c)
+    assert sorted(o.id for o in a.fetch_open_orders('BTC/USDT:USDT')) == ['7', '9']
+    assert sorted(o.id for o in a.fetch_open_orders_all(['BTC/USDT:USDT'])) == ['7', '9']
+
+
+def test_cancel_all_clears_both_books():
+    # 关格两簿齐清：常规 allOpenOrders + algo algoOpenOrders（防残留丝关格后触发）
+    c = FakeBinanceClient()
+    calls = []
+    c.cancel_all_orders = lambda symbol=None, params=None: calls.append(dict(params or {}))
+    _binance(c).cancel_all('BTC/USDT:USDT')
+    assert calls == [{}, {'trigger': True}]

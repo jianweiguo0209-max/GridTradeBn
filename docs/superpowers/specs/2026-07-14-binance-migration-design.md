@@ -45,7 +45,9 @@ grid_order_info 档数自适应封顶(既有已知局限维持现状,见 fly.pro
   (信息性常量;实际记账走真实流水,部分币 4h/1h 周期不受影响)。
 - `from_credentials(api_key, secret, *, testnet=False, proxies=None, timeout)`:构造
   `ccxt.binanceusdm({apiKey, secret, enableRateLimit, timeout})`;`testnet=True` 走
-  `client.set_sandbox_mode(True)`(币安期货测试网)。
+  `client.enable_demo_trading(True)`——币安期货 testnet 已弃用,官方替代=Demo Trading
+  (demo-fapi.binance.com,key 在 demo.binance.com 生成;2026-07-14 冒烟实测修正,原
+  set_sandbox_mode 对 futures 直接 NotSupported)。
 - 符号映射:ccxt 统一符号即规范符号(`BTC/USDT:USDT`),继承 CcxtAdapter 恒等 to_native/to_canonical。
 - `_include_market` 覆写:**`m['settle'] == self.quote_currency`**——币安 fapi 同时挂 USDT-M 与
   USDC-M 合约,不按结算币过滤会把 USDC 合约混入票池(ccxt_adapter.py:38 只过滤了 swap)。
@@ -125,6 +127,8 @@ Reservoir 引入的依赖;`.env.example`/fly toml 的 HL 键与注释。`legacy/
 **风险已收敛**:成交→网格线映射走 exchange order id 而非 cloid(grid_executor.py:205、
 reconciler.py:55 已核实"跨所通用"),编码是单向的,无需解码器;唯一依赖 cloid 的是交易所端
 重复单去重,确定性注入编码保持该性质。
+**2026-07-14 demo 实测通过**:cloid `999999:1:1` 含冒号直传,交易所原样回读——恒等透传成立,
+无需替换编码。
 
 ### 5.2 止损保险丝语义差
 
@@ -133,6 +137,11 @@ ccxt `create_order(..., 'market', ..., {'stopLossPrice': trigger, 'reduceOnly': 
 STOP_MARKET;`slippage` 参数接受但忽略(接口签名不变)。语义差:灾难场景成交价无下限保护——
 接受(灾难优先离场,软止损仍是主刹车),写入 runbook 与 .env.example 注释。workingType 用默认
 CONTRACT_PRICE(最新价),与 HL 触发语义最接近。
+**2026-07-14 demo 实测追加——algo 独立订单簿**:币安 USDT-M 已把触发单放入独立 algo 簿
+(ccxt 4.5.61 stopLossPrice → fapiPrivatePostAlgoOrder,返回 algoId 独立号段)。三点适配已入
+BinanceAdapter:①cancel_order 常规 -2011 后走 trigger 回退;②fetch_open_orders(_all) 两簿并读
+(不并读→对账器误判保险丝丢失反复重挂,HL 孤儿触发单事故同型);③cancel_all 两簿齐清(防残留
+丝关格后触发)。账户级挂单快照权重 40→80,5s 轮预算 ~2180/min(仍低于 2400;见 §3.1 修正)。
 
 ### 5.3 按币种最小名义额
 
