@@ -52,6 +52,7 @@ class CcxtAdapter(ExchangeAdapter):
                 state='live' if m.get('active', True) else 'expired',
                 list_ts=int(info.get('listTime') or 0),
                 min_cost=float(((m.get('limits', {}) or {}).get('cost', {}) or {}).get('min') or 0.0),
+                market_max_qty=float(((m.get('limits', {}) or {}).get('market', {}) or {}).get('max') or 0.0),
             ))
         return out
 

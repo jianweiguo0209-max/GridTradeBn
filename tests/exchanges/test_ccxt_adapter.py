@@ -52,7 +52,11 @@ class FakeCcxtClient:
     def load_markets(self):
         return {'BTC/USDT:USDT': {}}
     markets = {'BTC/USDT:USDT': {'swap': True, 'precision': {'price': 0.1, 'amount': 0.001},
-                                 'limits': {'amount': {'min': 0.001}, 'cost': {'min': 5.0}},
+                                 'limits': {'amount': {'min': 0.001}, 'cost': {'min': 5.0},
+                                            'market': {'min': 0.001, 'max': 120.0}},
+                                 'active': True, 'info': {'listTime': '0'}},
+               'ETH/USDT:USDT': {'swap': True, 'precision': {'price': 0.01, 'amount': 0.01},
+                                 'limits': {'amount': {'min': 0.01}, 'cost': {'min': 20.0}},
                                  'active': True, 'info': {'listTime': '0'}}}
 
 
@@ -207,3 +211,18 @@ def test_instrument_min_cost_defaults_zero():
     i = Instrument(symbol='X/USDT:USDT', tick=0.1, lot=0.1, min_size=0.1,
                    state='live', list_ts=0)
     assert i.min_cost == 0.0
+
+
+def test_list_instruments_fills_market_max_qty():
+    # 市价单单笔数量上限（币安 MARKET_LOT_SIZE.maxQty，ccxt limits.market.max）——
+    # 保险丝覆盖率门的数据面（spec 2026-07-15 §三）
+    insts = {i.symbol: i for i in _adapter().list_instruments()}
+    assert insts['BTC/USDT:USDT'].market_max_qty == 120.0
+    assert insts['ETH/USDT:USDT'].market_max_qty == 0.0   # 缺 market 键 → 0=未知（fail-open）
+
+
+def test_instrument_market_max_qty_defaults_zero():
+    from gridtrade.exchanges.base import Instrument
+    i = Instrument(symbol='X/USDT:USDT', tick=0.1, lot=0.1, min_size=0.1,
+                   state='live', list_ts=0)
+    assert i.market_max_qty == 0.0

@@ -24,6 +24,7 @@ class Instrument:
     state: str
     list_ts: int  # 上市时间，毫秒
     min_cost: float = 0.0  # 单笔最小名义额（币安 MIN_NOTIONAL；0=交易所无此约束/未知）
+    market_max_qty: float = 0.0  # 市价单单笔数量上限（币安 MARKET_LOT_SIZE.maxQty；0=未知/无约束→fail-open）
 
 
 @dataclass
