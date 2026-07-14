@@ -67,8 +67,8 @@ class DeployConfig:
     # gearing = 单格名义部署倍数(挂单总名义额 = gearing×cap)，吸收旧 leverage(5)×max_rate(0.68) 冗余对；
     # account_leverage = 账户最坏净敞口倍数(N 格同侧扫穿上限)；cap_equity_frac 为推导值(勿从 env 读)。
     grid_gearing: float = 3.4
-    account_leverage: float = 3.5
-    cap_equity_frac: float = 0.10   # 推导值 = derive_frac(account_leverage, max_concurrent, gearing)；>0 → cap=clamp(equity×frac,min,max)
+    account_leverage: float = 5.0   # 与 loader 默认一致（用户定 2026-07-09，实盘 AL=5.0）
+    cap_equity_frac: float = 0.2451  # 推导值 = derive_frac(AL5.0, 12, 3.4)；>0 → cap=clamp(equity×frac,min,max)
     cap_min: float = 20.0
     cap_max: float = 100000.0
     min_quote_volume_24h: float = 0.0   # >0 → 24h 成交额绝对地板（0=停用）；与相对口径可叠加（先地板后相对）

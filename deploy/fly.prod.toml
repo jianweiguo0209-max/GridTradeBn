@@ -27,10 +27,11 @@ primary_region = "nrt"
   MONITOR_PARALLEL = "4"            # per-grid 并行监控（2026-07-06 快照版验证后回 4：读路径 AccountSnapshot 化，权重与格数/并发解耦、429 根因已除；1=串行保底）
   SCHEDULER_PERIOD = "12H"
   MAX_CONCURRENT = "12"
-  # 仓位参数体系(spec 2026-07-07-account-leverage-gearing):frac=AL/(N×gearing/2)=3.5/20.4≈0.1716
+  # 仓位参数体系(spec 2026-07-07-account-leverage-gearing):frac=AL/(N×gearing/2)=5.0/20.4≈0.2451
   GRID_GEARING = "3.4"
   ACCOUNT_LEVERAGE = "5.0"
-  # MarketShockBrake(spec 2026-07-08):|票池中位数4h收益|≥4% → 暂停开格2h(只关不开);THR=0 停用
+  # MarketShockBrake(spec 2026-07-08):|票池中位数4h收益|≥2.5% → 暂停开格2h(只关不开);THR=0 停用
+  # (thr=0.025 为 2026-07-11 sb2 完整口径重跑支配解,取代旧 GO 档 0.04,见 config.py)
   SHOCK_THR = "0.025"
   SHOCK_K_HOURS = "4"
   SHOCK_PAUSE_HOURS = "2"
@@ -50,7 +51,7 @@ primary_region = "nrt"
   # commit 两侧（实盘/回测）原子同步。已持有的被禁币不强平，随 12H 换仓自然退出。
   # 风控项（CAP / CAP_MIN / CAP_MAX）沿用 config.py 默认或按需 fly secrets 覆盖。
   # 单网格 cap = clamp(equity×frac, CAP_MIN, CAP_MAX)，frac=ACCOUNT_LEVERAGE/(MAX_CONCURRENT×GRID_GEARING/2)
-  #   =3.5/20.4≈0.1716(equity $3k→cap≈$521)；每笔挂单 notional≈cap×gearing/(档数+1) 须
+  #   =5.0/20.4≈0.2451(equity $3k→cap≈$735)；每笔挂单 notional≈cap×gearing/(档数+1) 须
   #   ≥max(MIN_ORDER_NOTIONAL=5, 该币 min_cost)（币安按币 5/20/50，非旧 HL 单一 $10；见
   #   MinNotionalGate/Instrument.min_cost）。
   # 旧键 LEVERAGE/CAP_EQUITY_FRAC 已退役——设置即 boot 报错(语义变更禁静默映射)。
