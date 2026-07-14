@@ -626,13 +626,20 @@ class FuseCoverageGate(AdmissionGate):
 能全平，设 1.2 只会把已足额的币白白缩仓）：
 
 ```python
-    # 保险丝覆盖率门槛合法区间 (0, 1.0]（spec 2026-07-15）：>1 无意义——coverage>1 只是余量
-    # （丝本就能全平最大持仓），设 1.2 这类"留余量"的自然误读只会把已足额的币白缩一个 lot 步。
-    # 0/负 = 停用（仅审计）。禁静默 clamp：配置错了要响亮。
+    # 保险丝覆盖率门槛（spec 2026-07-15）：接受 <=0（停用，仅审计）或 (0, 1.0]。
+    # >1 无意义——coverage>1 只是余量（丝本就能全平最大持仓），设 1.2 这类"留余量"的自然
+    # 误读只会把已足额的币白缩一个 lot 步。禁静默 clamp：配置错了要响亮（沿退役键守卫惯例）。
     _fmc = _f(env, 'FUSE_MIN_COVERAGE', 1.0)
     if _fmc > 1.0:
-        raise RuntimeError('FUSE_MIN_COVERAGE=%s 无效：合法区间 (0, 1.0]（>1 无意义，'
-                           '覆盖率>1 只是余量；0=停用仅审计）' % _fmc)
+        raise RuntimeError('FUSE_MIN_COVERAGE=%s 无效：>1 无意义（覆盖率>1 只是余量，'
+                           '丝本就能全平最大持仓）；取 (0, 1.0] 或 <=0（停用，仅审计）' % _fmc)
+```
+
+**并把 dataclass 构造行改为复用 `_fmc`（勿重复解析同一 env 键——两处解析一旦分叉，非法值就能
+绕过守卫）**：
+
+```python
+        fuse_min_coverage=_fmc,
 ```
 
 ③ `gridtrade/runtime/factory.py`——import 增补 `FuseCoverageGate`，门链按新序：
