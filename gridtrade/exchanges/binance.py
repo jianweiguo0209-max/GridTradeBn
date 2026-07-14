@@ -55,7 +55,11 @@ class BinanceAdapter(CcxtAdapter):
         # 全账户一次(权重40,spec §3.1)——显式关闭护栏(终审实证:不关则 monitor 快照上线即死)。
         client.options['warnOnFetchOpenOrdersWithoutSymbol'] = False
         if testnet:
-            client.set_sandbox_mode(True)
+            # 币安期货 testnet 已弃用：ccxt 4.5.61 对 futures 的 set_sandbox_mode 直接抛
+            # NotSupported(冒烟实测 2026-07-14)。官方替代=Demo Trading——enable_demo_trading
+            # 把 API 指向 demo-fapi.binance.com；demo API key 在 https://demo.binance.com
+            # 的 API Management 生成。BINANCE_TESTNET=true 的语义即 Demo Trading。
+            client.enable_demo_trading(True)
         return cls(client)
 
     def create_stop_order(self, symbol, side, size, trigger_price, *,

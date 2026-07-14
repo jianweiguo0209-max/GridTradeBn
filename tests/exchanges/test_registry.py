@@ -20,7 +20,7 @@ def test_build_binance_testnet():
     from gridtrade.exchanges.registry import build_adapter
     a = build_adapter({'exchange': 'binance', 'api_key': 'k', 'secret': 's',
                        'testnet': True})
-    assert 'testnet' in str(a.client.urls['api']).lower()
+    assert 'demo' in str(a.client.urls['api']).lower()   # testnet=True → 币安 Demo Trading
 
 
 def test_quote_currency_override_applied():

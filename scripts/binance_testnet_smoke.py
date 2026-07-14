@@ -1,5 +1,6 @@
-"""币安期货 testnet 端到端冒烟（联网、非 pytest；spec 2026-07-14 §八/§5.1 实测）。
-前置：export BINANCE_API_KEY/BINANCE_API_SECRET（testnet.binancefuture.com 的 key）。
+"""币安期货 Demo Trading 端到端冒烟（联网、非 pytest；spec 2026-07-14 §八/§5.1 实测）。
+前置：export BINANCE_API_KEY/BINANCE_API_SECRET——Demo Trading key，在
+https://demo.binance.com 的 API Management 生成（旧 futures testnet 已被币安弃用）。
 跑：.venv/bin/python scripts/binance_testnet_smoke.py
 验证：账户模式断言 / cloid 直传合法性(冒号) / 限价挂撤 / STOP_MARKET 挂撤 /
 批量读五方法 / 精度量化。全程远离盘口价，不产生成交。"""

@@ -3,7 +3,8 @@ def test_adapter_endpoint_testnet():
     from gridtrade.exchanges.binance import BinanceAdapter
     from gridtrade.runtime.introspect import adapter_endpoint
     ad = ResilientAdapter(BinanceAdapter.from_credentials('k', 's', testnet=True))
-    assert 'testnet' in adapter_endpoint(ad)
+    # testnet=True → 币安 Demo Trading（旧 futures testnet 已弃用），端点 demo-*.binance.com
+    assert 'demo' in adapter_endpoint(ad)
 
 
 def test_adapter_endpoint_mainnet():

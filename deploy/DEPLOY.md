@@ -7,8 +7,11 @@
 ## 0. 前置
 - 安装 fly CLI：`brew install flyctl`（或 https://fly.io/docs/flyctl/install/）。
 - `fly auth login`。
-- 准备 **Binance testnet** API 凭证：到 https://testnet.binancefuture.com 注册并创建 API Key/Secret
-  （测试网自带测试金，无需单独领水）。记下 **API Key** 与 **API Secret**。
+- 准备 **Binance Demo Trading** API 凭证（币安期货 testnet 已弃用，Demo Trading 为官方替代，
+  自带模拟资金）：到 **https://demo.binance.com** 登录（用币安主站账户进入 Demo 模式）→
+  **API Management**（https://demo.binance.com/en/my/settings/api-management）创建 API Key/Secret。
+  记下 **API Key** 与 **API Secret**。代码里 `BINANCE_TESTNET=true` 的语义即 Demo Trading
+  （API 指向 demo-fapi.binance.com）。
 
 ## 1. 创建 app（不立即部署）
 ```bash

@@ -116,13 +116,13 @@ def test_exchange_status_ping():
     assert a.exchange_status() == 'maintenance'
 
 
-def test_from_credentials_testnet_sandbox():
+def test_from_credentials_testnet_demo_trading():
     import ccxt
     from gridtrade.exchanges.binance import BinanceAdapter
     a = BinanceAdapter.from_credentials('k', 's', testnet=True)
     assert isinstance(a.client, ccxt.binanceusdm)
-    # sandbox 模式生效：api url 指向 testnet
-    assert 'testnet' in str(a.client.urls['api']).lower()
+    # 币安期货 testnet 已弃用：testnet=True 走 Demo Trading，API 指向 demo-fapi.binance.com
+    assert 'demo' in str(a.client.urls['api']).lower()
 
 
 def test_from_credentials_allows_accountwide_open_orders():

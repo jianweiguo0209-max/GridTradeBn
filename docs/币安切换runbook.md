@@ -4,7 +4,8 @@
 - [ ] main 分支 CI 全绿；本 runbook 前置 = 实施计划 Task 0-17 全部完成。
 
 ## 阶段 1：testnet 验证（≥3 天）
-- [ ] 注册 testnet.binancefuture.com，创建 API key。
+- [ ] 创建 Demo Trading API key（币安期货 testnet 已弃用）：https://demo.binance.com →
+      API Management；`BINANCE_TESTNET=true` 语义=Demo Trading（demo-fapi.binance.com）。
 - [ ] `.venv/bin/python scripts/binance_testnet_smoke.py` → SMOKE PASS
       （若 cloid 断言失败：启用 encode_cloid 替换编码，更新 spec §5.1 注记后重跑）。
 - [ ] 新建 testnet 环境（用户定 2026-07-14：全新独立环境，与 HL 旧 app 零共享）：
