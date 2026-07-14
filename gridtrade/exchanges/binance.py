@@ -74,12 +74,33 @@ class BinanceAdapter(CcxtAdapter):
     def create_stop_order(self, symbol, side, size, trigger_price, *,
                           reduce_only=True, slippage=0.15, client_oid=None):
         """STOP_MARKET 触发市价单（灾难保险丝）。币安无滑点底线参数——slippage
-        接受但忽略（语义差已文档化，spec §5.2；软止损仍是主刹车）。"""
+        接受但忽略（语义差已文档化，spec §5.2；软止损仍是主刹车）。
+        数量按 MARKET_LOT_SIZE.maxQty 封顶（testnet PORTAL 实证 2026-07-14：低价币
+        worst=order_num×grid_count 超市价单上限 11.8 倍 → -4005 拒单、开格卡死 OPENING；
+        限价单上限 LOT_SIZE 远大于市价上限故网格挂单不受影响）。reduce-only 触发时交易所
+        按实际持仓执行，封顶后丝仍护到 maxQty，超出部分由软止损(5s 轮)+爆仓线兜底。"""
+        mx = self._market_max_qty(symbol)
+        if mx is not None and size > mx:
+            print('[binance] %s 保险丝数量 %.8g > MARKET_LOT_SIZE.maxQty %.8g -> 封顶'
+                  '(丝保护不足额，超出部分依赖软止损)' % (symbol, size, mx), flush=True)
+            size = mx
         p = self._params(reduce_only, client_oid)
         p['stopLossPrice'] = trigger_price
         r = self.client.create_order(self.to_native(symbol), 'market', side, size,
                                      None, p)
         return self._to_order(r)
+
+    def _market_max_qty(self, symbol):
+        """MARKET_LOT_SIZE.maxQty（市价单单笔上限，ccxt limits.market.max 标准映射）；
+        缺失/异常 → None（fail-open 不封顶，交易所自会校验）。"""
+        try:
+            if not getattr(self.client, 'markets', None):
+                self.client.load_markets()
+            m = (self.client.markets or {}).get(symbol) or {}
+            mx = ((m.get('limits') or {}).get('market') or {}).get('max')
+            return float(mx) if mx else None
+        except Exception:
+            return None
 
     def set_leverage(self, symbol, leverage) -> None:
         """先确保 CROSSED 全仓（幂等，吞 -4046 无需更改），再设杠杆（币安要求整数）。

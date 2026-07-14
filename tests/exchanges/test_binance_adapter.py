@@ -10,7 +10,9 @@ class FakeBinanceClient(FakeCcxtClient):
             'BTC/USDT:USDT': {'id': 'BTCUSDT', 'symbol': 'BTC/USDT:USDT', 'swap': True,
                               'settle': 'USDT', 'base': 'BTC', 'active': True,
                               'precision': {'price': 0.1, 'amount': 0.001},
-                              'limits': {'amount': {'min': 0.001}, 'cost': {'min': 50.0}},
+                              # market = MARKET_LOT_SIZE（市价单单笔上限；ccxt 标准映射）
+                              'limits': {'amount': {'min': 0.001}, 'cost': {'min': 50.0},
+                                         'market': {'min': 0.001, 'max': 120.0}},
                               'info': {'listTime': '0'}},
             'ETH/USDT:USDT': {'id': 'ETHUSDT', 'symbol': 'ETH/USDT:USDT', 'swap': True,
                               'settle': 'USDT', 'base': 'ETH', 'active': True,
@@ -257,6 +259,22 @@ def test_create_stop_order_stop_market():
     assert params['reduceOnly'] is True
     assert params['clientOrderId'] == '9:fuse:low'
     assert 'slippage' not in params                     # 币安无滑点底线参数（spec §5.2）
+
+
+def test_create_stop_order_clamps_to_market_max_qty():
+    # 保险丝数量按 MARKET_LOT_SIZE.maxQty 封顶（testnet PORTAL 实证 2026-07-14：
+    # worst=order_num×grid_count 超市价单上限 → -4005 拒单、开格卡 OPENING）。
+    # reduce-only 触发时按实际持仓执行，封顶后语义不变；超限部分软止损+爆仓线兜底。
+    c = FakeBinanceClient()
+    a = _binance(c)
+    a.create_stop_order('BTC/USDT:USDT', 'sell', 500.0, 95.0, client_oid='9:fuse:low')
+    _, typ, _, amount, _, params = c.created[-1]
+    assert typ == 'market' and amount == 120.0          # 500 超上限 → 封顶到 maxQty
+    assert params['reduceOnly'] is True                 # 封顶不改 reduce-only 语义
+    a.create_stop_order('BTC/USDT:USDT', 'sell', 1.5, 95.0)
+    assert c.created[-1][3] == 1.5                      # 未超限原样
+    a.create_stop_order('ETH/USDT:USDT', 'buy', 9999.0, 105.0)
+    assert c.created[-1][3] == 9999.0                   # 无 market.max（缺失）→ fail-open 不封顶
 
 
 def test_set_leverage_cross_then_int():
