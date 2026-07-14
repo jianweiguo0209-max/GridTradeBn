@@ -16,3 +16,4 @@ data/
 *.pkl
 *.log
 .superpowers/
+.claude/worktrees/
