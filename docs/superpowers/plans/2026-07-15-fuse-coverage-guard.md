@@ -183,6 +183,16 @@ def test_capdown_never_raises_on_lot_step_boundary():
     assert w2 is not None and w2 <= mx * (1 + 1e-9)     # 取整后仍足额
 
 
+def test_capdown_never_increases_cap():
+    # 护栏绝不放大仓位（评审实证 2026-07-15）：min_coverage>1 时已足额币（coverage∈[1,mc)）
+    # 也会进干预分支——必须 clamp 成不动，否则 cap 会被放大到 worst==maxQty。
+    w = fuse_worst(100.0, GEARING, GP)
+    for mc, mx_mult in ((1.2, 1.10), (2.0, 1.90)):      # 已足额（coverage>1）却低于 mc
+        cap2, cov = fuse_capped_cap(100.0, GEARING, GP, w * mx_mult, min_coverage=mc)
+        assert cov == pytest.approx(mx_mult)
+        assert cap2 <= 100.0                            # 只降不升（此处应恰为不动）
+
+
 def test_unknown_max_qty_fails_open():
     # maxQty 未知（0/None）→ 不干预（交易所自会校验）
     for mx in (0.0, None):
@@ -305,7 +315,10 @@ def fuse_capped_cap(cap, gearing, grid_params, market_max_qty, *,
     worst_raw = fuse_worst(cap, gearing, grid_params, 0.0)
     if worst_raw is None or worst_raw <= 0:
         return cap, coverage       # 理论不可达（worst 已算出）；防御性 fail-open
-    cap2 = cap * (mx / worst_raw)
+    # 只降不升（评审实证 2026-07-15）：min_coverage>1 时 coverage∈[1, min_coverage) 的"已足额"
+    # 币也会进到这里，若不 clamp，cap 会被**放大**到 worst==maxQty——名为降档的护栏变成仓位
+    # 放大器（运维把 FUSE_MIN_COVERAGE=1.2 理解成"留 20% 余量"即触发）。护栏绝不放大仓位。
+    cap2 = min(cap, cap * (mx / worst_raw))
     w2 = fuse_worst(cap2, gearing, grid_params, min_amount)
     if w2 is not None and w2 > mx * (1 + 1e-9):   # 守卫：防未来 grid_order_info 改动破坏线性
         raise AssertionError('fuse cap-down 失效: worst=%.8g > maxQty=%.8g' % (w2, mx))
@@ -591,7 +604,7 @@ class FuseCoverageGate(AdmissionGate):
 ② `gridtrade/config.py`——`DeployConfig` 在 `universe_top_volume_pct` 行**之后**追加：
 
 ```python
-    fuse_min_coverage: float = 1.0  # 保险丝覆盖率门槛（spec 2026-07-15）：<该值即降 cap 护全额；0=停用（仅审计）
+    fuse_min_coverage: float = 1.0  # 保险丝覆盖率门槛（spec 2026-07-15）：<该值即降 cap 护全额；0=停用（仅审计）。合法区间 (0, 1.0]——>1 无意义（覆盖率>1 只是余量，护栏已 clamp 成只降不升）
 ```
 
 `load_deploy_config` 在 `universe_top_volume_pct=...` 行**之后**追加：
