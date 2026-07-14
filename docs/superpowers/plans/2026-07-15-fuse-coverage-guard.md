@@ -159,15 +159,28 @@ def test_full_coverage_leaves_cap_untouched():
 
 
 def test_shortfall_caps_down_to_exactly_full():
-    # maxQty = worst 的一半 → 降 cap 到刚好足额（worst' == maxQty，coverage'=1.0）
+    # maxQty = worst 的一半 → 降 cap 到足额（无取整时 worst' 恰 == maxQty，不多缩一分仓位）
     w = fuse_worst(100.0, GEARING, GP)
     mx = w / 2.0
     cap2, cov = fuse_capped_cap(100.0, GEARING, GP, mx)
     assert cov == pytest.approx(0.5)              # 干预前的覆盖率
-    assert cap2 == pytest.approx(50.0)            # 线性缩放
+    assert cap2 == pytest.approx(50.0)            # 线性缩放（min_amount=0 → 无取整）
     w2 = fuse_worst(cap2, GEARING, GP)
     assert w2 <= mx * (1 + 1e-9)                  # 足额（护全额）
-    assert w2 == pytest.approx(mx)                # 且刚好——不多缩一分仓位
+    assert w2 == pytest.approx(mx)                # 且刚好
+
+
+def test_capdown_never_raises_on_lot_step_boundary():
+    # 取整阶梯回归（评审实证 2026-07-15）：覆盖率 99% + min_amount=0.001 时，
+    # 旧算法 cap×coverage 会让每笔数量落同一档不变 → worst' 不降 → 断言抛异常。
+    # 新算法（未取整 worst 求解）必须既不抛异常、又真的足额。
+    gp = dict(GP)
+    w = fuse_worst(10.0, 1.0, gp, min_amount=0.001)
+    mx = w * 0.99                                  # 最常见的"差一点"场景
+    cap2, cov = fuse_capped_cap(10.0, 1.0, gp, mx, min_amount=0.001)   # 不得抛
+    assert cov == pytest.approx(0.99)
+    w2 = fuse_worst(cap2, 1.0, gp, min_amount=0.001)
+    assert w2 is not None and w2 <= mx * (1 + 1e-9)     # 取整后仍足额
 
 
 def test_unknown_max_qty_fails_open():
@@ -284,10 +297,17 @@ def fuse_capped_cap(cap, gearing, grid_params, market_max_qty, *,
     coverage = mx / worst
     if float(min_coverage) <= 0 or coverage >= float(min_coverage):
         return cap, coverage
-    cap2 = cap * coverage          # order_num 随 cap 线性 ⇒ worst' = maxQty（coverage'=1.0）
+    # 降档用**未取整** worst 求解（评审实证 2026-07-15）：min_amount=0 时 grid_order_info
+    # 跳过向下取整 ⇒ worst_raw 对 cap 严格线性 ⇒ cap'=cap×maxQty/worst_raw 使
+    # worst_raw(cap')=maxQty，而真实（取整后）worst'(cap') ≤ worst_raw(cap') = maxQty 必然成立。
+    # 【勿改回 cap×coverage】：coverage 基于取整后 worst，取整是阶梯函数——cap 降 1% 时每笔
+    # 数量可能落同一档不变 → worst' 不降 > maxQty → 断言抛异常（覆盖率 99% 实测必炸）。
+    worst_raw = fuse_worst(cap, gearing, grid_params, 0.0)
+    if worst_raw is None or worst_raw <= 0:
+        return cap, coverage       # 理论不可达（worst 已算出）；防御性 fail-open
+    cap2 = cap * (mx / worst_raw)
     w2 = fuse_worst(cap2, gearing, grid_params, min_amount)
-    # min_amount 向下取整只减不增 ⇒ 必然成立；仍断言防未来 grid_order_info 改动悄悄破坏
-    if w2 is not None and w2 > mx * (1 + 1e-9):
+    if w2 is not None and w2 > mx * (1 + 1e-9):   # 守卫：防未来 grid_order_info 改动破坏线性
         raise AssertionError('fuse cap-down 失效: worst=%.8g > maxQty=%.8g' % (w2, mx))
     return cap2, coverage
 
@@ -298,7 +318,12 @@ def audit_fuse_coverage(universe, prices, max_qtys, cap, gearing):
 
     返回 {'need': 满仓名义额, 'total': 参与审计的币数, 'short': [(symbol, coverage)…]}
     （short 按覆盖率升序）。缺价/缺 maxQty 的币跳过（不参与审计，不误报）。
-    用途：让"逼近临界权益"提前可见——报出不足额币即"实盘几何开始偏离回测"的信号（§七）。"""
+    用途：让"逼近临界权益"提前可见——报出不足额币即"实盘几何开始偏离回测"的信号（§七）。
+
+    ⚠ **近似口径、非保守（评审实证 2026-07-15）**：选币轮拿不到 per-symbol 网格几何
+    （low/high/grid_count 由 ATR 现算），故用"现价"代替网格价梯的均价。现价落在网格带上沿时
+    会**高估**覆盖率几个百分点 → 边界处可能漏报（真实 99% 却算作足额）。这只影响"预警早晚"，
+    **不影响保护**：真正的护栏是 FuseCoverageGate 开仓前用 grid_order_info 的精确计算。"""
     need = float(cap) * float(gearing)
     short = []
     total = 0
