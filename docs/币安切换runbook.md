@@ -9,8 +9,9 @@
       （若 cloid 断言失败：启用 encode_cloid 替换编码，更新 spec §5.1 注记后重跑）。
 - [ ] testnet app：`fly secrets set BINANCE_API_KEY=... BINANCE_API_SECRET=... -a gridtrade-hl`
       （app 名沿用 gridtrade-hl，改名=换 app 属独立基础设施操作，不在本次范围）。
-- [ ] `fly deploy -c deploy/fly.toml`；观察 ≥3 天：开格/成交映射/补单/部分成交/
-      对账自愈/保险丝挂撤/面板五视图/心跳，无人工干预。
+- [ ] `fly deploy -c deploy/fly.toml -a gridtrade-hl`（toml 不含 app 名，必须 -a；CI 部署则读
+      仓库变量 `FLY_APP_TESTNET`，见 deploy/DEPLOY.md §6b）；观察 ≥3 天：开格/成交映射/补单/
+      部分成交/对账自愈/保险丝挂撤/面板五视图/心跳，无人工干预。
 
 ## 阶段 2：HL 生产有序退场
 - [ ] /controls 暂停 scheduler 开新格（或 fly scale count scheduler=0 -a gridtrade-prod）。
@@ -27,7 +28,8 @@
 - [ ] `fly secrets set BINANCE_API_KEY=... BINANCE_API_SECRET=... -a gridtrade-prod`
       `fly secrets unset HL_WALLET_ADDRESS HL_PRIVATE_KEY HL_TESTNET -a gridtrade-prod`
       （不 unset 会命中退役键守卫，boot 直接报错——这是刻意的 fail-fast）。
-- [ ] `fly deploy -c deploy/fly.prod.toml`（env 已是 EXCHANGE=binance/BINANCE_TESTNET=false，
+- [ ] `fly deploy -c deploy/fly.prod.toml -a gridtrade-prod`（toml 不含 app 名，必须 -a；CI 部署
+      则读仓库变量 `FLY_APP_PROD`；env 已是 EXCHANGE=binance/BINANCE_TESTNET=false，
       SCHEDULER_RUN_ON_START=false 保护在位）。
 - [ ] 小资金试跑：临时 `fly secrets set TOTAL_BUDGET=500 MAX_CONCURRENT=3 -a gridtrade-prod`，
       入金小额，观察 ≥1 个换仓周期：无 429/418、无 stuck OPENING、记录/盈亏诚实。

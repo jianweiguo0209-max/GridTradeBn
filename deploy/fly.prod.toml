@@ -1,9 +1,11 @@
 # Fly.io 部署配置 —— GridTradeBi Mainnet 生产环境（Binance USDT-M mainnet）。
 # 与 testnet deploy/fly.toml 共用同一镜像与全部业务代码；差异见
 # docs/superpowers/specs/2026-07-03-mainnet-production-environment-design.md。
-# 独立 app（gridtrade-prod）+ 独立 Postgres（gridtrade-pg-prod），与 testnet 完全隔离。
+# 独立 app（主实例 gridtrade-prod）+ 独立 Postgres（gridtrade-pg-prod），与 testnet 完全隔离。
 
-app = "gridtrade-prod"
+# app 名不写死：由 CI 仓库变量 FLY_APP_PROD（deploy-prod.yml --app）或手动 `fly deploy -a <app名>`
+# 提供——同项目多实例部署防冲突，未指定即被 flyctl 拒绝（fail-fast，
+# spec 2026-07-14-fly-app-parameterization）。主实例沿用 gridtrade-prod。
 primary_region = "nrt"
 
 [build]

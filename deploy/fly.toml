@@ -10,7 +10,9 @@
 #
 # 健康判活：用库内 heartbeats 行（HeartbeatRepository），不暴露 HTTP，故无 [http_service]。
 
-app = "gridtrade-hl"
+# app 名不写死：由 CI 仓库变量 FLY_APP_TESTNET（deploy.yml --app）或手动 `fly deploy -a <app名>`
+# 提供——同项目多实例部署防冲突，未指定即被 flyctl 拒绝（fail-fast，
+# spec 2026-07-14-fly-app-parameterization）。主实例沿用 gridtrade-hl。
 primary_region = "nrt"
 
 [build]

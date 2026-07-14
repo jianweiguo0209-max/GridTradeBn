@@ -18,6 +18,7 @@ fly launch --no-deploy --copy-config --name gridtrade-hl --region nrt \
 # 若 fly launch 生成了根目录 fly.toml，确保用的是 deploy/fly.toml 的内容（app=gridtrade-hl, region=nrt, processes.monitor）。
 ```
 > app 名 `gridtrade-hl`/`gridtrade-prod` 沿用历史命名（现已跑 Binance）；改名=换 app 属独立基础设施操作，不在本次范围。
+> **app 名已参数化**：fly toml 不再写死 app 名，CI 从仓库变量读取、手动部署必须 `-a`——多实例部署见 §6b。
 
 ## 2. 开 Postgres（同区 nrt）并挂载
 ```bash
@@ -41,7 +42,8 @@ fly secrets set --app gridtrade-hl \
 
 ## 4. 首次部署（monitor 常驻机）
 ```bash
-fly deploy --config deploy/fly.toml --dockerfile deploy/Dockerfile --remote-only
+fly deploy --config deploy/fly.toml --dockerfile deploy/Dockerfile --remote-only --app gridtrade-hl
+# toml 不含 app 名（多实例防冲突，见 §6b）——手动部署必须 -a/--app，漏了会被 flyctl 拒绝。
 # 这会建一台跑 `python -m gridtrade.runtime.monitor` 的常驻机（启动即 restore_all 自愈 +
 # 进入 ~5s 循环）。进程崩溃由 fly 自动重启。
 ```
@@ -65,8 +67,27 @@ fly machine run <image> python -m gridtrade.runtime.dbadmin migrate
 > mainnet 前 testnet 需实测：Binance reduce-only 超额 size 封顶到持仓、触发对 mark/last、端到端破网触发→撑网全拆、`cancel_all` 是否覆盖触发单。
 
 ## 6. CD（可选，自动部署）
-GitHub → Settings → Secrets → Actions 加 `FLY_API_TOKEN`（`fly tokens create deploy` 生成）。
-之后 push 到 main → CI 通过 → `.github/workflows/deploy.yml` 自动 `flyctl deploy`。
+GitHub → Settings → Secrets and variables → Actions：
+- **Secrets** 加 `FLY_API_TOKEN`（`fly tokens create deploy -a gridtrade-hl` 生成，token 按 app 签发）；
+- **Variables** 加 `FLY_APP_TESTNET=gridtrade-hl`（**必填**——未设置部署工作流直接报错退出，见 §6b）。
+
+之后 push 到 main → CI 通过 → `.github/workflows/deploy.yml` 自动 `flyctl deploy --app $FLY_APP_TESTNET`。
+
+## 6b. 多实例部署（app 名参数化）
+
+fly toml **不写死 app 名**（spec `2026-07-14-fly-app-parameterization`）：CI 从 GitHub 仓库
+Variables 读取，未设置即 fail-fast 报错；手动部署必须 `-a`。同一项目部署第二套实例（fork /
+双生产）互不冲突。
+
+| 隔离资产 | testnet | mainnet | 说明 |
+|---|---|---|---|
+| 仓库变量（Variables） | `FLY_APP_TESTNET` | `FLY_APP_PROD` | 主实例值 `gridtrade-hl` / `gridtrade-prod` |
+| 部署令牌（Secrets） | `FLY_API_TOKEN` | `FLY_API_TOKEN_PROD` | `fly tokens create deploy -a <app>` 按 app 签发 |
+| fly app + Postgres | 各建各的 | 各建各的 | §1-§2 / Mainnet 前置步骤 |
+| fly secrets | 各设各的 | 各设各的 | §3 / Mainnet 手动步骤 3 |
+
+**新实例五步**：① `fly apps create <名>` + PG 建库挂载 → ② `fly secrets set`（凭证/面板）→
+③ GitHub Variables 设 app 名 → ④ `fly tokens create deploy -a <名>` 进 Secrets → ⑤ 触发部署。
 
 ## 7. 验证 testnet 跑通
 ```bash
@@ -82,7 +103,7 @@ fly pg connect -a gridtrade-pg              # 连库
 testnet 稳定后：
 ```bash
 fly secrets set --app gridtrade-hl BINANCE_API_KEY=MainnetApiKey BINANCE_API_SECRET=MainnetApiSecret CAP=30
-fly deploy --config deploy/fly.toml --dockerfile deploy/Dockerfile --remote-only
+fly deploy --config deploy/fly.toml --dockerfile deploy/Dockerfile --remote-only --app gridtrade-hl
 ```
 用极小额跑一次真实端到端，核对盈亏/记账与回测口径一致。
 
@@ -185,16 +206,18 @@ fly secrets set --app gridtrade-prod DASHBOARD_USER=admin \
 > - `SCHEDULER_RUN_ON_START` **不要**设成 secret（会盖过 fly.prod.toml 的 `[env]=false`）；prod 靠 [env] 保持 false。
 > - `DATABASE_URL` 已由 attach 设置，勿手动改。
 
-### 手动步骤 4 — GitHub 部署 token（app 级、与 testnet 隔离）
+### 手动步骤 4 — GitHub 部署 token + app 名变量（app 级、与 testnet 隔离）
 ```bash
 fly tokens create deploy -a gridtrade-prod        # 复制输出
 gh secret set FLY_API_TOKEN_PROD --repo rockingchang/GrideTradeBi   # 粘贴 token
+gh variable set FLY_APP_PROD --body gridtrade-prod --repo rockingchang/GrideTradeBi
+# FLY_APP_PROD 必填：未设置 deploy-prod.yml 直接报错退出（多实例防冲突，见 §6b）
 ```
 
 ### 手动步骤 5 — 首次上线（全部就位后）
 ```bash
-# 可选：本地干跑一次验证（不经 CI）
-fly deploy --config deploy/fly.prod.toml --dockerfile deploy/Dockerfile --remote-only
+# 可选：本地干跑一次验证（不经 CI；toml 无 app 名，必须 -a）
+fly deploy --config deploy/fly.prod.toml --dockerfile deploy/Dockerfile --remote-only --app gridtrade-prod
 # 正式：把 main 合进 production 再 push → 自动 test→deploy
 git checkout production && git merge --no-ff main && git push origin production
 ```

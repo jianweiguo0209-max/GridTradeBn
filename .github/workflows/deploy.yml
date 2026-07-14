@@ -1,6 +1,10 @@
 name: Deploy
 
-# CD：部署到 fly.io。需 GitHub secret FLY_API_TOKEN + fly app 已存在。
+# CD：部署到 fly.io。需 GitHub secret FLY_API_TOKEN + 仓库变量 FLY_APP_TESTNET + fly app 已存在。
+#
+# app 名从仓库变量 FLY_APP_TESTNET 读取（主实例=gridtrade-hl），未设置直接报错退出——
+# 同项目多实例部署防冲突（fail-fast，spec 2026-07-14-fly-app-parameterization）。
+# 设置入口：Settings → Secrets and variables → Actions → Variables。
 #
 # 默认手动触发（workflow_dispatch），避免在 fly 尚未配置好时自动失败刷红。
 # fly 配好后，把下面 workflow_run 段取消注释即可改为「main CI 通过后自动部署」。
@@ -23,7 +27,14 @@ jobs:
       - name: Setup flyctl
         uses: superfly/flyctl-actions/setup-flyctl@master
 
+      - name: Resolve app name (fail-fast)
+        run: |
+          if [ -z "${{ vars.FLY_APP_TESTNET }}" ]; then
+            echo "::error::仓库变量 FLY_APP_TESTNET 未设置——app 名必须显式指定（多实例防冲突）。到 Settings → Secrets and variables → Actions → Variables 添加，主实例值为 gridtrade-hl。"
+            exit 1
+          fi
+
       - name: Deploy to Fly
-        run: flyctl deploy --config deploy/fly.toml --dockerfile deploy/Dockerfile --remote-only
+        run: flyctl deploy --config deploy/fly.toml --dockerfile deploy/Dockerfile --remote-only --app "${{ vars.FLY_APP_TESTNET }}"
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
