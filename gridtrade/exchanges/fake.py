@@ -48,6 +48,20 @@ class FakeExchange(ExchangeAdapter):
     def seed_quote_volumes(self, vols: dict) -> None:
         self._quote_volumes = dict(vols)
 
+    def partial_fill(self, symbol: str, price: float, qty: float) -> bool:
+        """测试钩子（spec 2026-07-15 §3.2）：让 price 处的挂单只成交 qty、残量留簿，
+        模拟"触价部分成交后反弹"。成交 Trade.order_id=原单 id（执行器按 order_id 映射回网格线）；
+        残单保持同 id、size 减 qty、filled=0、仍 open。不联动 _match（不触发整簿撮合）。
+        命中（存在该价位挂单且 0<qty<size）返回 True，否则 False。"""
+        for oid, o in list(self._open.items()):
+            if o.symbol == symbol and abs(o.price - price) < 1e-12 and 0 < qty < o.size:
+                self._fill(o, o.price, qty=qty)      # 记 Trade(qty) + 更新净仓
+                self._open[oid] = Order(id=o.id, client_oid=o.client_oid, symbol=symbol,
+                                        side=o.side, price=o.price, size=o.size - qty,
+                                        filled=0.0, status='open', reduce_only=o.reduce_only)
+                return True
+        return False
+
     def _price_of(self, symbol: str) -> float:
         return self._price.get(symbol, self._default_price)
 
@@ -62,8 +76,9 @@ class FakeExchange(ExchangeAdapter):
                 self._fill(o, o.price)
                 del self._open[oid]
 
-    def _fill(self, o: Order, fill_price: float) -> None:
-        signed = o.size if o.side == 'buy' else -o.size
+    def _fill(self, o: Order, fill_price: float, qty: float = None) -> None:
+        q = o.size if qty is None else float(qty)   # qty!=None：部分成交，只成交 q（partial_fill 钩子用）
+        signed = q if o.side == 'buy' else -q
         pos = self._pos.get(o.symbol, Position(o.symbol, 0.0, 0.0))
         new_net = pos.net_size + signed
         # 同向加仓更新加权均价；反向或反手时简单处理（净仓符号不翻转的减仓保留均价）
@@ -76,8 +91,8 @@ class FakeExchange(ExchangeAdapter):
         tid = next(self._ts)
         self._trades.append(Trade(
             id=str(tid), client_oid=o.client_oid, symbol=o.symbol,
-            side=o.side, price=fill_price, size=o.size,
-            fee=o.size * fill_price * self._fee_rate, ts=tid, order_id=o.id))
+            side=o.side, price=fill_price, size=q,
+            fee=q * fill_price * self._fee_rate, ts=tid, order_id=o.id))
 
     def create_stop_order(self, symbol, side, size, trigger_price, *,
                           reduce_only=True, slippage=0.15, client_oid=None) -> Order:
