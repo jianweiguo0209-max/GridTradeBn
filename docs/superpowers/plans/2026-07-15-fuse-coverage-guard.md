@@ -846,8 +846,12 @@ Run: `.venv/bin/python -m pytest tests/exchanges/test_binance_adapter.py::test_s
 ② `gridtrade/runtime/scheduler.py`——在 `run_scheduler_once` 里 `universe = resolve_live_universe(...)` 之后、票池后续处理之前插入：
 
 ```python
-    # 保险丝覆盖审计（spec 2026-07-15 §六）：limits 复用 ccxt 缓存 markets（零权重）；
-    # 价格走 fetch_prices_all（币安全市场 ticker/price，权重 2/轮，选币轮每小时一次 → 可忽略）。
+    # 保险丝覆盖审计（spec 2026-07-15 §六）。真实成本（诚实披露，勿写"零额外 API"）：
+    #   ① limits 复用 ccxt 缓存 markets（零权重）；
+    #   ② fetch_prices_all（全市场 ticker/price，权重 2）；
+    #   ③ _resolve_cap() 在 cap_equity_frac>0（生产默认）时会触发一次 fetch_balance（权重 5）
+    #      ——本轮不开仓时这是审计独有的净增成本。
+    # 合计 ≈7 权重/选币轮（每小时一次，相对 fapi 2400/min 预算可忽略，但非零）。
     # 报出不足额币 = 权益已跨临界（≈$36.7k）→ 门链开始降 cap，且实盘几何开始偏离回测（§七）。
     try:
         from gridtrade.execution.fuse_policy import audit_fuse_coverage
