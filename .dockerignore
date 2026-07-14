@@ -1,0 +1,21 @@
+# 镜像只需 requirements.txt + gridtrade/（见 deploy/Dockerfile 的两条 COPY）。
+# 其余一律不进 build context——2026-07-14 实证：无此文件时 context 达 671MB
+# （data/ 345MB + .venv/ 307MB + .git/ 16MB 全量上传远端 builder，部署 ~12 分钟），
+# 且 .env（API key 明文）随包出机。瘦身后 context 仅 MB 级。
+.git/
+.github/
+.venv/
+.pytest_cache/
+.superpowers/
+data/
+docs/
+tests/
+legacy/
+scripts/
+deploy/
+更新日志/
+.env
+.env.example
+*.md
+.gitignore
+.dockerignore

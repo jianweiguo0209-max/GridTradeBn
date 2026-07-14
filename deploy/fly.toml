@@ -42,7 +42,10 @@ primary_region = "nrt"
   SHOCK_PAUSE_HOURS = "2"
   MIN_ORDER_NOTIONAL = "5"     # 开仓预检全局下限，与按币 MIN_NOTIONAL 取 max（spec 2026-07-14 §5.3，testnet 同 mainnet 口径）
   UNIVERSE_TOP_VOLUME_PCT = "0.55"  # 票池=24h 成交额前 55% 相对口径（与 mainnet 同口径，spec 2026-07-14-universe-top-volume-pct）
-  SCHEDULER_RUN_ON_START = "true"   # testnet 调试：scheduler 启动即跑一次；稳定后置 "false"
+  # 置 false（2026-07-14 上线首日实证）：true 时每次部署/重启都把当前 offset 的格子
+  # 关掉重开（churn 白交手续费；当日三次部署滚动致 XPIN 格两度轮换）。调试需重跑时
+  # 临时 fly secrets set SCHEDULER_RUN_ON_START=true，完事 unset。
+  SCHEDULER_RUN_ON_START = "false"
   # 档0 硬禁名单单源在 gridtrade/config.py DEFAULT_TIER_POLICY.tier0（与 mainnet 同口径）；
   # env 仅作紧急覆盖。手动 OPEN_GRID 指令不经票池、不受此限（testnet 实验自由度保留）。
   # CAP / TOTAL_BUDGET / BLACKLIST_SYMBOLS 按需在此或 secrets 配置(旧键 LEVERAGE/CAP_EQUITY_FRAC 已退役,设置即 boot 报错)
