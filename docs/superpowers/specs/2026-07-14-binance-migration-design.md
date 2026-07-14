@@ -53,8 +53,9 @@ grid_order_info 档数自适应封顶(既有已知局限维持现状,见 fly.pro
   - `fetch_funding_payments_all` → `GET /fapi/v1/income?incomeType=FUNDING_FEE`(账户级单次,
     按 symbol 字段打标聚合——币安按 symbol 正确打标,走通用语义,无 HL 那种 delta.coin 例外);
   - `fetch_my_trades_all` 维持基类逐 symbol 合成(userTrades 必带 symbol,仅活跃网格币,权重 5/币)。
-  - 权重估算:每 5s 周期 ~60 + 12 活跃格 × 5 ≈ 每分钟 ~1400,低于 fapi IP 上限 2400/min,
-    且与全市场票池规模解耦(选币轮独立限速 SCHEDULER_FETCH_PACE_MS 已有)。
+  - 权重估算（终审修正）:12 格满仓每 5s 周期 40+5+2+30+12×5+5(fetch_balance)≈142,每分钟
+    ~1700(原估算"~60+12×5≈1400"漏计 fetch_balance 且四项批量调用合计被低估),低于 fapi
+    IP 上限 2400/min,且与全市场票池规模解耦(选币轮独立限速 SCHEDULER_FETCH_PACE_MS 已有)。
 - **启动断言 `assert_account_mode()`**(factory 组装时调用一次):
   - 持仓模式必须单向(one-way,`positionSide/dual == false`),双向直接 RuntimeError——
     执行引擎/PositionLedger 全部按净仓语义工作;

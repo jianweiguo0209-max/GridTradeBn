@@ -44,7 +44,9 @@ primary_region = "nrt"
   # commit 两侧（实盘/回测）原子同步。已持有的被禁币不强平，随 12H 换仓自然退出。
   # 风控项（CAP / CAP_MIN / CAP_MAX）沿用 config.py 默认或按需 fly secrets 覆盖。
   # 单网格 cap = clamp(equity×frac, CAP_MIN, CAP_MAX)，frac=ACCOUNT_LEVERAGE/(MAX_CONCURRENT×GRID_GEARING/2)
-  #   =3.5/20.4≈0.1716(equity $3k→cap≈$521)；每笔挂单 notional≈cap×gearing/(档数+1) 须≥$10(cost.min)。
+  #   =3.5/20.4≈0.1716(equity $3k→cap≈$521)；每笔挂单 notional≈cap×gearing/(档数+1) 须
+  #   ≥max(MIN_ORDER_NOTIONAL=5, 该币 min_cost)（币安按币 5/20/50，非旧 HL 单一 $10；见
+  #   MinNotionalGate/Instrument.min_cost）。
   # 旧键 LEVERAGE/CAP_EQUITY_FRAC 已退役——设置即 boot 报错(语义变更禁静默映射)。
   # 历史(CAP_EQUITY_FRAC 时代)：$220 本金 0.10→单笔$3<$10 全拒、临时 0.50 band-aid(记忆 mainnet-order-min-notional)。
   # ⚠ 与 frac 无关的独立局限：高档数币（如 LIT 51 档，需 cap≥$335）用任何现实 cap 都够不着 $10、

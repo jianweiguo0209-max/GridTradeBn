@@ -177,8 +177,11 @@ fly secrets set --app gridtrade-prod DASHBOARD_USER=admin \
 > 设过 `HL_WALLET_ADDRESS`/`HL_PRIVATE_KEY`，先 `fly secrets unset HL_WALLET_ADDRESS HL_PRIVATE_KEY HL_TESTNET --app gridtrade-prod`。
 
 > 注意：
-> - `UNIVERSE_WHITELIST` **已写死在 `deploy/fly.prod.toml` [env]**（Binance mainnet 24h 成交额 Top26），
->   不用设 secret；要放开到全池就清空该项重部署。
+> - `UNIVERSE_WHITELIST` **`deploy/fly.prod.toml` [env] 未设置该键**——2026-07-04 起票池已改为
+>   全市场动态：全部 live 永续 swap − 黑名单（`BLACKLIST_SYMBOLS`/tier0）− 24h 成交额地板
+>   （`MIN_QUOTE_VOLUME_24H`），见 fly.prod.toml `[env]` 注释与
+>   docs/superpowers/specs/2026-07-04-candidate-universe-port-design.md；如需收窄回白名单，
+>   在 `[env]` 加回该键并重部署。
 > - `SCHEDULER_RUN_ON_START` **不要**设成 secret（会盖过 fly.prod.toml 的 `[env]=false`）；prod 靠 [env] 保持 false。
 > - `DATABASE_URL` 已由 attach 设置，勿手动改。
 

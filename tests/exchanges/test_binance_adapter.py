@@ -133,6 +133,13 @@ def test_from_credentials_allows_accountwide_open_orders():
     assert a.client.options['warnOnFetchOpenOrdersWithoutSymbol'] is False
 
 
+def test_market_id_fallback_uses_symbol_own_quote():
+    # 未知/极新上市 symbol：回退拼接须用符号自身 quote，绝不可静默映射到适配器的
+    # quote_currency（旧 HL USDC 符号不可能变成 USDT 行情）——终审 Minor 修复。
+    a = _binance()
+    assert a._market_id('FOO/USDC:USDC') == 'FOOUSDC'
+
+
 def test_fetch_ohlcv_real_quote_volume():
     from gridtrade.exchanges.base import CANDLE_COLS
     c = FakeBinanceClient()

@@ -72,7 +72,7 @@ class DeployConfig:
     cap_min: float = 20.0
     cap_max: float = 100000.0
     min_quote_volume_24h: float = 0.0   # >0 → 24h 成交额绝对地板（0=停用）；生产由 fly.prod.toml 设 $1M
-    min_order_notional: float = 0.0     # >0 → 开仓预检单笔名义额下限（HL cost.min=$10）；0=停用
+    min_order_notional: float = 0.0     # >0 → 开仓预检单笔名义额下限（币安按币 5/20/50，与 Instrument.min_cost 取 max）；0=停用
     scheduler_fetch_pace_ms: float = 2000.0   # 选币取数币间间隔（HL 权重制推导，见 scheduler.py）；0=关
     monitor_parallel: int = 4           # monitor per-grid 并行 worker 数；1=退回全串行（保底开关）
     monitor_unit_warn_sec: float = 30.0  # 单网格监控单元耗时告警阈值（病态格日志指名道姓）
@@ -163,7 +163,9 @@ DEFAULT_TIER_POLICY = TierPolicy(
     tier0=('BTC/USDT:USDT', 'ETH/USDT:USDT', 'VINE/USDT:USDT', 'NEO/USDT:USDT',
            'PEOPLE/USDT:USDT', 'NEIRO/USDT:USDT', 'MOODENG/USDT:USDT',
            'FARTCOIN/USDT:USDT', 'CFX/USDT:USDT'),
-    # legacy black_dict["0"] 其余 16 币未上币安永续，不猜译名，上市巡检再补。
+    # legacy black_dict["0"] 25 币中币安在市 9 个；其余 16 币未上币安永续，不猜译名
+    # （PI/DEGEN/ALCH/MAX/OL/MASK/ACT/SONIC/BR/RDNT/MAGIC/CSPR/LOOKS/MEW/NEIROETH/IP），
+    # 上市巡检再补。
     tier1=(),
     tier2_cap=2,   # 同币开仓上限(2026-07-12 用户定)
 )
@@ -209,7 +211,7 @@ DEFAULT_STOP_CFG = {
     # 保险价值在趋势崩盘窗兑现,故松而不删。
     'trailing_k': 0.15,
     'trailing_floor': 0.015,
-    'fundingRate_stop_loss': 0.0015,   # 资金费率止损（HL 真实 fundingRate）
+    'fundingRate_stop_loss': 0.0015,   # 资金费率止损（交易所真实 fundingRate）
     # pv 主动止损（量能尖峰 + pnl 门槛）；2026-07-07 PV 研究终配置（干净数据+对齐费率四窗全正，
     # spec 2026-07-07-pv-legacy-semantics-live）：尖峰时浮盈不足 +0.5% 即撤（策略换形，~70% 格首尖峰退出）
     'pv_pnl_thr': 0.005,               # pv 触发门槛：pv_spike && pnlRatio<+0.005（evaluate_exit 读此值）

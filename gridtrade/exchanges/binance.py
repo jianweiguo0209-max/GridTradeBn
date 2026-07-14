@@ -99,7 +99,10 @@ class BinanceAdapter(CcxtAdapter):
         m = (self.client.markets or {}).get(symbol)
         if m and m.get('id'):
             return m['id']
-        return symbol.split('/')[0] + self.quote_currency
+        # 防跨计价污染:回退拼接用符号自身 quote(旧 HL USDC 符号绝不可映射到 USDT 行情——
+        # 不在市则交易所报错优雅降级)。
+        return symbol.split('/')[0] + (symbol.split('/')[1].split(':')[0]
+                                       if '/' in symbol else self.quote_currency)
 
     def fetch_ohlcv(self, symbol, timeframe, start_ms, end_ms) -> pd.DataFrame:
         """原生 klines 端点（分页语义同基类），取**真实 quote_volume**（第8列）——
@@ -153,6 +156,9 @@ class BinanceAdapter(CcxtAdapter):
         return super().fetch_my_trades(symbol, since_ms=since_ms)
 
     # ---- 账户级批量读（monitor 5s 快照权重预算核心，spec §3.1）----
+    # 权重预算（终审修正）：12 格满仓每周期 40(openOrders)+5(positionRisk)+2(tickerPrice)+
+    # 30(income)+12×5(userTrades)+5(balance)≈142，5s 轮→每分钟 ~1700，低于 fapi IP 上限
+    # 2400/min（原估算"~60+12×5≈1400"漏计 fetch_balance 且批量调用总量被低估）。
     def _id_map(self):
         """原生 id('BTCUSDT') → canonical。只收本结算币 swap；实例缓存。"""
         if getattr(self, '_id_map_cache', None) is None:
