@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # testnet 运行状态一键快照：fly 机器状态 + 库内健康（心跳/标志/网格/指令/余额）。
 # 只读，不改任何状态。用法：
-#   bash scripts/testnet_status.sh          # 默认 app=gridtrade-hl
-#   FLY_APP=gridtrade-hl bash scripts/testnet_status.sh
+#   bash scripts/testnet_status.sh          # 默认 app=gridtrade-bi-test
+#   FLY_APP=gridtrade-hl bash scripts/testnet_status.sh   # 覆盖查其它实例(如 HL 遗留环境)
 set -euo pipefail
-APP="${FLY_APP:-gridtrade-hl}"
+APP="${FLY_APP:-gridtrade-bi-test}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "########## fly machines ($APP) ##########"

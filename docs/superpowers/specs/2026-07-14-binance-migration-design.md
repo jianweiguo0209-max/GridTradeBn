@@ -4,6 +4,9 @@
 > 删除 HL/OKX 适配器与 Reservoir 依赖;③回测深度=全历史(2019+);④数据库=同库延续(HL 历史留档)。
 > 路线=A(适配器置换+Vision 归档数据层),另按用户要求**预留 WebSocket 数据接入接缝**(见 §四)。
 > 实现前如遇本文未覆盖的分歧点,不确定就问,勿猜。
+> **2026-07-14 追加**:部署拓扑改为全新独立环境(gridtrade-bi-test/gridtrade-bi-prod,用户定)——
+> 本文 ④同库延续 与 §7.2 阶段 2 的上线耦合语义被取代,见
+> 2026-07-14-binance-standalone-environments-design.md。
 
 ## 一、背景与决策
 

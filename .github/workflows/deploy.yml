@@ -2,7 +2,7 @@ name: Deploy
 
 # CD：部署到 fly.io。需 GitHub secret FLY_API_TOKEN + 仓库变量 FLY_APP_TESTNET + fly app 已存在。
 #
-# app 名从仓库变量 FLY_APP_TESTNET 读取（主实例=gridtrade-hl），未设置直接报错退出——
+# app 名从仓库变量 FLY_APP_TESTNET 读取（币安 testnet 主实例=gridtrade-bi-test），未设置直接报错退出——
 # 同项目多实例部署防冲突（fail-fast，spec 2026-07-14-fly-app-parameterization）。
 # 设置入口：Settings → Secrets and variables → Actions → Variables。
 #
@@ -30,7 +30,7 @@ jobs:
       - name: Resolve app name (fail-fast)
         run: |
           if [ -z "${{ vars.FLY_APP_TESTNET }}" ]; then
-            echo "::error::仓库变量 FLY_APP_TESTNET 未设置——app 名必须显式指定（多实例防冲突）。到 Settings → Secrets and variables → Actions → Variables 添加，主实例值为 gridtrade-hl。"
+            echo "::error::仓库变量 FLY_APP_TESTNET 未设置——app 名必须显式指定（多实例防冲突）。到 Settings → Secrets and variables → Actions → Variables 添加，币安 testnet 主实例值为 gridtrade-bi-test。"
             exit 1
           fi
 

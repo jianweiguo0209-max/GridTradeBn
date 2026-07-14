@@ -7,31 +7,41 @@
 - [ ] 注册 testnet.binancefuture.com，创建 API key。
 - [ ] `.venv/bin/python scripts/binance_testnet_smoke.py` → SMOKE PASS
       （若 cloid 断言失败：启用 encode_cloid 替换编码，更新 spec §5.1 注记后重跑）。
-- [ ] testnet app：`fly secrets set BINANCE_API_KEY=... BINANCE_API_SECRET=... -a gridtrade-hl`
-      （app 名沿用 gridtrade-hl，改名=换 app 属独立基础设施操作，不在本次范围）。
-- [ ] `fly deploy -c deploy/fly.toml -a gridtrade-hl`（toml 不含 app 名，必须 -a；CI 部署则读
-      仓库变量 `FLY_APP_TESTNET`，见 deploy/DEPLOY.md §6b）；观察 ≥3 天：开格/成交映射/补单/
-      部分成交/对账自愈/保险丝挂撤/面板五视图/心跳，无人工干预。
+- [ ] 新建 testnet 环境（用户定 2026-07-14：全新独立环境，与 HL 旧 app 零共享）：
+      `fly apps create gridtrade-bi-test` + PG `gridtrade-pg-bi-test` 建库挂载
+      ——完整命令见 deploy/DEPLOY.md §1-§2。
+- [ ] testnet app：`fly secrets set BINANCE_API_KEY=... BINANCE_API_SECRET=... -a gridtrade-bi-test`
+      + 面板凭证三件套（DEPLOY.md「Dashboard」节）。
+- [ ] `fly deploy -c deploy/fly.toml -a gridtrade-bi-test`（toml 不含 app 名，必须 -a；CI 部署则读
+      仓库变量 `FLY_APP_TESTNET`，见 deploy/DEPLOY.md §6b；空库由发布钩子 create && migrate
+      自动建表）；观察 ≥3 天：开格/成交映射/补单/部分成交/
+      对账自愈/保险丝挂撤/面板五视图/心跳，无人工干预。
 
-## 阶段 2：HL 生产有序退场
+## 阶段 2（独立事项，时机自定）：HL 遗留生产退场
+> 币安生产部署到**全新环境**（gridtrade-bi-prod + 新库，用户定 2026-07-14），**不依赖本阶段**
+> ——HL 环境（gridtrade-prod）可继续运行任意久，退场只关乎资金调度，不阻塞阶段 3。
 - [ ] /controls 暂停 scheduler 开新格（或 fly scale count scheduler=0 -a gridtrade-prod）。
 - [ ] 随 12H 换仓自然关格，或经 /controls 逐格手动关闭。
-- [ ] **硬门槛**：生产库执行
+- [ ] **对账清点**：HL 生产库执行
       `SELECT id, symbol, status FROM grids WHERE status NOT IN ('CLOSED', 'FAILED');`
-      （FAILED 为无害终态，与 CLOSED 同免检；此查询须 0 行）
-      ——残留 open 网格会让 monitor 拿币安适配器管 HL symbol，必然报错。
-- [ ] HL 提资；HL 历史行留库可查（同库延续，盈亏曲线跨所连续）。
+      （FAILED 为无害终态，与 CLOSED 同免检；须 0 行=无未平仓格），并核对交易所侧无残余
+      持仓/挂单后再提资。
+- [ ] HL 提资；HL 历史保留在其独立库（gridtrade-pg-prod）随时可查，与币安新库零耦合。
+- [ ] 彻底收摊（可选）：`fly scale count monitor=0 scheduler=0 web=0 -a gridtrade-prod`；
+      确认历史无需再查（或已导出）后可 `fly apps destroy gridtrade-prod`。
 
 ## 阶段 3：生产切换
 - [ ] 币安主网 API key：只开合约交易、**禁提现**、不绑 IP 白名单
       （Fly 出口 IP 非静态；如启用 Fly static egress 再收紧，spec §7.3）。
-- [ ] `fly secrets set BINANCE_API_KEY=... BINANCE_API_SECRET=... -a gridtrade-prod`
-      `fly secrets unset HL_WALLET_ADDRESS HL_PRIVATE_KEY HL_TESTNET -a gridtrade-prod`
-      （不 unset 会命中退役键守卫，boot 直接报错——这是刻意的 fail-fast）。
-- [ ] `fly deploy -c deploy/fly.prod.toml -a gridtrade-prod`（toml 不含 app 名，必须 -a；CI 部署
+- [ ] 新建生产环境：`fly apps create gridtrade-bi-prod` + PG `gridtrade-pg-bi-prod` 建库挂载
+      + GitHub 侧 `FLY_APP_PROD=gridtrade-bi-prod` 变量与按新 app 签发的 `FLY_API_TOKEN_PROD`
+      ——完整命令见 deploy/DEPLOY.md「Mainnet 生产环境」章。
+- [ ] `fly secrets set BINANCE_API_KEY=... BINANCE_API_SECRET=... -a gridtrade-bi-prod`
+      + 面板凭证三件套（全新 app 无旧 HL_* 密钥包袱，无需 unset）。
+- [ ] `fly deploy -c deploy/fly.prod.toml -a gridtrade-bi-prod`（toml 不含 app 名，必须 -a；CI 部署
       则读仓库变量 `FLY_APP_PROD`；env 已是 EXCHANGE=binance/BINANCE_TESTNET=false，
-      SCHEDULER_RUN_ON_START=false 保护在位）。
-- [ ] 小资金试跑：临时 `fly secrets set TOTAL_BUDGET=500 MAX_CONCURRENT=3 -a gridtrade-prod`，
+      SCHEDULER_RUN_ON_START=false 保护在位；空库由发布钩子 create && migrate 自动建表）。
+- [ ] 小资金试跑：临时 `fly secrets set TOTAL_BUDGET=500 MAX_CONCURRENT=3 -a gridtrade-bi-prod`，
       入金小额，观察 ≥1 个换仓周期：无 429/418、无 stuck OPENING、记录/盈亏诚实。
 - [ ] 恢复正常参数，逐步加资金。
 

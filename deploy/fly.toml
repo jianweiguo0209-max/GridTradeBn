@@ -12,16 +12,19 @@
 
 # app 名不写死：由 CI 仓库变量 FLY_APP_TESTNET（deploy.yml --app）或手动 `fly deploy -a <app名>`
 # 提供——同项目多实例部署防冲突，未指定即被 flyctl 拒绝（fail-fast，
-# spec 2026-07-14-fly-app-parameterization）。主实例沿用 gridtrade-hl。
+# spec 2026-07-14-fly-app-parameterization）。币安 testnet 主实例 = gridtrade-bi-test
+#（全新独立环境；旧 gridtrade-hl 为 HL 遗留环境，冻结保留互不干扰）。
 primary_region = "nrt"
 
 [build]
   dockerfile = "Dockerfile"
 
-# 发布前一次性钩子：在新镜像里、用 app 的 DATABASE_URL 跑增量迁移，成功后才上线新代码。
-# dbadmin migrate 幂等（缺列才 ALTER），保证 schema 先于新代码就绪（避免新代码读 grid_fills.fee 时列不存在）。
+# 发布前一次性钩子：先 create（空库按当前模型建全表，幂等）再 migrate（增量加列，幂等）。
+# 全新环境（gridtrade-bi-test 是新建空库）裸 migrate 会因表不存在（NoSuchTableError）失败
+# abort 发布，故与 prod 同用 create && migrate：空库时 create 建全表、migrate no-op；
+# 后续 create no-op、migrate 负责加列（与 fly.prod.toml 同理）。
 [deploy]
-  release_command = "python -m gridtrade.runtime.dbadmin migrate"
+  release_command = "sh -c 'python -m gridtrade.runtime.dbadmin create && python -m gridtrade.runtime.dbadmin migrate'"
 
 # 非敏感默认配置（敏感项走 `fly secrets set`：BINANCE_API_KEY / BINANCE_API_SECRET / DATABASE_URL）
 [env]

@@ -2,7 +2,7 @@ name: Deploy Mainnet
 
 # CD（mainnet）：push 到 production 分支 → 跑测试 → 通过后自动 flyctl deploy。
 # 全自动、无人工审批门（用户决策）；CI 门天然内建（deploy 有 needs: test）。
-# app 名从仓库变量 FLY_APP_PROD 读取（主实例=gridtrade-prod），未设置直接报错退出——
+# app 名从仓库变量 FLY_APP_PROD 读取（币安 mainnet 主实例=gridtrade-bi-prod），未设置直接报错退出——
 # 同项目多实例部署防冲突（fail-fast，spec 2026-07-14-fly-app-parameterization）。
 # 需 GitHub repo secret FLY_API_TOKEN_PROD（`fly tokens create deploy -a <你的prod app>` 生成，
 # deploy token 按 app 签发——每个实例各自生成）+ 仓库变量 FLY_APP_PROD。
@@ -48,7 +48,7 @@ jobs:
       - name: Resolve app name (fail-fast)
         run: |
           if [ -z "${{ vars.FLY_APP_PROD }}" ]; then
-            echo "::error::仓库变量 FLY_APP_PROD 未设置——app 名必须显式指定（多实例防冲突）。到 Settings → Secrets and variables → Actions → Variables 添加，主实例值为 gridtrade-prod。"
+            echo "::error::仓库变量 FLY_APP_PROD 未设置——app 名必须显式指定（多实例防冲突）。到 Settings → Secrets and variables → Actions → Variables 添加，币安 mainnet 主实例值为 gridtrade-bi-prod。"
             exit 1
           fi
 

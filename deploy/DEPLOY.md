@@ -12,25 +12,27 @@
 
 ## 1. 创建 app（不立即部署）
 ```bash
-cd <repo 根>
-fly launch --no-deploy --copy-config --name gridtrade-hl --region nrt \
-  --dockerfile deploy/Dockerfile
-# 若 fly launch 生成了根目录 fly.toml，确保用的是 deploy/fly.toml 的内容（app=gridtrade-hl, region=nrt, processes.monitor）。
+fly apps create gridtrade-bi-test --org personal
+# 配置一律走 deploy/fly.toml（toml 不含 app 键，部署时 -a 指定；region=nrt 在 toml 内）。
 ```
-> app 名 `gridtrade-hl`/`gridtrade-prod` 沿用历史命名（现已跑 Binance）；改名=换 app 属独立基础设施操作，不在本次范围。
-> **app 名已参数化**：fly toml 不再写死 app 名，CI 从仓库变量读取、手动部署必须 `-a`——多实例部署见 §6b。
+> **币安部署到全新独立环境**（用户定，2026-07-14）：testnet=`gridtrade-bi-test`、mainnet=`gridtrade-bi-prod`，
+> 各配独立 Postgres（`gridtrade-pg-bi-test`/`gridtrade-pg-bi-prod`），从空库起步。
+> 旧 `gridtrade-hl`/`gridtrade-prod` 是 **HL 遗留环境**——继续跑旧代码、冻结保留、互不干扰，
+> **不再是本手册的部署目标**（HL 退场时机独立决定，见 runbook 阶段 2）。
+> **app 名已参数化**：fly toml 不写死 app 名，CI 从仓库变量读取、手动部署必须 `-a`——多实例部署见 §6b。
 
 ## 2. 开 Postgres（同区 nrt）并挂载
 ```bash
-fly postgres create --name gridtrade-pg --region nrt --vm-size shared-cpu-1x --volume-size 1
-fly postgres attach gridtrade-pg --app gridtrade-hl
+fly postgres create --name gridtrade-pg-bi-test --region nrt --vm-size shared-cpu-1x --volume-size 1 --initial-cluster-size 1
+fly postgres attach gridtrade-pg-bi-test --app gridtrade-bi-test
 # attach 会自动给 app 设 DATABASE_URL（postgres://…）。代码 StateStore.from_url 会把
-# postgres:// 规范成 postgresql://，无需手改。
+# postgres:// 规范成 postgresql://，无需手改。全新空库：首次部署的发布钩子
+# create && migrate 会自动建全表（fly.toml [deploy]）。
 ```
 
 ## 3. 注入 secrets（testnet 凭证）
 ```bash
-fly secrets set --app gridtrade-hl \
+fly secrets set --app gridtrade-bi-test \
   BINANCE_API_KEY=YourTestnetApiKey \
   BINANCE_API_SECRET=YourTestnetApiSecret
 # BINANCE_TESTNET=true 已在 deploy/fly.toml 的 [env]（静态配置，不走 secrets）；其余风控项
@@ -38,14 +40,14 @@ fly secrets set --app gridtrade-hl \
 ```
 > 旧 HL_* 键（`HL_WALLET_ADDRESS`/`HL_PRIVATE_KEY`/`HL_TESTNET`）与 `LEVERAGE`/`CAP_EQUITY_FRAC`
 > 已退役——设置任一将在 boot 时 `RuntimeError`（刻意 fail-fast，见 `gridtrade/config.py`）。
-> 迁移自旧部署先执行：`fly secrets unset HL_WALLET_ADDRESS HL_PRIVATE_KEY HL_TESTNET --app gridtrade-hl`。
+> 全新 app 天生无旧密钥包袱；此守卫仅在复用旧 HL app 时才需要先 `fly secrets unset`。
 
 ## 4. 首次部署（monitor 常驻机）
 ```bash
-fly deploy --config deploy/fly.toml --dockerfile deploy/Dockerfile --remote-only --app gridtrade-hl
+fly deploy --config deploy/fly.toml --dockerfile deploy/Dockerfile --remote-only --app gridtrade-bi-test
 # toml 不含 app 名（多实例防冲突，见 §6b）——手动部署必须 -a/--app，漏了会被 flyctl 拒绝。
-# 这会建一台跑 `python -m gridtrade.runtime.monitor` 的常驻机（启动即 restore_all 自愈 +
-# 进入 ~5s 循环）。进程崩溃由 fly 自动重启。
+# 发布钩子先 create && migrate 建全表（空库），再起 monitor/scheduler/web 三进程组。
+# monitor 启动即 restore_all 自愈 + 进入 ~5s 循环；进程崩溃由 fly 自动重启。
 ```
 
 ## 5. scheduler（无需单独操作）
@@ -68,8 +70,9 @@ fly machine run <image> python -m gridtrade.runtime.dbadmin migrate
 
 ## 6. CD（可选，自动部署）
 GitHub → Settings → Secrets and variables → Actions：
-- **Secrets** 加 `FLY_API_TOKEN`（`fly tokens create deploy -a gridtrade-hl` 生成，token 按 app 签发）；
-- **Variables** 加 `FLY_APP_TESTNET=gridtrade-hl`（**必填**——未设置部署工作流直接报错退出，见 §6b）。
+- **Secrets** 加 `FLY_API_TOKEN`（`fly tokens create deploy -a gridtrade-bi-test` 生成，token 按 app 签发——
+  旧值若指向 gridtrade-hl 需重新生成替换）；
+- **Variables** 加 `FLY_APP_TESTNET=gridtrade-bi-test`（**必填**——未设置部署工作流直接报错退出，见 §6b）。
 
 之后 push 到 main → CI 通过 → `.github/workflows/deploy.yml` 自动 `flyctl deploy --app $FLY_APP_TESTNET`。
 
@@ -81,31 +84,31 @@ Variables 读取，未设置即 fail-fast 报错；手动部署必须 `-a`。同
 
 | 隔离资产 | testnet | mainnet | 说明 |
 |---|---|---|---|
-| 仓库变量（Variables） | `FLY_APP_TESTNET` | `FLY_APP_PROD` | 主实例值 `gridtrade-hl` / `gridtrade-prod` |
+| 仓库变量（Variables） | `FLY_APP_TESTNET` | `FLY_APP_PROD` | 币安主实例值 `gridtrade-bi-test` / `gridtrade-bi-prod` |
 | 部署令牌（Secrets） | `FLY_API_TOKEN` | `FLY_API_TOKEN_PROD` | `fly tokens create deploy -a <app>` 按 app 签发 |
 | fly app + Postgres | 各建各的 | 各建各的 | §1-§2 / Mainnet 前置步骤 |
 | fly secrets | 各设各的 | 各设各的 | §3 / Mainnet 手动步骤 3 |
+
+> HL 遗留环境（`gridtrade-hl`/`gridtrade-prod` + 各自 PG）不在此表内——冻结保留，跑旧代码，
+> 与币安环境零共享；其退场按 runbook 阶段 2 独立进行。
 
 **新实例五步**：① `fly apps create <名>` + PG 建库挂载 → ② `fly secrets set`（凭证/面板）→
 ③ GitHub Variables 设 app 名 → ④ `fly tokens create deploy -a <名>` 进 Secrets → ⑤ 触发部署。
 
 ## 7. 验证 testnet 跑通
 ```bash
-fly logs --app gridtrade-hl                 # 看 monitor/scheduler 日志
-fly pg connect -a gridtrade-pg              # 连库
+fly logs --app gridtrade-bi-test            # 看 monitor/scheduler 日志
+fly pg connect -a gridtrade-pg-bi-test      # 连库
   SELECT * FROM heartbeats;                 #   两机心跳 last_beat_ts 在更新 = 存活
   SELECT id,symbol,status,tag FROM grids;   #   开/平网格记录
   SELECT * FROM order_records ORDER BY closed_at DESC LIMIT 10;
 ```
 确认全链路：开网格 → 补单 → 止盈止损平仓 → 杀进程/重启后对账自愈续跑、无重复单/孤儿单。
 
-## 8. 切 mainnet 小额（需求 3）
-testnet 稳定后：
-```bash
-fly secrets set --app gridtrade-hl BINANCE_API_KEY=MainnetApiKey BINANCE_API_SECRET=MainnetApiSecret CAP=30
-fly deploy --config deploy/fly.toml --dockerfile deploy/Dockerfile --remote-only --app gridtrade-hl
-```
-用极小额跑一次真实端到端，核对盈亏/记账与回测口径一致。
+## 8. 切 mainnet 小额
+testnet 稳定后，**不在 testnet app 上切真钱 key**——mainnet 用独立生产环境
+（`gridtrade-bi-prod`，见下方「Mainnet 生产环境」章节），小额试跑步骤在该章节与
+runbook 阶段 3。testnet 环境始终保持测试网 key（`BINANCE_TESTNET=true` 在 fly.toml [env] 写死）。
 
 ---
 ### 注意
@@ -138,9 +141,9 @@ unset TEST_DATABASE_URL                               # 回到默认 SQLite
 **把下面的 `你的密码` 换成你自己的真实密码再执行**：
 
     HASH=$(.venv/bin/python -c "from gridtrade.dashboard.auth import hash_password; print(hash_password('你的密码'))")
-    fly secrets set -a gridtrade-hl DASHBOARD_USER=admin DASHBOARD_PASSWORD_HASH="$HASH" DASHBOARD_SESSION_SECRET="$(openssl rand -hex 32)"
+    fly secrets set -a gridtrade-bi-test DASHBOARD_USER=admin DASHBOARD_PASSWORD_HASH="$HASH" DASHBOARD_SESSION_SECRET="$(openssl rand -hex 32)"
 
-访问：`fly open -a gridtrade-hl`（web 进程常驻 ≥1 台，long-live，无冷启动）。
+访问：`fly open -a gridtrade-bi-test`（web 进程常驻 ≥1 台，long-live，无冷启动）。
 登录失败 5 次锁定 ≥ 1 小时（内存态，机器重启后清零）。
 
 > 部署机制注意：web 是 scale-to-zero 之外的常驻进程组（`min_machines_running = 1`）。
@@ -171,16 +174,20 @@ unset TEST_DATABASE_URL                               # 回到默认 SQLite
 
 ---
 
-## Mainnet 生产环境（app `gridtrade-prod` / PG `gridtrade-pg-prod`）
+## Mainnet 生产环境（app `gridtrade-bi-prod` / PG `gridtrade-pg-bi-prod`）
 
-> 独立 app + 独立 PG，与 testnet 完全隔离。设计见
-> `docs/superpowers/specs/2026-07-03-mainnet-production-environment-design.md`。
+> 独立 app + 独立 PG，与 testnet 完全隔离；进程组/CD 设计沿
+> `docs/superpowers/specs/2026-07-03-mainnet-production-environment-design.md`（该文的
+> gridtrade-prod 现为 HL 遗留环境，币安生产用本节的全新环境）。
 > **全自动 CD：push `production` 分支即触发真钱部署——手动准备未就位前不要 push。**
 
-### 已就位（前置步骤 2，2026-07-03 建好）
-- `fly apps create gridtrade-prod --org personal`
-- `fly postgres create --name gridtrade-pg-prod --org personal --region nrt --vm-size shared-cpu-1x --volume-size 1 --initial-cluster-size 1`
-- `fly postgres attach gridtrade-pg-prod --app gridtrade-prod`（已设 `DATABASE_URL` secret）
+### 前置步骤 — 新建生产环境（一次性）
+```bash
+fly apps create gridtrade-bi-prod --org personal
+fly postgres create --name gridtrade-pg-bi-prod --org personal --region nrt --vm-size shared-cpu-1x --volume-size 1 --initial-cluster-size 1
+fly postgres attach gridtrade-pg-bi-prod --app gridtrade-bi-prod   # 自动设 DATABASE_URL secret
+# 空库无需手动建表：首次部署发布钩子 create && migrate 自动建全表（fly.prod.toml [deploy]）
+```
 
 ### 手动步骤 1 — Binance mainnet API key（真钱）
 - 币安主站创建 API key——只开合约交易权限、禁提现、不绑 IP 白名单（Fly 出口 IP 非静态；如启用
@@ -189,13 +196,12 @@ unset TEST_DATABASE_URL                               # 回到默认 SQLite
 
 ### 手动步骤 3 — secrets（面板凭证全新生成，勿复用 testnet）
 ```bash
-fly secrets set --app gridtrade-prod BINANCE_API_KEY=... BINANCE_API_SECRET=...
+fly secrets set --app gridtrade-bi-prod BINANCE_API_KEY=... BINANCE_API_SECRET=...
 HASH=$(.venv/bin/python -c "from gridtrade.dashboard.auth import hash_password; print(hash_password('<强密码>'))")
-fly secrets set --app gridtrade-prod DASHBOARD_USER=admin \
+fly secrets set --app gridtrade-bi-prod DASHBOARD_USER=admin \
   DASHBOARD_PASSWORD_HASH="$HASH" DASHBOARD_SESSION_SECRET="$(openssl rand -hex 32)"
 ```
-> 旧 HL_* 键已退役，设置任一将在 boot 时 `RuntimeError`（刻意 fail-fast）；若此 app 曾按本文件旧版
-> 设过 `HL_WALLET_ADDRESS`/`HL_PRIVATE_KEY`，先 `fly secrets unset HL_WALLET_ADDRESS HL_PRIVATE_KEY HL_TESTNET --app gridtrade-prod`。
+> 全新 app 无旧 HL_* 密钥包袱（退役键守卫仅在复用旧 app 时才需要先 unset）。
 
 > 注意：
 > - `UNIVERSE_WHITELIST` **`deploy/fly.prod.toml` [env] 未设置该键**——2026-07-04 起票池已改为
@@ -208,25 +214,25 @@ fly secrets set --app gridtrade-prod DASHBOARD_USER=admin \
 
 ### 手动步骤 4 — GitHub 部署 token + app 名变量（app 级、与 testnet 隔离）
 ```bash
-fly tokens create deploy -a gridtrade-prod        # 复制输出
-gh secret set FLY_API_TOKEN_PROD --repo rockingchang/GrideTradeBi   # 粘贴 token
-gh variable set FLY_APP_PROD --body gridtrade-prod --repo rockingchang/GrideTradeBi
+fly tokens create deploy -a gridtrade-bi-prod     # 复制输出
+gh secret set FLY_API_TOKEN_PROD --repo rockingchang/GrideTradeBi   # 粘贴 token（旧值指向 gridtrade-prod，需替换）
+gh variable set FLY_APP_PROD --body gridtrade-bi-prod --repo rockingchang/GrideTradeBi
 # FLY_APP_PROD 必填：未设置 deploy-prod.yml 直接报错退出（多实例防冲突，见 §6b）
 ```
 
 ### 手动步骤 5 — 首次上线（全部就位后）
 ```bash
 # 可选：本地干跑一次验证（不经 CI；toml 无 app 名，必须 -a）
-fly deploy --config deploy/fly.prod.toml --dockerfile deploy/Dockerfile --remote-only --app gridtrade-prod
+fly deploy --config deploy/fly.prod.toml --dockerfile deploy/Dockerfile --remote-only --app gridtrade-bi-prod
 # 正式：把 main 合进 production 再 push → 自动 test→deploy
 git checkout production && git merge --no-ff main && git push origin production
 ```
 
 ### 上线验收
 ```bash
-fly logs -a gridtrade-prod                 # monitor/scheduler 心跳更新
-fly pg connect -a gridtrade-pg-prod        # SELECT * FROM heartbeats; SELECT id,symbol,status,tag FROM grids;
-fly open -a gridtrade-prod                 # 面板可登录；实测 panic/halt 熔断可用
+fly logs -a gridtrade-bi-prod              # monitor/scheduler 心跳更新
+fly pg connect -a gridtrade-pg-bi-prod     # SELECT * FROM heartbeats; SELECT id,symbol,status,tag FROM grids;
+fly open -a gridtrade-bi-prod              # 面板可登录；实测 panic/halt 熔断可用
 ```
 
 ### 后续上线（改动 mainnet）
