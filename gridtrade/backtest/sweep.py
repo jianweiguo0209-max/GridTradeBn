@@ -421,13 +421,26 @@ def expand_arms(family, df, *, n_new=3, windows=None):
             step = tested[1] - tested[0]
             cand = [tested[0] - step * (i + 1) for i in range(n_new)]
             cand = [c for c in cand if c >= lo_lim - 1e-12]
-            edge = '下界 %s' % _num(tested[0])
+            edge, room, lim = '下界 %s' % _num(tested[0]), tested[0] - lo_lim, lo_lim
         else:
             step = tested[-1] - tested[-2]
             cand = [tested[-1] + step * (i + 1) for i in range(n_new)]
             cand = [c for c in cand if c <= hi_lim + 1e-12]
-            edge = '上界 %s' % _num(tested[-1])
+            edge, room, lim = '上界 %s' % _num(tested[-1]), hi_lim - tested[-1], hi_lim
+        # 步长外推全被硬限截断，但边界与硬限之间**仍有空间** → 改为在这段区间内细分。
+        # 否则「步长 > 剩余空间」时整片区域被静默跳过（funding 实证：赢家 0.0005、硬限
+        # 0.0001、步长 0.0005 → 一步跨到 0 以下被清空，0.0002/3/4 从未被测）。
+        subdivided = False
+        if not cand and room > 1e-12:
+            v0 = tested[0] if at_lo else tested[-1]
+            gap = (v0 - lim) if at_lo else (lim - v0)
+            cand = [lim + gap * i / float(n_new + 1) for i in range(n_new + 1)] if at_lo \
+                else [lim - gap * i / float(n_new + 1) for i in range(n_new + 1)]
+            subdivided = True
         cand = [int(round(c)) if dim in _INT_DIMS else round(float(c), 6) for c in cand]
+        cand = [c for c in cand if lo_lim - 1e-12 <= c <= hi_lim + 1e-12]
+        if subdivided:
+            edge += '（步长越限 → 在硬限 %s 与边界间细分）' % _num(lim)
         if not cand:
             notes.append('%s 赢家在%s但已撞硬限 %s' % (dim, edge, (lo_lim, hi_lim)))
             continue

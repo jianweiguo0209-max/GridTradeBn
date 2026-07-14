@@ -232,3 +232,25 @@ def test_rank_complete_only_excludes_partially_run_arms():
     ranked = SW.rank_arms(df, complete_only=True)
     assert list(ranked['arm']) == ['sl=0.030'], '半跑完的臂须被排除'
     assert 'sl=0.020' in set(SW.rank_arms(df)['arm']), 'complete_only=False 时不过滤'
+
+
+def test_expand_subdivides_when_step_overshoots_hard_limit():
+    """步长外推越限、但边界与硬限之间仍有空间 → 须细分该区间，不得静默跳过。
+
+    funding 实证：赢家 0.0005、硬限 0.0001、步长 0.0005（最外两点间距）→ 一步跨到 0 以下
+    被清空，0.0002/0.0003/0.0004 从未被测试。"""
+    df = _res('funding', [('fr=0.0005', 26.4, 0.066), ('fr=0.0010', 23.0, 0.061),
+                          ('BASE(现值)', 20.0, 0.050), ('fr=0.0025', 20.4, 0.058)])
+    arms, note = SW.expand_arms('funding', df, n_new=3)
+    vals = sorted(a.overrides['funding_stop'] for a in arms)
+    assert vals == [0.0001, 0.0002, 0.0003, 0.0004], vals   # 硬限本身 + 区间细分点
+    assert '细分' in note
+    lo = SW.DIM_LIMITS['funding']['funding_stop'][0]
+    assert all(v >= lo - 1e-12 for v in vals)
+
+
+def test_expand_no_subdivision_when_edge_equals_limit():
+    """边界已等于硬限 → 无空间可分，如实报「撞硬限」。"""
+    df = _res('funding', [('fr=0.0001', 30.0, 0.07), ('fr=0.0005', 26.4, 0.066)])
+    arms, note = SW.expand_arms('funding', df, n_new=3)
+    assert arms == [] and '硬限' in note
