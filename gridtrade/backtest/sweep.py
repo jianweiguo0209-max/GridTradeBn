@@ -274,34 +274,241 @@ def build_arms(family):
 
 FAMILIES = ('stop', 'trail', 'pv', 'funding', 'geom', 'spacing', 'gearing')
 
+# ---- 边界自动扩展（用户定 2026-07-15）----
+# 最优值落在网格边界 = 网格没铺够、真最优还在外面 → 沿该方向加点重扫，直到最优落在内部
+# 或撞上硬限。硬限是物理/安全边界，不是调参偏好：
+#   stop_loss    下限 0.005（-0.5% cap，再紧就是在噪声上止损）；上限 0.20（等同不设）
+#   trailing_k/floor 同理（floor 下限 0.002=0.2%）
+#   pv_thr       **可为负**（legacy 默认 -0.015=只在已亏时才撤）；范围 ±0.03
+#   pv_mult      下限 1.2（尖峰判定退化为"任何高于均值"）；上限 8
+#   funding_stop 下限 1bp；上限 2%（币安 8h 结算，超此即等同不设）
+#   band         下限 0.75（区间窄于 0.75×ATR 基本必破网）；上限 10
+#   count_min    下限 2（至少一买一卖）；上限 60（受 grid_count_max=149 与最小名义额约束）
+#   spacing_max  下限 0.005（须 > grid_spacing_min=0.003）；上限 0.20
+#   gearing      下限 1.0；上限 6.0（再高账户级 AL 敞口失控，且爆仓否决线会先淘汰）
+DIM_LIMITS = {
+    'stop': {'stop_loss': (0.005, 0.20)},
+    'trail': {'trailing_k': (0.02, 0.60), 'trailing_floor': (0.002, 0.06)},
+    'pv': {'pv_thr': (-0.03, 0.03), 'pv_mult': (1.2, 8.0)},
+    'funding': {'funding_stop': (0.0001, 0.02)},
+    'geom': {'band': (0.75, 10.0), 'count_min': (2, 60)},
+    'spacing': {'spacing_max': (0.005, 0.20)},
+    'gearing': {'gearing': (1.0, 6.0)},
+}
+_INT_DIMS = {'count_min'}
 
-def sweep(cache, universe, families, window_names, *, workers=1, out_dir=None, log=print):
-    """按族扫描 → 每族一份 CSV（arm × window × 指标）。返回 {family: DataFrame}。"""
+
+def _arm_label(family, coord):
+    """扩边臂的标签须与 build_arms 的格式逐字一致（CSV 按 label 合并、去重）。"""
+    fmt = {
+        'stop': lambda c: 'sl=%.3f' % c['stop_loss'],
+        'trail': lambda c: 'k=%.2f,fl=%.3f' % (c['trailing_k'], c['trailing_floor']),
+        'funding': lambda c: 'fr=%.4f' % c['funding_stop'],
+        'geom': lambda c: 'band=%s,cmin=%d' % (_num(c['band']), int(c['count_min'])),
+        'spacing': lambda c: 'sp_max=%.2f' % c['spacing_max'],
+        'gearing': lambda c: 'gearing=%.1f' % c['gearing'],
+    }
+    if family == 'pv':                       # pv 标签依覆盖项而定（与 build_arms 同形）
+        has_thr = 'pv_thr' in coord
+        has_mult = 'pv_mult' in coord
+        if has_thr and has_mult:
+            return 'thr=%.4f,mult=%s' % (coord['pv_thr'], _num(coord['pv_mult']))
+        if has_thr:
+            return 'thr=%.4f' % coord['pv_thr']
+        return 'mult=%s' % _num(coord['pv_mult'])
+    return fmt[family](coord)
+
+
+def _num(v):
+    """2 与 2.0 须同形（标签唯一性 = 合并去重的键）。"""
+    f = float(v)
+    return int(f) if f == int(f) else f
+
+
+_LABEL_KEYS = {           # label 里的键 → baseline 维名（解析用；须与 _arm_label 同源）
+    'sl': 'stop_loss', 'k': 'trailing_k', 'fl': 'trailing_floor',
+    'thr': 'pv_thr', 'mult': 'pv_mult', 'fr': 'funding_stop',
+    'band': 'band', 'cmin': 'count_min', 'sp_max': 'spacing_max', 'gearing': 'gearing',
+}
+
+
+def parse_coord(family, label):
+    """臂标签 → 数值坐标（无坐标的 OFF/模式臂返回 None）。
+
+    从**标签**解析而非从 build_arms 查表：扩边新增的臂不在初始网格里，而扫参会分多次调用
+    （逐窗跑 / 断点续跑），必须能从 CSV 里的历史行重建坐标——否则第二轮扩边会看不见第一轮
+    加的点、把同一批点反复外推。
+    """
+    dims = DIM_LIMITS[family]
+    if label.startswith('BASE'):
+        return {d: baseline()[d] for d in dims}
+    if 'OFF' in label:
+        return None
+    coord = {d: baseline()[d] for d in dims}
+    for part in label.split(','):
+        if '=' not in part:
+            return None
+        k, v = part.split('=', 1)
+        dim = _LABEL_KEYS.get(k.strip())
+        if dim is None or dim not in dims:
+            return None
+        try:
+            coord[dim] = int(v) if dim in _INT_DIMS else float(v)
+        except ValueError:
+            return None
+    return coord
+
+
+def arm_coords(family, labels):
+    """{label: coord}——只保留能解析出数值坐标的臂（OFF 类臂被排除在边界判定之外）。"""
+    out = {}
+    for lb in labels:
+        c = parse_coord(family, lb)
+        if c is not None:
+            out[lb] = c
+    return out
+
+
+def rank_arms(df, *, windows=None, complete_only=False):
+    """按用户定的判定标准排序（spec §2）：主序 Calmar，并列键 worst-window Calmar；
+    破网/爆仓 → 直接淘汰（否决线）。返回按优劣降序的 DataFrame（一行一臂）。
+
+    complete_only=True：**只排「在全部判定窗都有结果」的臂**——16G 机器上扫参是逐窗分次跑的，
+    新加的臂在跑完最后一窗前只有部分窗口的行；若让它们参与排序，同一轮扩边的 4 次调用会
+    因 CSV 增长而给出不同判定（跨窗不一致）。扩边判定恒用此模式。"""
+    d = df if windows is None else df[df['window'].isin(windows)]
+    if d.empty:
+        return d
+    agg = d.groupby('arm').agg(
+        n_windows=('window', 'nunique'),
+        calmar_mean=('calmar', 'mean'), calmar_worst=('calmar', 'min'),
+        ret_mean=('ret', 'mean'), ret_worst=('ret', 'min'),
+        mdd_worst=('mdd', 'max'), n_broke=('n_broke', 'sum'), n_blown=('n_blown', 'sum'),
+    ).reset_index()
+    if complete_only:
+        need = d['window'].nunique()
+        agg = agg[agg['n_windows'] == need]
+    agg['vetoed'] = (agg['n_broke'] > 0) | (agg['n_blown'] > 0)   # 否决线
+    return agg.sort_values(['vetoed', 'calmar_worst', 'calmar_mean'],
+                           ascending=[True, False, False]).reset_index(drop=True)
+
+
+def expand_arms(family, df, *, n_new=3, windows=None):
+    """最优臂若落在某维网格**边界**上 → 沿该方向外推 n_new 个新点（步长=该维最外侧两点
+    的间距，撞硬限即截断）。返回 (新臂列表, 说明)。最优在内部 → 返回 ([], 原因)。
+
+    多维族（trail/pv/geom）逐维独立判定：某维在边界就沿该维外推，其余维固定在赢家坐标上。
+    """
+    dims = DIM_LIMITS[family]
+    coords = arm_coords(family, sorted(set(df['arm'])))         # 含历轮扩边点（从 CSV 重建）
+    ranked = rank_arms(df, windows=windows, complete_only=True)  # 只认全窗跑完的臂
+    ranked = ranked[~ranked['vetoed']]
+    winners = [a for a in ranked['arm'] if a in coords]        # 跳过 OFF 类臂（无坐标）
+    if not winners:
+        return [], '无有效数值臂（全被否决或仅 OFF 臂）'
+    win = coords[winners[0]]
+    new_arms, notes = [], []
+    seen = {tuple(sorted(c.items())) for c in coords.values()}   # 含历轮已跑点，防重复
+    for dim, (lo_lim, hi_lim) in dims.items():
+        tested = sorted({c[dim] for c in coords.values()})
+        if len(tested) < 2:
+            continue
+        v = win[dim]
+        at_lo, at_hi = (v <= tested[0] + 1e-12), (v >= tested[-1] - 1e-12)
+        if not (at_lo or at_hi):
+            continue
+        if at_lo:
+            step = tested[1] - tested[0]
+            cand = [tested[0] - step * (i + 1) for i in range(n_new)]
+            cand = [c for c in cand if c >= lo_lim - 1e-12]
+            edge = '下界 %s' % _num(tested[0])
+        else:
+            step = tested[-1] - tested[-2]
+            cand = [tested[-1] + step * (i + 1) for i in range(n_new)]
+            cand = [c for c in cand if c <= hi_lim + 1e-12]
+            edge = '上界 %s' % _num(tested[-1])
+        if not cand:
+            notes.append('%s 赢家在%s但已撞硬限 %s' % (dim, edge, (lo_lim, hi_lim)))
+            continue
+        for c in cand:
+            c = int(round(c)) if dim in _INT_DIMS else round(float(c), 6)
+            coord = dict(win, **{dim: c})
+            key = tuple(sorted(coord.items()))
+            if key in seen:
+                continue
+            seen.add(key)
+            ov = {k: val for k, val in coord.items() if val != baseline()[k]}
+            if not ov:
+                continue
+            new_arms.append(Arm(family, _arm_label(family, ov), ov))
+        notes.append('%s 赢家在%s → 外推 %s' % (dim, edge, [_num(c) for c in cand]))
+    if not new_arms:
+        notes.append('最优在网格内部（或已撞硬限）→ 无需扩边')
+    return new_arms, '; '.join(notes)
+
+
+def _run_arms(wd, arms, fam, pv_cache, *, workers, log):
+    """在一个窗上跑一批臂 → rows。"""
     import time
+    rows = []
+    for arm in arms:
+        t0 = time.time()
+        df = run_arm(wd, arm, pv_cache, workers=workers)
+        m = metrics(df, wd.days)
+        rows.append(dict(family=fam, window=wd.name, arm=arm.label,
+                         is_base=arm.is_baseline(), **m))
+        log('[sweep] %-7s %-6s %-20s ret=%+.2f%% mdd=-%.2f%% calmar=%.1f (%.0fs)'
+            % (fam, wd.name, arm.label, m['ret'] * 100, m['mdd'] * 100,
+               m['calmar'], time.time() - t0))
+    return rows
+
+
+def read_results(out_dir, family):
+    path = os.path.join(out_dir, '%s_results.csv' % family)
+    return pd.read_csv(path) if os.path.exists(path) else pd.DataFrame()
+
+
+def sweep(cache, universe, families, window_names, *, workers=1, out_dir=None,
+          mode='base', log=print):
+    """按族扫描 → 每族一份 CSV（arm × window × 指标）。返回 {family: DataFrame}。
+
+    mode='base'   跑 build_arms 的初始网格（Pass 1）。
+    mode='expand' **边界自动扩展**（用户定 2026-07-15）：从已有 CSV 判定——最优臂若落在某维
+                  网格边界上（= 网格没铺够、真最优还在外面），沿该方向外推新点再跑；最优落
+                  在内部或撞上 DIM_LIMITS 硬限则本族跳过。
+
+    16G 机器上一次只能驻留一个窗口的 1m 序列 → 扫参是**逐窗分次调用**的；因此扩边的「轮」
+    由外层 shell 驱动（每轮把 4 个窗各跑一次），判定用 complete_only（只认全窗跑完的臂），
+    保证同一轮的 4 次调用给出一致的扩边集合。
+    """
     out = {}
     preloaded = {}
+
+    def _wd(wname):
+        if wname not in preloaded:
+            ws, we = (WINDOWS.get(wname) or HOLDOUT[wname])
+            preloaded[wname] = preload_window(cache, universe, wname, ws, we,
+                                              workers=workers, log=log)
+        return preloaded[wname]
+
     for fam in families:
-        arms = build_arms(fam)
+        if mode == 'base':
+            arms = build_arms(fam)
+        else:
+            hist = read_results(out_dir, fam)
+            if hist.empty:
+                log('[sweep] %s 无历史结果，跳过扩边（先跑 --mode base）' % fam)
+                continue
+            judge = sorted(set(hist['window']))
+            arms, note = expand_arms(fam, hist, windows=judge)
+            log('[sweep] %s 扩边判定(依据窗口 %s): %s' % (fam, ','.join(judge), note))
+            if not arms:
+                continue
         rows = []
         for wname in window_names:
-            ws, we = (WINDOWS.get(wname) or HOLDOUT[wname])
-            if wname not in preloaded:
-                preloaded[wname] = preload_window(cache, universe, wname, ws, we,
-                                                  workers=workers, log=log)
-            wd = preloaded[wname]
-            pv_cache = {}
-            for arm in arms:
-                t0 = time.time()
-                df = run_arm(wd, arm, pv_cache, workers=workers)
-                m = metrics(df, wd.days)
-                rows.append(dict(family=fam, window=wname, arm=arm.label,
-                                 is_base=arm.is_baseline(), **m))
-                log('[sweep] %-7s %-4s %-18s ret=%+.2f%% mdd=-%.2f%% calmar=%.1f (%.0fs)'
-                    % (fam, wname, arm.label, m['ret'] * 100, m['mdd'] * 100,
-                       m['calmar'], time.time() - t0))
-        out[fam] = pd.DataFrame(rows)
-        if out_dir:
-            out[fam] = _merge_csv(out_dir, fam, out[fam])
+            rows += _run_arms(_wd(wname), arms, fam, {}, workers=workers, log=log)
+        df = pd.DataFrame(rows)
+        out[fam] = _merge_csv(out_dir, fam, df) if out_dir else df
     return out
 
 

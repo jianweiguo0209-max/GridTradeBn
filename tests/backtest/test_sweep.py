@@ -142,3 +142,93 @@ def test_merge_csv_accumulates_across_windows(tmp_path):
     out = SW._merge_csv(d, 'stop', c)
     assert len(out) == 2 and float(out[(out['window'] == 'OOS')]['ret'].iloc[0]) == 0.99, \
         '同 (window,arm) 重跑须覆盖旧行'
+
+
+# ---- 边界自动扩展（用户定 2026-07-15：最优在边界=网格没铺够，真最优还在外面）----
+
+def _res(family, rows):
+    """rows: [(arm, calmar, ret)] → 单窗结果 df（扩边判定用）。"""
+    return pd.DataFrame([{'family': family, 'window': 'OOS', 'arm': a, 'calmar': c,
+                          'ret': r, 'mdd': 0.02, 'n_broke': 0, 'n_blown': 0}
+                         for a, c, r in rows])
+
+
+@pytest.mark.parametrize('family', SW.FAMILIES)
+def test_parse_coord_roundtrips_every_arm_label(family):
+    """每个数值臂的 label 须能解析回它自己的坐标——扩边靠它从 CSV 重建历轮点。"""
+    base = SW.baseline()
+    for arm in SW.build_arms(family):
+        c = SW.parse_coord(family, arm.label)
+        if 'OFF' in arm.label:
+            assert c is None
+            continue
+        assert c is not None, '%s 的 label 解析失败: %s' % (family, arm.label)
+        for dim in SW.DIM_LIMITS[family]:
+            expected = arm.overrides.get(dim, base[dim])
+            assert abs(float(c[dim]) - float(expected)) < 1e-9, arm.label
+
+
+def test_expand_extends_below_when_winner_at_lower_edge():
+    """stop 赢家在下界 0.030 → 沿下方外推（步长=最外两点间距 0.005）。"""
+    df = _res('stop', [('BASE(现值)', 20.0, 0.05), ('sl=0.030', 41.8, 0.067),
+                       ('sl=0.035', 39.6, 0.070), ('sl=0.040', 27.7, 0.060),
+                       ('sl=0.055', 21.2, 0.050), ('sl=0.080', 11.1, 0.033)])
+    arms, note = SW.expand_arms('stop', df, n_new=3)
+    got = sorted(round(a.overrides['stop_loss'], 4) for a in arms)
+    assert got == [0.015, 0.020, 0.025], got
+    assert '下界' in note
+
+
+def test_expand_stops_when_winner_interior():
+    df = _res('stop', [('sl=0.030', 10.0, 0.02), ('sl=0.035', 41.8, 0.07),
+                       ('sl=0.040', 12.0, 0.03)])
+    arms, note = SW.expand_arms('stop', df, n_new=3)
+    assert arms == [] and '内部' in note
+
+
+def test_expand_respects_hard_limit():
+    """撞硬限即截断（stop 下限 0.005）——不会外推出无意义/危险的值。"""
+    df = _res('stop', [('sl=0.010', 50.0, 0.08), ('sl=0.015', 40.0, 0.07)])
+    arms, _ = SW.expand_arms('stop', df, n_new=3)
+    vals = [a.overrides['stop_loss'] for a in arms]
+    assert vals and all(v >= SW.DIM_LIMITS['stop']['stop_loss'][0] - 1e-9 for v in vals), vals
+
+
+def test_expand_second_round_sees_first_round_points():
+    """第二轮须从 CSV 重建历轮点（否则会把同一批点反复外推）。"""
+    df = _res('stop', [('sl=0.030', 41.8, 0.067), ('sl=0.035', 39.6, 0.070),
+                       ('sl=0.025', 45.0, 0.072), ('sl=0.020', 48.0, 0.075),
+                       ('sl=0.015', 52.0, 0.080)])      # 赢家 0.015 = 新下界
+    arms, note = SW.expand_arms('stop', df, n_new=2)
+    vals = sorted(a.overrides['stop_loss'] for a in arms)
+    assert vals == [0.005, 0.010], vals      # 从 0.015 继续下推，撞硬限 0.005 截断
+
+
+def test_expand_vetoes_blown_arms():
+    """破网/爆仓臂不得成为扩边赢家（否决线）。"""
+    df = pd.DataFrame([
+        {'family': 'gearing', 'window': 'OOS', 'arm': 'gearing=4.4', 'calmar': 99.0,
+         'ret': 0.2, 'mdd': 0.05, 'n_broke': 0, 'n_blown': 7},      # 爆仓 → 否决
+        {'family': 'gearing', 'window': 'OOS', 'arm': 'gearing=2.9', 'calmar': 30.0,
+         'ret': 0.1, 'mdd': 0.02, 'n_broke': 0, 'n_blown': 0},
+        {'family': 'gearing', 'window': 'OOS', 'arm': 'BASE(现值)', 'calmar': 20.0,
+         'ret': 0.08, 'mdd': 0.02, 'n_broke': 0, 'n_blown': 0},
+    ])
+    ranked = SW.rank_arms(df)
+    assert bool(ranked[ranked['arm'] == 'gearing=4.4']['vetoed'].iloc[0])
+    assert ranked.iloc[0]['arm'] == 'gearing=2.9', '爆仓臂不得排第一'
+
+
+def test_rank_complete_only_excludes_partially_run_arms():
+    """逐窗分次跑时，新臂在跑完最后一窗前不得参与排序——否则同一轮扩边的 4 次调用
+    会因 CSV 增长而给出不同判定（跨窗不一致）。"""
+    rows = []
+    for w in ('OOS', 'W1'):
+        rows.append({'family': 'stop', 'window': w, 'arm': 'sl=0.030', 'calmar': 40.0,
+                     'ret': 0.06, 'mdd': 0.02, 'n_broke': 0, 'n_blown': 0})
+    rows.append({'family': 'stop', 'window': 'OOS', 'arm': 'sl=0.020', 'calmar': 99.0,
+                 'ret': 0.09, 'mdd': 0.01, 'n_broke': 0, 'n_blown': 0})   # 只跑了一窗
+    df = pd.DataFrame(rows)
+    ranked = SW.rank_arms(df, complete_only=True)
+    assert list(ranked['arm']) == ['sl=0.030'], '半跑完的臂须被排除'
+    assert 'sl=0.020' in set(SW.rank_arms(df)['arm']), 'complete_only=False 时不过滤'

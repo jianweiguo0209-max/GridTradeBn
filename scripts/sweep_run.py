@@ -29,6 +29,9 @@ def main(argv=None):
                     help='逗号分隔窗口名（调参窗 %s / 留出窗 %s）'
                          % (','.join(SW.WINDOWS), ','.join(SW.HOLDOUT)))
     ap.add_argument('--out', default=None, help='CSV 输出目录（默认 <repo>/data/sweep）')
+    ap.add_argument('--mode', choices=('base', 'expand'), default='base',
+                    help='base=跑初始网格；expand=从已有 CSV 判定边界并外推新点'
+                         '（最优在边界=网格没铺够；一轮=对每个窗各调用一次）')
     args = ap.parse_args(argv)
 
     families = SW.FAMILIES if args.family == 'all' else tuple(
@@ -52,16 +55,13 @@ def main(argv=None):
           % (','.join(families), ','.join(wnames), workers, len(universe)), flush=True)
     print('[sweep] 基线(实盘现值): %s' % SW.baseline(), flush=True)
     t0 = time.time()
-    res = SW.sweep(cache, universe, families, wnames, workers=workers, out_dir=out_dir)
+    res = SW.sweep(cache, universe, families, wnames, workers=workers, out_dir=out_dir,
+                   mode=args.mode)
     print('[sweep] done %.0fs → %s' % (time.time() - t0, os.path.abspath(out_dir)), flush=True)
     for fam, df in res.items():
-        print('\n===== %s =====' % fam, flush=True)
-        piv = df.pivot_table(index='arm', columns='window', values='calmar')
-        piv['mean_ret'] = df.pivot_table(index='arm', columns='window',
-                                         values='ret').mean(axis=1)
-        piv['worst_calmar'] = df.pivot_table(index='arm', columns='window',
-                                             values='calmar').min(axis=1)
-        print(piv.sort_values('worst_calmar', ascending=False).to_string(), flush=True)
+        print('\n===== %s（Calmar 主序，worst-window 并列键；vetoed=破网/爆仓）=====' % fam,
+              flush=True)
+        print(SW.rank_arms(df).to_string(index=False), flush=True)
     return 0
 
 
