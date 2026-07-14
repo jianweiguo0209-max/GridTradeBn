@@ -1,12 +1,12 @@
 """testnet 运行状态只读快照。
 
 设计为在 fly app 机器内执行（经 `fly ssh console -C python` 注入），复用机器上的
-DATABASE_URL + HL 凭证 env。不修改任何状态，只查询并打印：
+DATABASE_URL + 币安凭证 env。不修改任何状态，只查询并打印：
   - 心跳新鲜度（monitor ~5s / scheduler 整点）
   - 控制标志（trading_halted / scheduler_paused）
   - 活跃网格 + 每格挂单状态分布
   - 最近控制指令
-  - HL testnet 实时余额（equity / cash）
+  - 币安 testnet 实时余额（equity / cash）
 每个区块独立 try/except，单点失败不影响其余快照。
 """
 import os
@@ -115,8 +115,8 @@ def main():
             except Exception as exc:
                 print('  failed: %r' % exc)
 
-    # HL 实时余额（一次真实 API 调用）
-    print('-- live balance (HL testnet) --')
+    # 币安实时余额（一次真实 API 调用）
+    print('-- live balance (Binance testnet) --')
     try:
         from gridtrade.config import load_deploy_config
         from gridtrade.exchanges.registry import build_adapter

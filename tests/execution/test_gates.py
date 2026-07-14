@@ -287,7 +287,7 @@ def test_min_notional_gate_allows_sparse_grid():
 
 
 def test_min_notional_gate_disabled_when_zero():
-    # min_notional<=0 = 停用（默认，向后兼容：OKX 等无此约束的所不受影响）
+    # min_notional<=0 = 停用（默认，向后兼容：无此约束的交易所不受影响）
     from gridtrade.execution.gates import MinNotionalGate
     gate = MinNotionalGate(_SizerStub(), min_notional=0.0)
     p = _proposal(grid_params={'low_price': 1.0, 'high_price': 1.5, 'grid_count': 149,

@@ -49,7 +49,7 @@ def test_prewarm_ohlcv_skips_bad_coin(tmp_path):
     class _BadOne(FakeExchange):
         def fetch_ohlcv(self, symbol, timeframe, start_ms, end_ms):
             if symbol == 'BAD/USDT:USDT':
-                raise ValueError('hyperliquid does not have market symbol BAD')
+                raise ValueError('binance does not have market symbol BAD')
             return super().fetch_ohlcv(symbol, timeframe, start_ms, end_ms)
 
     ex = _BadOne(instruments=[Instrument(s, 0.1, 0.001, 0.001, 'live', 0) for s in syms])

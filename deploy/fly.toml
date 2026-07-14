@@ -1,5 +1,5 @@
-# Fly.io 部署配置 —— GridTradeGP（Hyperliquid）。
-# 区域 nrt（东京）：HL 验证节点在 AWS ap-northeast-1，nrt 同城最近。
+# Fly.io 部署配置 —— GridTradeBi（Binance USDT-M testnet）。
+# 区域 nrt（东京）：币安 API 亚太直连无地域封锁。
 #
 # 两个常驻角色（各一台机器，同一镜像；fly deploy 一键同时更新）：
 #   - monitor：~5s 循环（对账补单 + 记账 + 止盈止损 + 重启自愈）。
@@ -21,10 +21,10 @@ primary_region = "nrt"
 [deploy]
   release_command = "python -m gridtrade.runtime.dbadmin migrate"
 
-# 非敏感默认配置（敏感项走 `fly secrets set`：HL_WALLET_ADDRESS / HL_PRIVATE_KEY / DATABASE_URL）
+# 非敏感默认配置（敏感项走 `fly secrets set`：BINANCE_API_KEY / BINANCE_API_SECRET / DATABASE_URL）
 [env]
-  EXCHANGE = "hyperliquid"
-  HL_TESTNET = "true"          # 先 testnet 跑通；切 mainnet 时置 "false"
+  EXCHANGE = "binance"
+  BINANCE_TESTNET = "true"     # 先 testnet 跑通；切 mainnet 时置 "false"
   MONITOR_INTERVAL_SEC = "5"
   SCHEDULER_PERIOD = "12H"
   MAX_CONCURRENT = "12"
@@ -35,7 +35,7 @@ primary_region = "nrt"
   SHOCK_THR = "0.025"
   SHOCK_K_HOURS = "4"
   SHOCK_PAUSE_HOURS = "2"
-  MIN_ORDER_NOTIONAL = "10"    # 开仓预检：单笔名义额 ≥ HL 最小下单额（testnet 同 mainnet 口径）
+  MIN_ORDER_NOTIONAL = "5"     # 开仓预检全局下限，与按币 MIN_NOTIONAL 取 max（spec 2026-07-14 §5.3，testnet 同 mainnet 口径）
   SCHEDULER_RUN_ON_START = "true"   # testnet 调试：scheduler 启动即跑一次；稳定后置 "false"
   # 档0 硬禁名单单源在 gridtrade/config.py DEFAULT_TIER_POLICY.tier0（与 mainnet 同口径）；
   # env 仅作紧急覆盖。手动 OPEN_GRID 指令不经票池、不受此限（testnet 实验自由度保留）。

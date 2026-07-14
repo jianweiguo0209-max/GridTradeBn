@@ -1,4 +1,4 @@
-# Fly.io 部署配置 —— GridTradeGP Mainnet 生产环境（Hyperliquid mainnet）。
+# Fly.io 部署配置 —— GridTradeBi Mainnet 生产环境（Binance USDT-M mainnet）。
 # 与 testnet deploy/fly.toml 共用同一镜像与全部业务代码；差异见
 # docs/superpowers/specs/2026-07-03-mainnet-production-environment-design.md。
 # 独立 app（gridtrade-prod）+ 独立 Postgres（gridtrade-pg-prod），与 testnet 完全隔离。
@@ -15,11 +15,11 @@ primary_region = "nrt"
 [deploy]
   release_command = "sh -c 'python -m gridtrade.runtime.dbadmin create && python -m gridtrade.runtime.dbadmin migrate'"
 
-# 非敏感默认配置（敏感项走 `fly secrets set`：HL_WALLET_ADDRESS / HL_PRIVATE_KEY /
+# 非敏感默认配置（敏感项走 `fly secrets set`：BINANCE_API_KEY / BINANCE_API_SECRET /
 # DATABASE_URL（attach 已设）/ DASHBOARD_*）。
 [env]
-  EXCHANGE = "hyperliquid"
-  HL_TESTNET = "false"              # ← mainnet，真金白银
+  EXCHANGE = "binance"
+  BINANCE_TESTNET = "false"          # ← mainnet，真金白银
   MONITOR_INTERVAL_SEC = "5"
   MONITOR_PARALLEL = "4"            # per-grid 并行监控（2026-07-06 快照版验证后回 4：读路径 AccountSnapshot 化，权重与格数/并发解耦、429 根因已除；1=串行保底）
   SCHEDULER_PERIOD = "12H"
@@ -38,7 +38,7 @@ primary_region = "nrt"
   # 再由 select_grid_coin 做 55% 相对成交额过滤 + 因子排名选出当轮开仓币种。设计见
   # docs/superpowers/specs/2026-07-04-candidate-universe-port-design.md。
   MIN_QUOTE_VOLUME_24H = "1000000"
-  MIN_ORDER_NOTIONAL = "10"         # 开仓预检：单笔挂单名义额 ≥ HL 最小下单额（密网币直接门链拒，不留死 OPENING）  # 全市场动态币池 $1M 绝对 24h 成交额地板（代码默认 0.0，仅 prod 生效）
+  MIN_ORDER_NOTIONAL = "5"          # 开仓预检全局下限，与按币 MIN_NOTIONAL 取 max（spec 2026-07-14 §5.3，密网币直接门链拒，不留死 OPENING）  # 全市场动态币池 $1M 绝对 24h 成交额地板（代码默认 0.0，仅 prod 生效）
   # 档0 硬禁名单单源在 gridtrade/config.py DEFAULT_TIER_POLICY.tier0（legacy 移植 9 币，
   # spec 2026-07-06-tiered-*）；此处 env 仅作运维紧急覆盖（非空才生效），名单变更走代码
   # commit 两侧（实盘/回测）原子同步。已持有的被禁币不强平，随 12H 换仓自然退出。
