@@ -16,7 +16,8 @@ def compute_proposals(runtime, *, now_fn=time.time, fetch_candles=None):
     fetch = fetch_candles or fetch_universe_candles
     run_time = pd.Timestamp(now_fn(), unit='s').floor('H')
     universe = resolve_live_universe(rt.adapter, rt.config.blacklist,
-                                     rt.config.whitelist, rt.config.min_quote_volume_24h)
+                                     rt.config.whitelist, rt.config.min_quote_volume_24h,
+                                     top_volume_pct=rt.config.universe_top_volume_pct)
     # 方案A 同口径（经共享 tier_policy，spec 同源性②）：触顶币剔出预览票池（预览语境
     # 无"正在关"的换仓 tag，故不设豁免），预览结果与此刻真正能开的集合一致。
     # manager 缺失（纯只读 runtime）时跳过。

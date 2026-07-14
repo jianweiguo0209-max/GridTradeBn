@@ -71,7 +71,8 @@ class DeployConfig:
     cap_equity_frac: float = 0.10   # 推导值 = derive_frac(account_leverage, max_concurrent, gearing)；>0 → cap=clamp(equity×frac,min,max)
     cap_min: float = 20.0
     cap_max: float = 100000.0
-    min_quote_volume_24h: float = 0.0   # >0 → 24h 成交额绝对地板（0=停用）；生产由 fly.prod.toml 设 $1M
+    min_quote_volume_24h: float = 0.0   # >0 → 24h 成交额绝对地板（0=停用）；与相对口径可叠加（先地板后相对）
+    universe_top_volume_pct: float = 0.0  # >0 → 票池按 24h 成交额取前 ceil(pct×N)（相对口径，spec 2026-07-14-universe-top-volume-pct）；生产设 0.55
     min_order_notional: float = 0.0     # >0 → 开仓预检单笔名义额下限（币安按币 5/20/50，与 Instrument.min_cost 取 max）；0=停用
     scheduler_fetch_pace_ms: float = 2000.0   # 选币取数币间间隔（HL 权重制推导，见 scheduler.py）；0=关
     monitor_parallel: int = 4           # monitor per-grid 并行 worker 数；1=退回全串行（保底开关）
@@ -142,6 +143,7 @@ def load_deploy_config(env=None) -> DeployConfig:
         cap_min=_f(env, 'CAP_MIN', 20.0),
         cap_max=_f(env, 'CAP_MAX', 100000.0),
         min_quote_volume_24h=_f(env, 'MIN_QUOTE_VOLUME_24H', 0.0),
+        universe_top_volume_pct=_f(env, 'UNIVERSE_TOP_VOLUME_PCT', 0.0),
         min_order_notional=_f(env, 'MIN_ORDER_NOTIONAL', 0.0),
         scheduler_fetch_pace_ms=_f(env, 'SCHEDULER_FETCH_PACE_MS', 2000.0),
         monitor_parallel=_i(env, 'MONITOR_PARALLEL', 4),

@@ -38,7 +38,8 @@ def _fingerprint(cache, universe, timeframe, lo_day, hi_day):
 
 
 def compute_key(cache, universe, window_start, window_end, timeframe,
-                min_quote_volume, blacklist, strategy_config, factors):
+                min_quote_volume, blacklist, strategy_config, factors,
+                top_volume_pct=0.0):
     """返回 (key_hex16, params_dict)。params 含窗口范围内数据指纹，改变相关天时自动换 key；
     追加 window_end 之后的近期天不换 key。"""
     lo_day, hi_day = _window_day_bounds(window_start, window_end, timeframe,
@@ -51,6 +52,7 @@ def compute_key(cache, universe, window_start, window_end, timeframe,
         'universe': sorted(universe),
         'blacklist': sorted(blacklist),
         'min_quote_volume': float(min_quote_volume),
+        'top_volume_pct': float(top_volume_pct),   # 相对口径入 key：不同 pct 不串缓存
         'period': strategy_config['period'],
         'weight_list': list(strategy_config['weight_list']),
         'choose_symbols': strategy_config['choose_symbols'],

@@ -120,3 +120,33 @@ def test_replay_selection_parallel_matches_serial(tmp_path):
     par = collect(3)
     assert len(serial) > 0
     assert serial == par                 # 逐条完全一致
+
+
+def test_pit_top_volume_pct_cross_symbol():
+    # PIT 相对口径：每 run_time 跨币按 24h 量排名取前 ceil(pct×N)（spec 2026-07-14）
+    from gridtrade.backtest.selection_replay import build_pit_candidates
+    idx = pd.date_range('2026-01-01', periods=30, freq='1H')
+    def mk(qv):
+        return pd.DataFrame({'candle_begin_time': idx, 'open': 1.0, 'high': 1.0,
+                             'low': 1.0, 'close': 1.0, 'vol': 1.0, 'volCcy': 1.0,
+                             'quote_volume': float(qv)})
+    series = {'A/USDT:USDT': mk(300.0), 'B/USDT:USDT': mk(200.0),
+              'C/USDT:USDT': mk(100.0)}
+    rt = pd.Timestamp('2026-01-02 06:00:00')
+    out = build_pit_candidates(series, rt, max_candle_num=160, top_volume_pct=0.55)
+    assert sorted(out) == ['A/USDT:USDT', 'B/USDT:USDT']   # ceil(0.55×3)=2
+
+
+def test_pit_top_volume_pct_zero_keeps_all():
+    # pct=0 恒等现状（基线可比）
+    from gridtrade.backtest.selection_replay import build_pit_candidates
+    idx = pd.date_range('2026-01-01', periods=30, freq='1H')
+    def mk(qv):
+        return pd.DataFrame({'candle_begin_time': idx, 'open': 1.0, 'high': 1.0,
+                             'low': 1.0, 'close': 1.0, 'vol': 1.0, 'volCcy': 1.0,
+                             'quote_volume': float(qv)})
+    series = {'A/USDT:USDT': mk(300.0), 'B/USDT:USDT': mk(200.0),
+              'C/USDT:USDT': mk(100.0)}
+    rt = pd.Timestamp('2026-01-02 06:00:00')
+    out = build_pit_candidates(series, rt, max_candle_num=160)
+    assert len(out) == 3

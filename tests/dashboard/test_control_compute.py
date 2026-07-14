@@ -18,7 +18,8 @@ class _RT:
         self.adapter = object()
         self.config = type('C', (), {'exchange': 'fake', 'blacklist': (), 'whitelist': (),
                                      'scheduler_period': '12H',
-                                     'min_quote_volume_24h': 1000000.0})()
+                                     'min_quote_volume_24h': 1000000.0,
+                                     'universe_top_volume_pct': 0.55})()
 
 
 def _fake_fetch(adapter, universe, run_time, **kw): return {}
@@ -37,13 +38,15 @@ def test_compute_proposals_flattens(monkeypatch):
 
 
 def test_compute_proposals_forwards_min_quote_volume_floor(monkeypatch):
-    # Fix1 回归：dashboard 调用 resolve_live_universe 须转发成交额地板（第4参），
-    # 否则生产下 dashboard 选币会用未设地板的 universe（scheduler.py 已正确转发）。
+    # Fix1 回归：dashboard 调用 resolve_live_universe 须转发成交额过滤（地板+相对口径），
+    # 否则生产下 dashboard 选币会用未过滤的 universe（scheduler.py 已正确转发）。
     import gridtrade.dashboard.control_compute as m
     captured = {}
 
-    def _fake_resolve(adapter, blacklist, whitelist, min_quote_volume_24h=0.0):
+    def _fake_resolve(adapter, blacklist, whitelist, min_quote_volume_24h=0.0,
+                      top_volume_pct=0.0):
         captured['min_quote_volume_24h'] = min_quote_volume_24h
+        captured['top_volume_pct'] = top_volume_pct
         return ['BTC/USDT:USDT']
 
     monkeypatch.setattr(m, 'resolve_live_universe', _fake_resolve)
@@ -52,6 +55,7 @@ def test_compute_proposals_forwards_min_quote_volume_floor(monkeypatch):
                                           'stop_high_price': 120.0})])
     compute_proposals(rt, now_fn=lambda: 0.0, fetch_candles=_fake_fetch)
     assert captured['min_quote_volume_24h'] == rt.config.min_quote_volume_24h == 1000000.0
+    assert captured['top_volume_pct'] == rt.config.universe_top_volume_pct == 0.55
 
 
 def test_defaults_for_symbol_filters(monkeypatch):

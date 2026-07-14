@@ -71,7 +71,8 @@ def run_scheduler_once(runtime, *, now_fn=time.time,
     offset = compute_offset(run_time, period)
     tag = '%s%d' % (DEFAULT_STRATEGY_CONFIG['strategy_tag'], offset)
     universe = resolve_live_universe(rt.adapter, rt.config.blacklist,
-                                     rt.config.whitelist, rt.config.min_quote_volume_24h)
+                                     rt.config.whitelist, rt.config.min_quote_volume_24h,
+                                     top_volume_pct=rt.config.universe_top_volume_pct)
     # 方案A（legacy 半拉黑档2 执行位对齐）经共享 tier_policy 表达（spec 同源性②，
     # 与回测 allocate_with_tiers 同一判定源）：触顶币在选币入口剔出票池——连 K 线都
     # 不拉，因子排名自动落次优币；否则榜一触顶会在开仓时被 DB 槽位拒、当轮空转

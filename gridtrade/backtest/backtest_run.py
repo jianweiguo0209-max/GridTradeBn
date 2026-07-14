@@ -28,9 +28,11 @@ BT_STRATEGY = {**DEFAULT_STRATEGY_CONFIG,
                              'period': DEFAULT_STOP_CFG['pv_period'], 'n': DEFAULT_STOP_CFG['pv_n']}}
 BT_FACTORS = dict(DEFAULT_STRATEGY_CONFIG['factors'])
 
-# 回测票池口径对齐 prod：全市场动态 −黑名单 −逐 run_time PIT $1M 成交额地板。
+# 回测票池口径对齐 prod：全市场动态 −黑名单 −逐 run_time PIT 24h 成交额**前 55% 相对口径**
+# （spec 2026-07-14-universe-top-volume-pct；绝对地板机制保留可叠加，默认 0=停用）。
 # 票池在 main() 里由 vision.list_archive_symbols 解析全市场（归档含退市，见 main）；此处只放阈值/黑名单常量（可 env 覆写）。
-BT_MIN_QUOTE_VOLUME_24H = float(os.environ.get('BT_MIN_QUOTE_VOLUME_24H', '1000000'))
+BT_MIN_QUOTE_VOLUME_24H = float(os.environ.get('BT_MIN_QUOTE_VOLUME_24H', '0'))
+BT_UNIVERSE_TOP_PCT = float(os.environ.get('BT_UNIVERSE_TOP_PCT', '0.55'))
 BT_BLACKLIST = tuple(s.strip() for s in os.environ.get('BT_BLACKLIST', '').split(',') if s.strip())
 
 
@@ -138,9 +140,10 @@ def _simulate_grid_task(payload):
 
 
 def select_grids(cache, universe, window_start, window_end, strategy_config, factors,
-                 *, timeframe='1h', min_quote_volume=0.0, blacklist=(), workers=1,
-                 candidates_per_rt=1, log=print):
-    """只跑选币回放（1h + PIT 地板 + 黑名单），返回 [(rt, offset, row)]。offline。
+                 *, timeframe='1h', min_quote_volume=0.0, top_volume_pct=0.0,
+                 blacklist=(), workers=1, candidates_per_rt=1, log=print):
+    """只跑选币回放（1h + PIT 成交额过滤(地板/前 pct 相对口径可叠加) + 黑名单），
+    返回 [(rt, offset, row)]。offline。
     结果按选币参数 + 每币缓存天范围数据指纹磁盘缓存（BT_SELECT_CACHE=off 旁路）。
     candidates_per_rt>1：三档递补用 top-K 候选——放宽选币截断为 rank<=K（经
     strategy_config.choose_symbols 覆盖，天然进缓存 key、不同 K 不串）；K=1 逐位恒等现状。"""
@@ -151,7 +154,8 @@ def select_grids(cache, universe, window_start, window_end, strategy_config, fac
     key = params = None
     if use_cache:
         key, params = SC.compute_key(cache, universe, window_start, window_end, timeframe,
-                                     min_quote_volume, blacklist, strategy_config, factors)
+                                     min_quote_volume, blacklist, strategy_config, factors,
+                                     top_volume_pct=top_volume_pct)
         hit = SC.load(cache, key, params)
         if hit is not None:
             log('[BT] select cache HIT %s (picks=%d)' % (key, len(hit)))
@@ -161,6 +165,7 @@ def select_grids(cache, universe, window_start, window_end, strategy_config, fac
     SR.replay_selection(cache, universe, run_times, strategy_config, factors,
                         lambda rt, off, row: grids.append((rt, off, row.copy())),
                         timeframe=timeframe, min_quote_volume=min_quote_volume,
+                        top_volume_pct=top_volume_pct,
                         blacklist=blacklist, workers=workers, log=log)
     log('[BT] picks=%d' % len(grids))
     if use_cache:
@@ -208,10 +213,11 @@ def assemble_grid_tasks(cache, grids, strategy_config, *, sim_timeframe=None,
 
 def build_grid_tasks(cache, universe, window_start, window_end, strategy_config, factors,
                      *, timeframe='1h', sim_timeframe=None, min_quote_volume=0.0,
-                     blacklist=(), workers=1, log=print):
+                     top_volume_pct=0.0, blacklist=(), workers=1, log=print):
     """选币 + 组装（offline 便捷组合，run_backtest/测试用）。两段式预热见 main()。"""
     grids = select_grids(cache, universe, window_start, window_end, strategy_config, factors,
                          timeframe=timeframe, min_quote_volume=min_quote_volume,
+                         top_volume_pct=top_volume_pct,
                          blacklist=blacklist, workers=workers, log=log)
     return assemble_grid_tasks(cache, grids, strategy_config,
                                sim_timeframe=sim_timeframe, timeframe=timeframe, log=log)
@@ -305,10 +311,12 @@ def allocate_with_tiers(ranked_picks, tiers, period='12H'):
 
 def run_backtest(cache, universe, window_start, window_end, strategy_config, factors,
                  *, timeframe='1h', sim_timeframe=None, fee_rate=0.0002, taker_rate=0.0005,
-                 max_rate=0.68, leverage=None, min_quote_volume=0.0, blacklist=(),
-                 workers=1, symbol_lock=False, tiers=None, tier_cand_k=5,
+                 max_rate=0.68, leverage=None, min_quote_volume=0.0, top_volume_pct=0.0,
+                 blacklist=(), workers=1, symbol_lock=False, tiers=None, tier_cand_k=5,
                  shock_brake=None, log=print):
     """timeframe: 选币因子所用 K 线周期（换仓周期粒度，默认 1h）。
+    top_volume_pct: >0 → PIT 票池相对口径（逐 rt 取 24h 量前 ceil(pct×N)，与地板可叠加，
+    shock 篮子同步同口径；spec 2026-07-14-universe-top-volume-pct）；0=停用（基线可比）。
     sim_timeframe: 持仓成交仿真所用 K 线周期（None=沿用 timeframe）。传 '1m' 可解耦——
     选币仍在 1h 上（因子行为不变），持仓在 1m 上跑高保真触网/成交。
     workers: 网格仿真并行进程数（>1 用 ProcessPoolExecutor；结果与串行逐位一致）。
@@ -330,7 +338,8 @@ def run_backtest(cache, universe, window_start, window_end, strategy_config, fac
         from gridtrade.backtest.shock_replay import blocked_rts
         k_h, thr, pause = shock_brake
         shock_blocked = blocked_rts(cache, universe, window_start, window_end, timeframe,
-                                    k_h, thr, pause, min_quote_volume=min_quote_volume)
+                                    k_h, thr, pause, min_quote_volume=min_quote_volume,
+                                    top_volume_pct=top_volume_pct)
         log('[BT] shock_brake(k=%sh thr=%s X=%sh): blocked %d/%d rts'
             % (k_h, thr, pause, len(shock_blocked),
                len(pd.date_range(window_start, window_end, freq='1H'))))
@@ -339,6 +348,7 @@ def run_backtest(cache, universe, window_start, window_end, strategy_config, fac
         picks = select_grids(cache, universe, window_start, window_end, strategy_config,
                              factors, timeframe=timeframe,
                              min_quote_volume=min_quote_volume,
+                             top_volume_pct=top_volume_pct,
                              blacklist=effective_blacklist(blacklist, tiers),
                              workers=workers, candidates_per_rt=int(tier_cand_k), log=log)
         if shock_blocked is not None:      # 刹车:blocked rt 整轮剔除(该轮空过,不递补,同实盘)
@@ -359,6 +369,7 @@ def run_backtest(cache, universe, window_start, window_end, strategy_config, fac
     tasks = build_grid_tasks(cache, universe, window_start, window_end, strategy_config,
                              factors, timeframe=timeframe,
                              sim_timeframe=sim_timeframe, min_quote_volume=min_quote_volume,
+                             top_volume_pct=top_volume_pct,
                              blacklist=blacklist, workers=workers, log=log)
     if shock_blocked is not None:          # 刹车:blocked rt 的任务剔除(只影响开格)
         tasks = [t for t in tasks if t[0] not in shock_blocked]
@@ -512,7 +523,8 @@ def main(argv=None):
     print('[BT] 1h 尾补@API: %s'
           % PW.prewarm_ohlcv(_ds1h, universe, _ms(warm_start), _ms(win_end)))
 
-    # 选币(1h + PIT $1M 地板 + 黑名单)——一次；权重/方向可经 BT_WEIGHTS/BT_SGCZ_DESC 覆盖
+    # 选币(1h + PIT 前 55% 相对口径(可叠加地板) + 黑名单)——一次；权重/方向可经
+    # BT_WEIGHTS/BT_SGCZ_DESC 覆盖
     _cand_k = int(os.environ.get('BT_TIER_CAND_K', 5)) if tiers is not None else 1
     _sc, _fac = _weights_from_env(BT_STRATEGY, BT_FACTORS)
     if _sc is not BT_STRATEGY or _fac is not BT_FACTORS:
@@ -520,6 +532,7 @@ def main(argv=None):
               % (_sc['weight_list'], _fac.get('Sgcz_5')))
     grids = select_grids(cache, universe, win_start, win_end, _sc, _fac,
                          timeframe='1h', min_quote_volume=BT_MIN_QUOTE_VOLUME_24H,
+                         top_volume_pct=BT_UNIVERSE_TOP_PCT,
                          blacklist=bt_blacklist, workers=workers,
                          candidates_per_rt=_cand_k)
     if tiers is not None:

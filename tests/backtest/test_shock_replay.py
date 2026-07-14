@@ -54,3 +54,21 @@ def test_blocked_index_window_semantics():
     last_fired = med.index[med.abs() >= 0.04][-1]
     assert bool(blk.loc[last_fired + pd.Timedelta(hours=1)])       # X=2 拖尾 1h
     assert not bool(blk.loc[last_fired + pd.Timedelta(hours=2)])   # 过窗恢复
+
+
+def test_top_pct_masks_basket():
+    # 相对口径篮子：pct=0.5 两币取 ceil(1)=1 → 只剩高量币，med=其收益（与票池口径同步，
+    # spec 2026-07-14-universe-top-volume-pct）
+    from gridtrade.backtest.shock_replay import median_signal_series
+    idx = pd.date_range('2024-01-01', periods=40, freq='1H')
+    hi = pd.DataFrame({'candle_begin_time': idx,
+                       'close': [100.0] * 30 + [110.0] * 10,
+                       'quote_volume': 1000.0})
+    lo = pd.DataFrame({'candle_begin_time': idx,
+                       'close': 100.0, 'quote_volume': 10.0})
+    series = {'H/USDT:USDT': hi, 'L/USDT:USDT': lo}
+    t = pd.Timestamp('2024-01-02 07:00:00')   # bar30(110) 收盘后评估点，k=4 → ret=10%
+    med_all = median_signal_series(series, 4)
+    med_top = median_signal_series(series, 4, top_volume_pct=0.5)
+    assert abs(med_all[t] - 0.05) < 1e-9      # 全篮中位([10%, 0]) = 5%
+    assert abs(med_top[t] - 0.10) < 1e-9      # top50% 只剩 H → 10%

@@ -3,6 +3,7 @@
 取最近 max_candle_num 根，与实盘截断口径一致。
 """
 import contextlib
+import math
 import os
 import time
 
@@ -28,26 +29,34 @@ def load_full_series(cache, symbols, timeframe='1h'):
 
 
 def build_pit_candidates(series, run_time, *, max_candle_num,
-                         min_quote_volume=0.0, blacklist=()):
-    """逐 run_time 构造候选 K 线字典：PIT 截断(<run_time) + ≥24 根 + 绝对成交额地板 + 黑名单。
-    绝对地板 = 前置 24 根 1h bar 的 quote_volume 之和（live dayNtlVlm 的缓存重建近似）。"""
+                         min_quote_volume=0.0, top_volume_pct=0.0, blacklist=()):
+    """逐 run_time 构造候选 K 线字典：PIT 截断(<run_time) + ≥24 根 + 成交额过滤 + 黑名单。
+    成交额两口径可叠加（先地板后相对，与 live resolve_live_universe 同语义，spec
+    2026-07-14-universe-top-volume-pct）：24h 量 = 前置 24 根 1h bar 的 quote_volume 之和
+    （live 24h ticker 的缓存重建近似）；相对口径取前 ceil(pct×N)，量并列按 symbol 字典序。"""
     bl = set(blacklist)
-    out = {}
+    eligible = {}                                     # s -> (sub, vol24)
     for s, df in series.items():
         if s in bl:                                   # 档0：无条件硬禁
             continue
         sub = df[df['candle_begin_time'] < run_time]  # PIT，无未来函数
         if len(sub) < 24:
             continue
+        vol24 = float(sub.tail(24)['quote_volume'].sum())
         if min_quote_volume and min_quote_volume > 0:  # PIT 绝对成交额地板
-            if float(sub.tail(24)['quote_volume'].sum()) < min_quote_volume:
+            if vol24 < min_quote_volume:
                 continue
-        out[s] = sub.tail(max_candle_num).copy()
-    return out
+        eligible[s] = (sub, vol24)
+    if top_volume_pct and top_volume_pct > 0 and eligible:  # PIT 相对口径：跨币当轮排名
+        keep_n = max(1, math.ceil(float(top_volume_pct) * len(eligible)))
+        ranked = sorted(eligible.items(), key=lambda kv: (-kv[1][1], kv[0]))
+        eligible = dict(ranked[:keep_n])
+    return {s: sub.tail(max_candle_num).copy() for s, (sub, _v) in eligible.items()}
 
 
 def _select_over_run_times(series, run_times, period, weight_list, factors,
-                           choose_symbols, max_candle_num, min_quote_volume, blacklist):
+                           choose_symbols, max_candle_num, min_quote_volume, blacklist,
+                           top_volume_pct=0.0):
     """逐 run_time 选币的纯循环体（串行/并行共用）。返回 [(run_time, offset, row)]。
     内部 redirect_stdout 抑制 core 选币函数的诊断 print（no data/[警告] 等）。"""
     out = []
@@ -58,7 +67,8 @@ def _select_over_run_times(series, run_times, period, weight_list, factors,
             offset = compute_offset(run_time, period)
             symbol_candle_data = build_pit_candidates(
                 series, run_time, max_candle_num=max_candle_num,
-                min_quote_volume=min_quote_volume, blacklist=blacklist)
+                min_quote_volume=min_quote_volume, top_volume_pct=top_volume_pct,
+                blacklist=blacklist)
             if not symbol_candle_data:
                 continue
             with contextlib.redirect_stdout(devnull):
@@ -92,14 +102,16 @@ def _split_contiguous(items, n):
 def _replay_chunk(payload):
     """进程池 worker（顶层、可 pickle）：各自从本地缓存载 series 后选自己那段 run_time。"""
     (cache, symbols, run_times_chunk, timeframe, period, weight_list, factors,
-     choose_symbols, max_candle_num, min_quote_volume, blacklist) = payload
+     choose_symbols, max_candle_num, min_quote_volume, blacklist, top_volume_pct) = payload
     series = load_full_series(cache, symbols, timeframe)
     return _select_over_run_times(series, run_times_chunk, period, weight_list, factors,
-                                  choose_symbols, max_candle_num, min_quote_volume, blacklist)
+                                  choose_symbols, max_candle_num, min_quote_volume, blacklist,
+                                  top_volume_pct=top_volume_pct)
 
 
 def replay_selection(cache, symbols, run_times, strategy_config, factors, on_select, *,
-                     timeframe='1h', min_quote_volume=0.0, blacklist=(), workers=1, log=print):
+                     timeframe='1h', min_quote_volume=0.0, top_volume_pct=0.0,
+                     blacklist=(), workers=1, log=print):
     period = strategy_config['period']
     weight_list = strategy_config['weight_list']
     choose_symbols = strategy_config['choose_symbols']
@@ -113,7 +125,8 @@ def replay_selection(cache, symbols, run_times, strategy_config, factors, on_sel
         from concurrent.futures import ProcessPoolExecutor
         chunks = _split_contiguous(run_times, workers)
         payloads = [(cache, symbols, chunk, timeframe, period, weight_list, factors,
-                     choose_symbols, max_candle_num, min_quote_volume, blacklist)
+                     choose_symbols, max_candle_num, min_quote_volume, blacklist,
+                     top_volume_pct)
                     for chunk in chunks]
         with ProcessPoolExecutor(max_workers=len(payloads)) as ex:
             for chunk_result in ex.map(_replay_chunk, payloads):   # map 保输入序 ⇒ 与串行逐位一致
@@ -123,6 +136,7 @@ def replay_selection(cache, symbols, run_times, strategy_config, factors, on_sel
         series = load_full_series(cache, symbols, timeframe)
         for run_time, offset, row in _select_over_run_times(
                 series, run_times, period, weight_list, factors,
-                choose_symbols, max_candle_num, min_quote_volume, blacklist):
+                choose_symbols, max_candle_num, min_quote_volume, blacklist,
+                top_volume_pct=top_volume_pct):
             on_select(run_time, offset, row)
     return len(run_times)

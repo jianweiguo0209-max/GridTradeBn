@@ -195,3 +195,10 @@ def test_hl_legacy_keys_rejected():
     for key in ('HL_WALLET_ADDRESS', 'HL_PRIVATE_KEY', 'HL_TESTNET'):
         with pytest.raises(RuntimeError):
             load_deploy_config({key: 'x'})
+
+
+def test_universe_top_volume_pct_parsed():
+    # 票池相对口径 env（spec 2026-07-14-universe-top-volume-pct）；默认 0=停用
+    from gridtrade.config import load_deploy_config
+    assert load_deploy_config({'UNIVERSE_TOP_VOLUME_PCT': '0.55'}).universe_top_volume_pct == 0.55
+    assert load_deploy_config({}).universe_top_volume_pct == 0.0
