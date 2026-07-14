@@ -326,14 +326,37 @@ DIM_LIMITS = {
 _INT_DIMS = {'count_min'}
 
 
+# 标签精度 = 参数网格的分辨率（label 是 CSV 的合并主键；精度不足 → 不同参数塌缩成同一个键、
+# 互相覆盖。实证 2026-07-15：spacing 的 '%.2f' 把 0.005/0.00625/0.0075/0.00875 全印成
+# "sp_max=0.01"，四个臂互相覆盖、还盖掉了真正的 0.01）。
+# 规则：**候选值先按本维精度量化，再建臂** → 「跑的值」与「标签的值」逐位一致、可无损解析回来。
+# 精度取"够用且不改动既有标签"：spacing 用无损 %s（0.02→"0.02" 与旧 '%.2f' 同形，且能表达 0.005）。
+DIM_DECIMALS = {
+    'stop_loss': 3, 'trailing_k': 2, 'trailing_floor': 3, 'funding_stop': 4,
+    'pv_thr': 4, 'pv_mult': 0, 'band': None, 'count_min': 0, 'spacing_max': None,
+    'gearing': 1,
+}
+
+
+def quantize(dim, value):
+    """把候选值量化到本维的标签精度（None=无损，原样保留）。"""
+    d = DIM_DECIMALS.get(dim)
+    if d is None:
+        return round(float(value), 8)
+    if d == 0:
+        return int(round(float(value)))
+    return float(('%.' + str(d) + 'f') % float(value))
+
+
 def _arm_label(family, coord):
-    """扩边臂的标签须与 build_arms 的格式逐字一致（CSV 按 label 合并、去重）。"""
+    """扩边臂的标签须与 build_arms 的格式逐字一致（CSV 按 label 合并、去重）。
+    值须已 quantize 过——否则标签会丢精度，解析回来的坐标 ≠ 实际跑的参数。"""
     fmt = {
         'stop': lambda c: 'sl=%.3f' % c['stop_loss'],
         'trail': lambda c: 'k=%.2f,fl=%.3f' % (c['trailing_k'], c['trailing_floor']),
         'funding': lambda c: 'fr=%.4f' % c['funding_stop'],
         'geom': lambda c: 'band=%s,cmin=%d' % (_num(c['band']), int(c['count_min'])),
-        'spacing': lambda c: 'sp_max=%.2f' % c['spacing_max'],
+        'spacing': lambda c: 'sp_max=%s' % _num(c['spacing_max']),
         'gearing': lambda c: 'gearing=%.1f' % c['gearing'],
     }
     if family == 'pv':                       # pv 标签依覆盖项而定（与 build_arms 同形）
@@ -465,8 +488,8 @@ def expand_arms(family, df, *, n_new=3, windows=None):
             cand = [lim + gap * i / float(n_new + 1) for i in range(n_new + 1)] if at_lo \
                 else [lim - gap * i / float(n_new + 1) for i in range(n_new + 1)]
             subdivided = True
-        cand = [int(round(c)) if dim in _INT_DIMS else round(float(c), 6) for c in cand]
-        cand = [c for c in cand if lo_lim - 1e-12 <= c <= hi_lim + 1e-12]
+        cand = [quantize(dim, c) for c in cand]          # 量化到标签精度 → 跑的值=标签的值
+        cand = sorted({c for c in cand if lo_lim - 1e-12 <= c <= hi_lim + 1e-12})
         if subdivided:
             edge += '（步长越限 → 在硬限 %s 与边界间细分）' % _num(lim)
         if not cand:

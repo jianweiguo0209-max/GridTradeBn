@@ -309,3 +309,42 @@ def test_set_baseline_rejects_unknown_dim():
     with pytest.raises(ValueError, match='未知基线维度'):
         SW.set_baseline({'no_such_knob': 1})
     assert SW.baseline() == SW.live_baseline()
+
+
+def test_label_precision_is_lossless_no_collision():
+    """臂标签是 CSV 合并主键——精度不足会让不同参数塌缩成同一标签、互相覆盖。
+
+    实证(2026-07-15)：spacing 的 '%.2f' 把 0.005/0.00625/0.0075/0.00875 全印成 'sp_max=0.01'，
+    四个臂互相覆盖、还盖掉真正的 0.01。守卫：候选量化后，标签解析回来须逐位一致，且不同量化
+    值的标签互不相同。"""
+    checks = {
+        'spacing': ('spacing_max', [0.005, 0.00625, 0.0075, 0.00875, 0.01, 0.02, 0.04]),
+        'funding': ('funding_stop', [0.0001, 0.0002, 0.0003, 0.0004, 0.0005]),
+        'gearing': ('gearing', [2.4, 3.4, 4.4, 4.9, 5.4, 5.9]),
+        'stop': ('stop_loss', [0.015, 0.02, 0.025, 0.03, 0.045]),
+    }
+    for fam, (dim, vals) in checks.items():
+        labels = {}
+        for v in vals:
+            q = SW.quantize(dim, v)
+            ov = {dim: q}
+            lbl = SW._arm_label(fam, dict(SW.baseline(), **ov))
+            back = SW.parse_coord(fam, lbl)[dim]
+            assert abs(back - q) < 1e-9, '%s %s: 标签 %s 解析回 %s ≠ %s' % (fam, v, lbl, back, q)
+            assert lbl not in labels or labels[lbl] == q, \
+                '%s: 值 %s 与 %s 塌缩成同一标签 %s' % (fam, v, labels[lbl], lbl)
+            labels[lbl] = q
+
+
+def test_expand_candidates_are_quantized(monkeypatch):
+    """扩边产出的臂，其覆盖值须已量化（= 标签能无损表达的值）。"""
+    df = _res('spacing', [('sp_max=0.02', 25.5, 0.14), ('sp_max=0.03', 16.0, 0.11),
+                          ('BASE(现值)', 20.0, 0.05)])
+    # 人为把赢家做到下界以触发细分
+    df = pd.concat([df, _res('spacing', [('sp_max=0.02', 25.5, 0.14)])], ignore_index=True)
+    arms, _ = SW.expand_arms('spacing', df, n_new=3)
+    for a in arms:
+        v = a.overrides['spacing_max']
+        assert SW.quantize('spacing_max', v) == v, '%s 未量化' % v
+        # 标签解析回来一致
+        assert abs(SW.parse_coord('spacing', a.label)['spacing_max'] - v) < 1e-12
