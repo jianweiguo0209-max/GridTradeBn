@@ -29,7 +29,7 @@ def test_full_coverage_leaves_cap_untouched():
 
 
 def test_shortfall_caps_down_to_exactly_full():
-    # maxQty = worst 的一半 → 降 cap 到刚好足额（worst' == maxQty，coverage'=1.0）
+    # maxQty = worst 的一半 → 降 cap 到足额（无取整时 worst' 恰 == maxQty，不多缩一分仓位）
     w = fuse_worst(100.0, GEARING, GP)
     mx = w / 2.0
     cap2, cov = fuse_capped_cap(100.0, GEARING, GP, mx)
@@ -38,6 +38,19 @@ def test_shortfall_caps_down_to_exactly_full():
     w2 = fuse_worst(cap2, GEARING, GP)
     assert w2 <= mx * (1 + 1e-9)                  # 足额（护全额）
     assert w2 == pytest.approx(mx)                # 且刚好——不多缩一分仓位
+
+
+def test_capdown_never_raises_on_lot_step_boundary():
+    # 取整阶梯回归（评审实证 2026-07-15）：覆盖率 99% + min_amount=0.001 时，
+    # 旧算法 cap×coverage 会让每笔数量落同一档不变 → worst' 不降 → 断言抛异常。
+    # 新算法（未取整 worst 求解）必须既不抛异常、又真的足额。
+    gp = dict(GP)
+    w = fuse_worst(10.0, 1.0, gp, min_amount=0.001)
+    mx = w * 0.99                                  # 最常见的"差一点"场景
+    cap2, cov = fuse_capped_cap(10.0, 1.0, gp, mx, min_amount=0.001)   # 不得抛
+    assert cov == pytest.approx(0.99)
+    w2 = fuse_worst(cap2, 1.0, gp, min_amount=0.001)
+    assert w2 is not None and w2 <= mx * (1 + 1e-9)     # 取整后仍足额
 
 
 def test_unknown_max_qty_fails_open():
