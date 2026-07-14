@@ -272,3 +272,36 @@ def test_cycle_open_disabled_still_closes():
                               close_tag='gt3', open_enabled=False)
     assert out == {'closed': ['g1'], 'opened': [], 'shock_braked': True}
     assert mgr.closed_tag == 'gt3'
+
+
+def _seed_universe(rt, symbol, price, max_qty):
+    """给 fake 交易所塞一个带 market_max_qty 的在市币（ResilientAdapter 内层）。"""
+    from gridtrade.exchanges.base import Instrument
+    inner = rt.adapter._inner
+    inner._instruments = [Instrument(symbol, 0.1, 0.1, 0.1, 'live', 0,
+                                     min_cost=0.0, market_max_qty=max_qty)]
+    inner.set_price(symbol, price)
+    return inner
+
+
+def test_scheduler_audits_fuse_coverage_shortfall(capsys):
+    # 选币轮审计：不足额币须报出（含最差币与覆盖率）+ 偏离回测提示（spec 2026-07-15 §六）
+    # fake 权益 1e6 → cap=CAP_MAX=100000 → 满仓名义=340000；maxQty×px=1 → 覆盖率≈0
+    from gridtrade.runtime.scheduler import run_scheduler_once
+    rt = _rt()
+    _seed_universe(rt, 'LOW/USDT:USDT', price=1.0, max_qty=1.0)
+    run_scheduler_once(rt, now_fn=lambda: 1_750_000_000.0,
+                       fetch_candles=lambda *a, **k: {})     # 空 K 线 → 不开仓
+    out = capsys.readouterr().out
+    assert '保险丝不足额' in out and 'LOW/USDT:USDT' in out
+
+
+def test_scheduler_audits_fuse_coverage_ok(capsys):
+    # 全足额 → 报 OK（审计恒有输出，便于确认审计本身在跑）
+    from gridtrade.runtime.scheduler import run_scheduler_once
+    rt = _rt()
+    _seed_universe(rt, 'HI/USDT:USDT', price=1.0, max_qty=1e12)
+    run_scheduler_once(rt, now_fn=lambda: 1_750_000_000.0,
+                       fetch_candles=lambda *a, **k: {})
+    out = capsys.readouterr().out
+    assert '保险丝覆盖 OK' in out

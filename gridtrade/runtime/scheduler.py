@@ -73,6 +73,25 @@ def run_scheduler_once(runtime, *, now_fn=time.time,
     universe = resolve_live_universe(rt.adapter, rt.config.blacklist,
                                      rt.config.whitelist, rt.config.min_quote_volume_24h,
                                      top_volume_pct=rt.config.universe_top_volume_pct)
+    # 保险丝覆盖审计（spec 2026-07-15 §六）：limits 复用 ccxt 缓存 markets（零权重）；
+    # 价格走 fetch_prices_all（币安全市场 ticker/price，权重 2/轮，选币轮每小时一次 → 可忽略）。
+    # 报出不足额币 = 权益已跨临界（≈$36.7k）→ 门链开始降 cap，且实盘几何开始偏离回测（§七）。
+    try:
+        from gridtrade.execution.fuse_policy import audit_fuse_coverage
+        _mq = {i.symbol: float(getattr(i, 'market_max_qty', 0.0) or 0.0)
+               for i in rt.adapter.list_instruments()}
+        _au = audit_fuse_coverage(universe, rt.adapter.fetch_prices_all(universe), _mq,
+                                  rt.executor._resolve_cap(), rt.executor.gearing)
+        if _au['short']:
+            print('[audit] 保险丝不足额 %d/%d 币（最差 %s %.0f%%）：门链将降 cap 护全额；'
+                  '实盘几何已偏离回测（spec 2026-07-15 §七）'
+                  % (len(_au['short']), _au['total'], _au['short'][0][0],
+                     100.0 * _au['short'][0][1]), flush=True)
+        else:
+            print('[audit] 保险丝覆盖 OK：票池 %d 币全足额（满仓名义 $%.0f）'
+                  % (_au['total'], _au['need']), flush=True)
+    except Exception as exc:      # 审计失败绝不阻断选币轮
+        print('[audit] 保险丝覆盖审计跳过: %r' % (exc,), flush=True)
     # 方案A（legacy 半拉黑档2 执行位对齐）经共享 tier_policy 表达（spec 同源性②，
     # 与回测 allocate_with_tiers 同一判定源）：触顶币在选币入口剔出票池——连 K 线都
     # 不拉，因子排名自动落次优币；否则榜一触顶会在开仓时被 DB 槽位拒、当轮空转
