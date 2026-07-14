@@ -34,11 +34,14 @@ def main():
     o = a.create_limit_order(SYM, 'buy', round(px * 0.5, 1), qty,
                              client_oid='999999:1:1')
     print('   placed id=%s cloid=%s' % (o.id, o.client_oid))
-    assert o.client_oid == '999999:1:1', 'cloid 被改写——需启用替换编码并更新 spec §5.1'
-    opens = a.fetch_open_orders(SYM)
-    print('   open_orders=%d' % len(opens))
-    a.cancel_order(SYM, o.id)
-    print('   canceled')
+    try:
+        assert o.client_oid == '999999:1:1', \
+            'cloid 被改写——需启用替换编码并更新 spec §5.1'
+        opens = a.fetch_open_orders(SYM)
+        print('   open_orders=%d' % len(opens))
+    finally:
+        a.cancel_order(SYM, o.id)          # 断言失败也要撤单（勿留孤儿挂单）
+        print('   canceled')
 
     print('== STOP_MARKET 保险丝挂撤 ==')
     s = a.create_stop_order(SYM, 'sell', qty, round(px * 0.5, 1),

@@ -16,15 +16,16 @@
 - [ ] /controls 暂停 scheduler 开新格（或 fly scale count scheduler=0 -a gridtrade-prod）。
 - [ ] 随 12H 换仓自然关格，或经 /controls 逐格手动关闭。
 - [ ] **硬门槛**：生产库执行
-      `SELECT id, symbol, status FROM grids WHERE status NOT IN ('CLOSED');`
-      必须 0 行（残留 open 网格会让 monitor 拿币安适配器管 HL symbol，必然报错）。
+      `SELECT id, symbol, status FROM grids WHERE status NOT IN ('CLOSED', 'FAILED');`
+      （FAILED 为无害终态，与 CLOSED 同免检；此查询须 0 行）
+      ——残留 open 网格会让 monitor 拿币安适配器管 HL symbol，必然报错。
 - [ ] HL 提资；HL 历史行留库可查（同库延续，盈亏曲线跨所连续）。
 
 ## 阶段 3：生产切换
 - [ ] 币安主网 API key：只开合约交易、**禁提现**、不绑 IP 白名单
       （Fly 出口 IP 非静态；如启用 Fly static egress 再收紧，spec §7.3）。
 - [ ] `fly secrets set BINANCE_API_KEY=... BINANCE_API_SECRET=... -a gridtrade-prod`
-      `fly secrets unset HL_WALLET_ADDRESS HL_PRIVATE_KEY -a gridtrade-prod`
+      `fly secrets unset HL_WALLET_ADDRESS HL_PRIVATE_KEY HL_TESTNET -a gridtrade-prod`
       （不 unset 会命中退役键守卫，boot 直接报错——这是刻意的 fail-fast）。
 - [ ] `fly deploy -c deploy/fly.prod.toml`（env 已是 EXCHANGE=binance/BINANCE_TESTNET=false，
       SCHEDULER_RUN_ON_START=false 保护在位）。
