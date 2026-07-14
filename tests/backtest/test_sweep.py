@@ -281,3 +281,31 @@ def test_arms_missing_window_recovers_off_arms():
     miss = SW.arms_missing_window('pv', pd.DataFrame(rows), 'W1')
     assert [a.label for a in miss] == ['pv=OFF']
     assert miss[0].overrides == {'active_stop_mode': 'none'}
+
+
+# ---- Pass 2（坐标下降）：可覆盖基线 ----
+
+def test_set_baseline_overrides_and_arms_are_relative_to_it():
+    """Pass 2 把基线换成 Pass 1 各族冠军的组合；臂的覆盖项相对新基线。"""
+    try:
+        b = SW.set_baseline({'pv_mult': 5, 'band': 1.5, 'count_min': 20})
+        assert b['pv_mult'] == 5 and b['band'] == 1.5 and b['count_min'] == 20
+        assert b['stop_loss'] == SW.live_baseline()['stop_loss']    # 未覆盖项仍取实盘值
+        arms = SW.build_arms('pv')
+        assert arms[0].is_baseline()
+        assert arms[0].params()['pv_mult'] == 5, 'BASE 臂须是新基线'
+        labels = [a.label for a in arms]
+        assert 'mult=5' not in labels, '与新基线重合的点须去重（它就是 BASE）'
+        assert 'mult=3' in labels, '旧现值须作为一个可比的臂出现'
+        m3 = [a for a in arms if a.label == 'mult=3'][0]
+        assert m3.params()['band'] == 1.5, '其余维度须取新基线（这正是坐标下降的意义）'
+        geom = SW.build_arms('geom')
+        assert 'band=1.5,cmin=20' not in [a.label for a in geom]    # = 新基线 → 去重
+    finally:
+        SW.set_baseline({})
+
+
+def test_set_baseline_rejects_unknown_dim():
+    with pytest.raises(ValueError, match='未知基线维度'):
+        SW.set_baseline({'no_such_knob': 1})
+    assert SW.baseline() == SW.live_baseline()

@@ -32,6 +32,11 @@ def main(argv=None):
     ap.add_argument('--mode', choices=('base', 'expand'), default='base',
                     help='base=跑初始网格；expand=从已有 CSV 判定边界并外推新点'
                          '（最优在边界=网格没铺够；一轮=对每个窗各调用一次）')
+    ap.add_argument('--baseline', default='',
+                    help='Pass 2 坐标下降：把基线换成 Pass 1 各族冠军的组合，'
+                         '如 pv_mult=5,band=1.5,count_min=20,spacing_max=0.01。'
+                         '**必须配 --out 指向新目录**——臂标签只编码被扫维度，'
+                         '不同基线下同名臂含义不同，混写会串味')
     args = ap.parse_args(argv)
 
     families = SW.FAMILIES if args.family == 'all' else tuple(
@@ -48,6 +53,20 @@ def main(argv=None):
     cache = ParquetCache(root)
     out_dir = args.out or os.path.join(root, '..', 'sweep')
     workers = int(os.environ.get('BT_WORKERS', '1'))
+
+    if args.baseline:
+        if not args.out:
+            raise SystemExit('--baseline 必须配 --out 指向新目录（不同基线的 CSV 不可混写）')
+        ov = {}
+        for kv in args.baseline.split(','):
+            k, _, v = kv.partition('=')
+            k = k.strip()
+            try:
+                ov[k] = int(v) if k in ('pv_mult', 'pv_n', 'count_min') else float(v)
+            except ValueError:
+                ov[k] = v.strip()          # active_stop_mode / pv_period 等字符串维
+        SW.set_baseline(ov)
+        print('[sweep] Pass2 基线覆盖: %s' % ov, flush=True)
     bl = effective_blacklist((), DEFAULT_TIER_POLICY)
     universe = sorted(set(V.list_archive_symbols()) - set(bl))
 
