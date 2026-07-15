@@ -16,7 +16,8 @@ def _gx(store, tiers=None, cap=1000.0, gearing=3.4):
     ex.set_price(SYM, 100.0)
     if tiers is not None:
         ex.seed_leverage_tiers(SYM, tiers)
-    return ex, GridExecutor(ex, store, cap=cap, leverage=gearing)
+    # gearing= 直传(镜像生产 factory:62 config.grid_gearing);非 leverage=(那会 ×0.68 折算)
+    return ex, GridExecutor(ex, store, cap=cap, gearing=gearing)
 
 
 def test_open_sets_leverage_from_tiers(store):
