@@ -128,3 +128,15 @@ def test_set_leverage_records_calls():
     ex.set_leverage('BTC/USDT:USDT', 4)
     ex.set_leverage('ETH/USDT:USDT', 7)
     assert ex._leverage_calls == [('BTC/USDT:USDT', 4), ('ETH/USDT:USDT', 7)]
+
+
+def test_leverage_tiers_fetch_returns_defensive_copy():
+    # 返回防御拷贝:消费者原地 mutate(改内层 dict / append 外层)不得污染 seed 状态,
+    # 与 ccxt 版一致(评审 Important)。
+    from gridtrade.exchanges.fake import FakeExchange
+    ex = FakeExchange()
+    ex.seed_leverage_tiers('BTC/USDT:USDT', [{'maxLeverage': 5, 'maxNotional': 5000.0}])
+    out = ex.fetch_leverage_tiers('BTC/USDT:USDT')
+    out[0]['maxLeverage'] = 999                            # 原地污染内层 dict
+    out.append({'maxLeverage': 1, 'maxNotional': 1.0})     # 原地污染外层列表
+    assert ex.fetch_leverage_tiers('BTC/USDT:USDT') == [{'maxLeverage': 5, 'maxNotional': 5000.0}]

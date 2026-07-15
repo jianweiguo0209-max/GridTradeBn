@@ -215,7 +215,7 @@ class FakeExchange(ExchangeAdapter):
         self._leverage_calls.append((symbol, leverage))
 
     def fetch_leverage_tiers(self, symbol) -> list:
-        return list(self._leverage_tiers.get(symbol, []))
+        return [dict(t) for t in self._leverage_tiers.get(symbol, [])]   # 防御拷贝(同 ccxt)
 
     def exchange_status(self) -> str:
         return 'ok'

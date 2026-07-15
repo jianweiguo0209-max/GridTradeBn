@@ -170,7 +170,7 @@ class CcxtAdapter(ExchangeAdapter):
                                  if t.get('maxLeverage') and t.get('maxNotional') is not None]
             except Exception:
                 cache[symbol] = []
-        return cache[symbol]
+        return [dict(t) for t in cache[symbol]]   # 防御拷贝:消费者原地 mutate 不污染缓存
 
     def fetch_24h_quote_volumes(self) -> dict:
         tickers = self.client.fetch_tickers()
