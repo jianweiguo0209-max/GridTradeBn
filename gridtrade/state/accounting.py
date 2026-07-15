@@ -1,7 +1,9 @@
 """AccountingRepository：网格实时记账（乐观锁 + 峰值收益跟踪）。"""
 from typing import Optional
 
-from sqlalchemy import insert, select, update
+from sqlalchemy import select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from gridtrade.state.models import (Accounting, ConcurrencyError, grid_accounting,
                                     now_ms)
@@ -20,16 +22,15 @@ class AccountingRepository:
         self.engine = store.engine
 
     def init(self, grid_id: str) -> Accounting:
-        import sqlalchemy as sa
-        try:
-            with self.engine.begin() as c:
-                c.execute(insert(grid_accounting), {
-                    'grid_id': grid_id, 'realized_pnl': 0.0, 'fee_paid': 0.0,
-                    'funding_paid': 0.0, 'net_position': 0.0, 'avg_price': 0.0,
-                    'pnl_ratio_max': 0.0, 'funding_cursor': 0, 'updated_at': now_ms(), 'version': 1,
-                })
-        except sa.exc.IntegrityError:
-            pass  # already initialized by a prior/concurrent caller
+        # init-if-absent：原生 ON CONFLICT DO NOTHING 取代 INSERT→catch IntegrityError（重启
+        # restore 重复 init 同 grid_id 会撞主键刷 PG ERROR）。低频，与三张高频表统一 upsert 口径。
+        ins = (pg_insert if self.engine.dialect.name == 'postgresql' else sqlite_insert)(grid_accounting)
+        stmt = ins.values(
+            grid_id=grid_id, realized_pnl=0.0, fee_paid=0.0, funding_paid=0.0,
+            net_position=0.0, avg_price=0.0, pnl_ratio_max=0.0, funding_cursor=0,
+            updated_at=now_ms(), version=1).on_conflict_do_nothing(index_elements=['grid_id'])
+        with self.engine.begin() as c:
+            c.execute(stmt)
         return self.get(grid_id)
 
     def get(self, grid_id: str) -> Optional[Accounting]:

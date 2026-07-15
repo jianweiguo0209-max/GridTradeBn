@@ -2,8 +2,9 @@
 import uuid
 from typing import List, Optional
 
-import sqlalchemy as sa
 from sqlalchemy import insert, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from gridtrade.state.models import (control_flags, control_commands, ControlCommand,
                                     CMD_PENDING, CMD_RUNNING, now_ms, control_audit,
@@ -32,18 +33,15 @@ class ControlFlagRepository:
         return [r[0] for r in rows]
 
     def set(self, name: str, value: bool, *, actor: str = '') -> None:
+        # 原生 upsert（ON CONFLICT DO UPDATE）取代 INSERT→catch IntegrityError→UPDATE：flag
+        # 已存在时（monitor 每轮 set/clear intervention 熔断旗）撞主键刷 PG ERROR。统一口径。
         v = 'true' if value else 'false'
         ts = now_ms()
-        try:
-            with self.engine.begin() as c:
-                c.execute(insert(control_flags),
-                          {'name': name, 'value': v, 'updated_at': ts,
-                           'updated_by': actor})
-        except sa.exc.IntegrityError:
-            with self.engine.begin() as c:
-                c.execute(update(control_flags)
-                          .where(control_flags.c.name == name)
-                          .values(value=v, updated_at=ts, updated_by=actor))
+        ins = (pg_insert if self.engine.dialect.name == 'postgresql' else sqlite_insert)(control_flags)
+        stmt = ins.values(name=name, value=v, updated_at=ts, updated_by=actor).on_conflict_do_update(
+            index_elements=['name'], set_={'value': v, 'updated_at': ts, 'updated_by': actor})
+        with self.engine.begin() as c:
+            c.execute(stmt)
 
 
 _CMD_FIELDS = ('id', 'type', 'payload', 'status', 'result', 'created_at',

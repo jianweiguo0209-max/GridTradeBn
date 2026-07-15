@@ -6,8 +6,9 @@
 """
 import json
 
-import sqlalchemy as sa
-from sqlalchemy import insert, select
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from gridtrade.state.models import now_ms, universe_snapshots
 
@@ -22,17 +23,15 @@ class UniverseSnapshotRepository:
                   'symbols': json.dumps(sorted(symbols)),
                   'excluded': json.dumps(excluded or {}, ensure_ascii=False),
                   'created_at': now_ms()}
-        try:
-            with self.engine.begin() as c:
-                c.execute(insert(universe_snapshots), values)
-        except sa.exc.IntegrityError:
-            with self.engine.begin() as c:
-                c.execute(sa.update(universe_snapshots)
-                          .where(universe_snapshots.c.exchange == exchange)
-                          .where(universe_snapshots.c.run_time == int(run_time_ms))
-                          .values(symbols=values['symbols'],
-                                  excluded=values['excluded'],
-                                  created_at=values['created_at']))
+        # 原生 ON CONFLICT DO UPDATE 取代 INSERT→catch→UPDATE（同 (exchange,run_time) 重跑撞
+        # 复合主键刷 PG ERROR）；与三张高频表统一 upsert 口径。
+        ins = (pg_insert if self.engine.dialect.name == 'postgresql' else sqlite_insert)(universe_snapshots)
+        stmt = ins.values(**values).on_conflict_do_update(
+            index_elements=['exchange', 'run_time'],
+            set_={'symbols': values['symbols'], 'excluded': values['excluded'],
+                  'created_at': values['created_at']})
+        with self.engine.begin() as c:
+            c.execute(stmt)
 
     def get(self, exchange: str, run_time_ms: int):
         """{'symbols': [...], 'excluded': {...}} 或 None。"""
