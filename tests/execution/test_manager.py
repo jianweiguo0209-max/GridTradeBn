@@ -59,6 +59,29 @@ def test_open_proposals_empty_list_noop(store):
     assert mgr.open_proposals([]) == []
 
 
+def test_open_proposals_isolates_open_failure_and_releases_slot(store):
+    # 逐提议隔离（testnet 05:00 -2027 实证：open_proposals 此前只 catch SlotExhausted，
+    # 交易所拒单冒泡致整轮 degraded）：任一提议开格失败（非 SlotExhausted）→ 记录+清半开格
+    # （转 FAILED 释放槽位）+ 其余提议照开，绝不掀翻整轮。
+    ETH = 'ETH/USDT:USDT'
+    ex = FakeExchange(instruments=[Instrument(SYM, 0.1, 0.001, 0.001, 'live', 0),
+                                   Instrument(ETH, 0.1, 0.001, 0.001, 'live', 0)], price=100.0)
+    ex.set_price(SYM, 100.0); ex.set_price(ETH, 100.0)
+    gx = GridExecutor(ex, store, cap=1000.0, leverage=5.0)
+    orig = ex.create_limit_order
+    def boom(symbol, side, price, size, **kw):
+        if symbol == ETH:      # 模拟交易所拒单（-2027 等），首单即抛 → 零挂单
+            raise RuntimeError('binanceusdm {"code":-2027,"msg":"Exceeded max position"}')
+        return orig(symbol, side, price, size, **kw)
+    ex.create_limit_order = boom
+    mgr = _manager(gx, store)
+    ids = mgr.open_proposals([_proposal(ETH), _proposal(SYM)])   # ETH 先失败，SYM 应照开
+    assert len(ids) == 1                                          # 仅 SYM 开成，不因 ETH 中断
+    assert gx.grids.get(ids[0]).symbol == SYM
+    assert gx.grids.get(ids[0]).status == 'ACTIVE'
+    assert [g for g in gx.grids.list_active() if g.symbol == ETH] == []   # ETH 半开格已清、槽位释放
+
+
 def test_monitor_all_no_exit_returns_open_results(store):
     ex, store, gx = _setup(store, 100.0)
     mgr = _manager(gx, store)

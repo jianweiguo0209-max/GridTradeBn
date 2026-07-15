@@ -6,7 +6,7 @@
 """
 from typing import List
 
-from gridtrade.state.models import ACTIVE, SlotExhausted
+from gridtrade.state.models import ACTIVE, PENDING, OPENING, FAILED, SlotExhausted
 from gridtrade.execution.events import GridOpened, GridClosed, OrderFilled
 from gridtrade.execution.monitor import monitor_grid
 
@@ -39,10 +39,36 @@ class GridManager:
                 print('[gate] rejected %s tag=%s by SlotCap: %s'
                       % (proposal.symbol, proposal.tag, exc), flush=True)
                 continue
+            except Exception as exc:
+                # 逐提议隔离（与 monitor 逐格隔离同构；testnet 05:00 -2027 实证：此前只
+                # catch SlotExhausted，交易所拒单冒泡致整轮 degraded、该 offset 空 12h 到下次
+                # 轮换）：记录 + 清半开格（撤本格挂单 + 转 FAILED 释放槽位）+ 其余提议照开。
+                print('[open] rejected %s tag=%s: %r —— 清半开格、隔离续开'
+                      % (proposal.symbol, proposal.tag, exc), flush=True)
+                self._fail_half_open(proposal.exchange, proposal.symbol)
+                continue
             opened.append(gid)
             self._publish(GridOpened(grid_id=gid, exchange=proposal.exchange,
                                      symbol=proposal.symbol, tag=proposal.tag))
         return opened
+
+    def _fail_half_open(self, exchange, symbol) -> None:
+        """开格中途失败留下的 PENDING/OPENING 格：逐单撤（不 cancel_all，防伤同币兄弟活跃格）
+        + 转 FAILED 释放槽位。撤单/转态各自 try：清理尽力而为，绝不二次抛掀翻整轮。"""
+        ex = self.executor
+        for g in ex.grids.list_active():
+            if g.exchange != exchange or g.symbol != symbol or g.status not in (PENDING, OPENING):
+                continue
+            for o in ex.orders.list_open_by_grid(g.id):
+                if getattr(o, 'exchange_order_id', None):
+                    try:
+                        ex.adapter.cancel_order(symbol, o.exchange_order_id)
+                    except Exception:
+                        pass
+            try:
+                ex.grids.transition_status(g.id, FAILED, expected_version=g.version)
+            except Exception:
+                pass
 
     def monitor_all(self, skip_replenish=False) -> List[dict]:
         results: List[dict] = []
