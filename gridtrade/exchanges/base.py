@@ -186,6 +186,12 @@ class ExchangeAdapter(ABC):
         """单币 maxLeverage;None=未知(cap_for 退化为无杠杆感知)。"""
         return self.fetch_max_leverages().get(symbol)
 
+    # ---- 可选：杠杆档位表（open 设杠杆用；spec 2026-07-15-open-set-leverage）----
+    def fetch_leverage_tiers(self, symbol: str) -> list:
+        """[{'maxLeverage': int, 'maxNotional': float}, …]；默认 []（fail-open：
+        子类未实现即不设杠杆，退化为交易所默认）。"""
+        return []
+
     # ---- 可选：24h 成交额（用于流动性地板；默认空=上层跳过过滤）----
     def fetch_24h_quote_volumes(self) -> dict:
         """{canonical symbol: 24h 计价币成交额}。默认空 dict（无数据 → resolve_live_universe fail-open 跳过）。"""

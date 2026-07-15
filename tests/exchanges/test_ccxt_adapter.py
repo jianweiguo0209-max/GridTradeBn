@@ -247,3 +247,38 @@ def test_instrument_market_max_qty_defaults_zero():
     i = Instrument(symbol='X/USDT:USDT', tick=0.1, lot=0.1, min_size=0.1,
                    state='live', list_ts=0)
     assert i.market_max_qty == 0.0
+
+
+def test_base_fetch_leverage_tiers_default_empty():
+    # 基类默认 []（fail-open）。ExchangeAdapter 是 ABC 不能直接实例化,故用具体实例
+    # 直调基类未覆写方法(绕过子类覆写)验证默认契约。
+    from gridtrade.exchanges.base import ExchangeAdapter
+    from gridtrade.exchanges.fake import FakeExchange
+    assert ExchangeAdapter.fetch_leverage_tiers(FakeExchange(), 'BTC/USDT:USDT') == []
+
+
+def test_ccxt_fetch_leverage_tiers_normalizes_and_caches():
+    from gridtrade.exchanges.ccxt_adapter import CcxtAdapter
+    c = FakeCcxtClient()
+    calls = []
+    def flt(symbols, params=None):
+        calls.append(list(symbols))
+        return {'BTC/USDT:USDT': [
+            {'tier': 1, 'maxLeverage': 20, 'maxNotional': 10000.0, 'info': {}},
+            {'tier': 2, 'maxLeverage': 10, 'maxNotional': 50000.0, 'info': {}}]}
+    c.fetch_leverage_tiers = flt
+    a = CcxtAdapter(c, name='x')
+    out = a.fetch_leverage_tiers('BTC/USDT:USDT')
+    assert out == [{'maxLeverage': 20, 'maxNotional': 10000.0},
+                   {'maxLeverage': 10, 'maxNotional': 50000.0}]
+    a.fetch_leverage_tiers('BTC/USDT:USDT')          # 二次
+    assert len(calls) == 1                            # 按币缓存,不重取
+
+
+def test_ccxt_fetch_leverage_tiers_failopen_on_exception():
+    from gridtrade.exchanges.ccxt_adapter import CcxtAdapter
+    c = FakeCcxtClient()
+    def boom(symbols, params=None):
+        raise RuntimeError('leverageBracket down')
+    c.fetch_leverage_tiers = boom
+    assert CcxtAdapter(c, name='x').fetch_leverage_tiers('BTC/USDT:USDT') == []   # fail-open

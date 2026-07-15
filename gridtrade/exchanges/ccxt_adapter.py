@@ -154,6 +154,24 @@ class CcxtAdapter(ExchangeAdapter):
             self._maxlev_cache = cache
         return cache
 
+    def fetch_leverage_tiers(self, symbol: str) -> list:
+        """自 ccxt fetch_leverage_tiers([symbol]) 归一化为 [{'maxLeverage':int,'maxNotional':float}]；
+        按币实例缓存（档位表稳定）；取数/归一化任何异常 → []（fail-open，调用方不设杠杆）。"""
+        cache = getattr(self, '_lev_tiers_cache', None)
+        if cache is None:
+            cache = self._lev_tiers_cache = {}
+        if symbol not in cache:
+            try:
+                raw = self.client.fetch_leverage_tiers([symbol]) or {}
+                brs = raw.get(symbol) or []
+                cache[symbol] = [{'maxLeverage': int(t['maxLeverage']),
+                                  'maxNotional': float(t['maxNotional'])}
+                                 for t in brs
+                                 if t.get('maxLeverage') and t.get('maxNotional') is not None]
+            except Exception:
+                cache[symbol] = []
+        return cache[symbol]
+
     def fetch_24h_quote_volumes(self) -> dict:
         tickers = self.client.fetch_tickers()
         out = {}
