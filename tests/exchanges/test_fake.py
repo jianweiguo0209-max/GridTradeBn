@@ -66,3 +66,48 @@ def test_sell_fill_reduces_net_position():
     ex.set_price('BTC/USDT:USDT', 97.0)            # sell fills -> net +1
     assert ex.fetch_positions('BTC/USDT:USDT').net_size == 1.0
     assert ex.fetch_open_orders('BTC/USDT:USDT') == []
+
+
+def test_partial_fill_leaves_remnant_and_records_trade():
+    # 部分成交测试钩子（spec 2026-07-15 §3.2）：触价只成交 qty，残量留簿 filled=0，
+    # 成交 Trade.order_id=原单 id（执行器按 order_id 映射回网格线）
+    from gridtrade.exchanges.base import Instrument
+    from gridtrade.exchanges.fake import FakeExchange
+    BTC = 'BTC/USDT:USDT'
+    ex = FakeExchange(instruments=[Instrument(BTC, 0.1, 1e-6, 1e-6, 'live', 0)], price=100.0)
+    o = ex.create_limit_order(BTC, 'buy', 99.0, 10.0, client_oid='g:1')   # 不立即成交（现价100>99）
+    hit = ex.partial_fill(BTC, 99.0, 3.0)
+    assert hit is True
+    # 残单留簿：同 id、剩 7、filled=0、仍 open
+    rem = [x for x in ex.fetch_open_orders(BTC) if x.id == o.id]
+    assert len(rem) == 1 and abs(rem[0].size - 7.0) < 1e-9 and rem[0].filled == 0.0
+    # 成交流水：一笔 size=3、order_id=原单 id、方向 buy
+    tr = [t for t in ex.fetch_my_trades(BTC) if t.order_id == o.id]
+    assert len(tr) == 1 and abs(tr[0].size - 3.0) < 1e-9 and tr[0].side == 'buy'
+    # 净仓 = 已成交部分
+    assert abs(ex.fetch_positions(BTC).net_size - 3.0) < 1e-9
+
+
+def test_partial_fill_miss_returns_false():
+    from gridtrade.exchanges.base import Instrument
+    from gridtrade.exchanges.fake import FakeExchange
+    BTC = 'BTC/USDT:USDT'
+    ex = FakeExchange(instruments=[Instrument(BTC, 0.1, 1e-6, 1e-6, 'live', 0)], price=100.0)
+    ex.create_limit_order(BTC, 'buy', 99.0, 10.0, client_oid='g:1')
+    assert ex.partial_fill(BTC, 88.0, 3.0) is False       # 无该价位挂单
+    assert ex.partial_fill(BTC, 99.0, 10.0) is False      # qty>=size 不算部分成交
+
+
+def test_partial_then_full_via_setprice_closes_order():
+    # 残单被 set_price 触及 → 剩余量全额成交，同 order_id 第二笔成交（执行器据此判吃满）
+    from gridtrade.exchanges.base import Instrument
+    from gridtrade.exchanges.fake import FakeExchange
+    BTC = 'BTC/USDT:USDT'
+    ex = FakeExchange(instruments=[Instrument(BTC, 0.1, 1e-6, 1e-6, 'live', 0)], price=100.0)
+    o = ex.create_limit_order(BTC, 'buy', 99.0, 10.0, client_oid='g:1')
+    ex.partial_fill(BTC, 99.0, 3.0)
+    ex.set_price(BTC, 99.0)                                # 价格落到 99 → 残 7 全额成交
+    tr = sorted((t.size for t in ex.fetch_my_trades(BTC) if t.order_id == o.id))
+    assert tr == [3.0, 7.0]                                # 两笔累计 = 原单 10
+    assert not [x for x in ex.fetch_open_orders(BTC) if x.id == o.id]   # 已离簿
+    assert abs(ex.fetch_positions(BTC).net_size - 10.0) < 1e-9

@@ -158,8 +158,8 @@ class GridExecutor:
         return gid
 
     def _replenish_opposite(self, grid_id, symbol, line_index, side):
-        """按 sync 同款守卫补对侧单（E2 兜底路径复用；guard=对侧 (line,side) 已有 open 行则跳过）。
-        与 sync 内联块语义一致（memory quantized-size-fallback-bug 修复配套）。"""
+        """按 sync 同款守卫补对侧单（E2 兜底路径复用；guard=对侧 (line,side) 有 filled==0 满额单才跳过，
+        残额单不挡整额回购单，spec 2026-07-15 §3.1）。与 sync 内联块语义一致。"""
         geom = self._geom.get(grid_id)
         if not geom:
             return False
@@ -168,9 +168,12 @@ class GridExecutor:
         if not (0 <= opp_line < len(price_array)):
             return False
         opp_side = 'buy' if side == 'sell' else 'sell'
-        open_lines = {(o.line_index, o.side)
-                      for o in self.orders.list_by_grid(grid_id) if o.status == 'open'}
-        if (opp_line, opp_side) in open_lines:
+        # 满额占位集合（spec 2026-07-15 §3.1）：只有对侧线存在 filled==0 的满额 open 单才跳过；
+        # 残额单(filled>0)不占位 → 照挂整额回购单（双倍建仓防护不变——满额单仍挡）。
+        full_lines = {(o.line_index, o.side)
+                      for o in self.orders.list_by_grid(grid_id)
+                      if o.status == 'open' and float(o.filled or 0.0) == 0.0}
+        if (opp_line, opp_side) in full_lines:
             return False
         p = price_array[opp_line]
         rq = self.adapter.quantize_amount(symbol, geom['order_num'])
@@ -206,9 +209,11 @@ class GridExecutor:
         # 中性底仓/平仓的市价单不在 grid_orders → 其成交 order_id 不在 by_oid，自动排除。
         _all = self.orders.list_by_grid(grid_id)
         by_oid = {o.exchange_order_id: o for o in _all if o.exchange_order_id}
-        # 已 resting 的 (line,side) 集合：补对侧单前查重，防同 line 同向重复挂单
-        # → 双倍建仓（testnet OP/gt00 实证：中性网格价格震荡下重复单持久叠加）。
-        open_lines = {(o.line_index, o.side) for o in _all if o.status == 'open'}
+        # 满额占位集合（spec 2026-07-15 §3.1）：只有 filled==0 的满额 open 单才占位、才挡补单
+        # → 双倍建仓防护不变（testnet OP/gt00 实证）；残额单(filled>0)不占位，照挂整额回购单
+        # （修部分成交残额窗口：残单误当满额单 → 回购单永不挂出、净仓永久差 1×order_num）。
+        full_lines = {(o.line_index, o.side) for o in _all
+                      if o.status == 'open' and float(o.filled or 0.0) == 0.0}
         candidates = [t for t in trades if t.order_id in by_oid]
         candidates.sort(key=lambda t: t.ts)
 
@@ -239,16 +244,18 @@ class GridExecutor:
                            exchange_order_id=go.exchange_order_id, filled=new_filled)
             self.orders.upsert(go)
             by_oid[t.order_id] = go        # 同轮多笔部分成交累计正确
+            # 该线一旦有成交(部分/全额)即非 filled==0 满额单 → 腾出满额占位（spec 2026-07-15）：
+            # 部分成交后残额单不再占位,下方兄弟吃满时照挂整额回购单;全额则本就离场。
+            full_lines.discard((line_index, t.side))   # 键级非计数：可达态下同线不会满额单+残额单并存(任一诞生事件消耗另一张),故安全(2026-07-15 终审)
             if not fully:
                 continue                   # 未吃满:线仍占用、不补单,等后续部分成交
-            open_lines.discard((line_index, t.side))   # 吃满离场，其 (line,side) 腾空
             # 补对侧单（halt 时跳过：fills/记账/止损仍正常，但不挂新单）
             if not skip_replenish:
                 opp_line = line_index - 1 if t.side == 'sell' else line_index + 1
                 if 0 <= opp_line < len(price_array):
                     opp_side = 'buy' if t.side == 'sell' else 'sell'
-                    # opp_line 已有同向 resting 单则不重复挂（防双倍建仓）
-                    if (opp_line, opp_side) not in open_lines:
+                    # opp_line 已有 filled==0 满额单则不重复挂（防双倍建仓，spec 2026-07-15 §3.3）
+                    if (opp_line, opp_side) not in full_lines:
                         p = price_array[opp_line]
                         oid = self._next_oid(grid_id, opp_line)
                         rq = self.adapter.quantize_amount(symbol, order_num)
@@ -267,7 +274,7 @@ class GridExecutor:
                         self.orders.upsert(GridOrder(client_oid=oid, grid_id=grid_id, line_index=opp_line,
                                                      side=opp_side, price=p, size=placed, status='open',
                                                      exchange_order_id=getattr(order, 'id', None)))
-                        open_lines.add((opp_line, opp_side))
+                        full_lines.add((opp_line, opp_side))
 
         # 资金费流水:按签名权重分摊(同币双格曾各记 100% → 双计;交易所只按净仓收一次)。
         # 各格仍用自己的游标摄入同批行、各乘权重;单格 w=1 与旧行为逐位一致。
