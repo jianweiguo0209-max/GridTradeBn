@@ -155,7 +155,21 @@ def test_fetch_ohlcv_real_quote_volume():
     # 原生 id + interval 直传
     assert c.kline_calls[0]['symbol'] == 'BTCUSDT'
     assert c.kline_calls[0]['interval'] == '1h'
-    assert c.kline_calls[0]['limit'] == 1500
+    assert c.kline_calls[0]['limit'] == 1500      # 巨区间(need≫1500)仍满页 1500 减翻页
+
+
+def test_fetch_ohlcv_limit_matches_span_saves_weight():
+    """小区间 limit 应贴合实际所需根数、而非恒 1500:币安 klines 权重按 limit 分档
+    ([100,500)=2 / [1000,1500]=10),选币仅 160 根若恒请 1500 白付 5× 权重(HL candleSnapshot
+    无此分档、移植时未重估;2026-07-16 testnet 实测 limit=160→权重 2)。此处恰 160 根跨度 →
+    首页 limit≈161(落权重档 2),而非 1500(档 10)。"""
+    c = FakeBinanceClient()
+    a = _binance(c)
+    tf = 3_600_000
+    base = 1704067200000
+    a.fetch_ohlcv('BTC/USDT:USDT', '1h', base, base + 160 * tf)   # 恰 160 根跨度
+    assert c.kline_calls[0]['limit'] == 161                       # 160 根 + 1 边界(非 1500)
+    assert all(k['limit'] <= 500 for k in c.kline_calls)          # 全落币安权重档 ≤2
 
 
 def test_fetch_ohlcv_empty():

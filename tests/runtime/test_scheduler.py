@@ -135,17 +135,17 @@ def _pace_spy_adapter():
 
 
 def test_fetch_universe_candles_paces_between_symbols_by_default():
-    # 默认 pace_ms=None → 用 FETCH_PACE_MS_DEFAULT(2000ms，HL 权重推导)；n 币 sleep n-1 次。
+    # 默认 pace_ms=None → 用 FETCH_PACE_MS_DEFAULT(500ms，币安权重实测重校)；n 币 sleep n-1 次。
     import pandas as pd
     from gridtrade.runtime.scheduler import fetch_universe_candles, FETCH_PACE_MS_DEFAULT
-    assert FETCH_PACE_MS_DEFAULT == 2000.0
+    assert FETCH_PACE_MS_DEFAULT == 500.0
     sleeps = []
     syms = ['A/USDC:USDC', 'B/USDC:USDC', 'C/USDC:USDC']
     out = fetch_universe_candles(_pace_spy_adapter(), syms,
                                  pd.Timestamp('2025-06-24 14:00:00'),
                                  sleep=sleeps.append)
     assert len(out) == 3
-    assert sleeps == [2.0, 2.0]                    # 3 币 → 2 次间隔，秒为单位
+    assert sleeps == [0.5, 0.5]                    # 3 币 → 2 次间隔，秒为单位
 
 
 def test_fetch_universe_candles_pace_zero_disables_sleep():

@@ -162,9 +162,16 @@ class BinanceAdapter(CcxtAdapter):
         guard = 0
         while cursor <= bound and guard < 10000:
             guard += 1
+            # limit 贴合本段实际所需根数(非恒 1500):币安 klines 权重按 limit 分档
+            # ([1,100)=1 / [100,500)=2 / [500,1000)=5 / [1000,1500]=10)。选币仅 160 根 →
+            # limit≈161 → 权重 2,而非 1500 的档 10(白付 5×;HL candleSnapshot 无此分档、
+            # 迁币安时未重估。2026-07-16 testnet 实测 limit=160→权重 2)。大区间(回测)首页
+            # remaining≫1500 → min 到 1500 满页减翻页,行为不变。
+            remaining = int((bound - cursor) // tf_ms) + 1
+            limit = min(1500, max(1, remaining))
             batch = self.client.fapiPublicGetKlines({
                 'symbol': native_id, 'interval': timeframe,
-                'startTime': int(cursor), 'limit': 1500})
+                'startTime': int(cursor), 'limit': limit})
             if not batch:
                 break
             all_rows.extend(batch)
