@@ -19,6 +19,7 @@ from gridtrade.backtest.cache import ParquetCache
 from gridtrade.config import DEFAULT_STOP_CFG, DEFAULT_STRATEGY_CONFIG
 from gridtrade.core.grid_engine import calc_pv_spike, simulate_grid_engine
 from gridtrade.core.grid_params import calc_grid_params_v1, calc_grid_params_v2
+from gridtrade.exchanges.binance import is_coin_market
 
 # 回测默认策略（镜像 gridtrade.config 已验证参数；stop_loss_config 补 funding 止损）
 BT_STRATEGY = {**DEFAULT_STRATEGY_CONFIG,
@@ -449,6 +450,21 @@ def _binance_datasource_1h(cache):
     return adapter, DataSource(adapter, cache, timeframe='1h')
 
 
+def exclude_non_coin(symbols, adapter):
+    """从 canonical 符号集剔除当前 exchangeInfo 的非 COIN 标的(TradFi 代币化永续),与实盘
+    _include_market 共用同一 is_coin_market 谓词(单一事实源,spec 2026-07-15 §4.3)。
+    保留退市 COIN:退市币不在当前 markets → 不在 non_coin → 不被剔(无幸存者偏差)。
+    markets 未加载则 load(幂等;ccxt 缓存,紧随 prewarm 复用,全程一次 exchangeInfo)。
+    返回 (kept: sorted list[str], removed: int)。"""
+    adapter.client.load_markets()
+    markets = adapter.client.markets or {}
+    non_coin = {adapter.to_canonical(m['symbol']) for m in markets.values()
+                if m.get('swap') and m.get('settle') == adapter.quote_currency
+                and not is_coin_market(m)}
+    kept = sorted(s for s in symbols if s not in non_coin)
+    return kept, len(set(symbols) & non_coin)
+
+
 def prewarm_1h(cache, universe, warm_start_ms, end_ms, *, log=print):
     """phase1：全市场 1h 选币 OHLCV——Vision 归档批量 + API 尾补(归档滞后1-2天)。
     返回 adapter（复用于 phase2）。"""
@@ -546,9 +562,11 @@ def main(argv=None):
         bt_blacklist = effective_blacklist(BT_BLACKLIST, tiers)
         print('[BT] tiers 启用: tier0=%d tier1=%d cap=%d' %
               (len(tiers.tier0), len(tiers.tier1), tiers.tier2_cap))
-    # 票池=归档全量合约（含退市，无幸存者偏差，spec §6.1）−黑名单
-    universe = sorted(set(V.list_archive_symbols()) - set(bt_blacklist))
-    print('[BT] 全市场票池 %d 币(归档含退市,−黑名单 %d)' % (len(universe), len(bt_blacklist)))
+    # 票池=归档全量合约（含退市，无幸存者偏差，spec §6.1）−黑名单 −非 COIN(TradFi,spec 2026-07-15)
+    _arch = set(V.list_archive_symbols()) - set(bt_blacklist)
+    universe, _n_tradfi = exclude_non_coin(_arch, _adapter)
+    print('[BT] 全市场票池 %d 币(归档含退市,−黑名单 %d,−非COIN %d)'
+          % (len(universe), len(bt_blacklist), _n_tradfi))
     st1h = V.warm_vision(cache, universe, _ms(warm_start), _ms(win_end),
                          timeframes=('1h',))
     print('[BT] 1h 预热@Vision: %s' % st1h)
