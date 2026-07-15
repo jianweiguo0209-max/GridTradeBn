@@ -50,4 +50,7 @@ def test_open_infeasible_warns(store, capsys):
             {'maxLeverage': 3, 'maxNotional': 500.0}]
     ex, gx = _gx(store, tiers=tiny)                 # worst 名义 ~ gearing×cap ≫ $200
     gx.open(ex.name, SYM, GP, tag='t')
-    assert 'WARN' in capsys.readouterr().out and ex._leverage_calls != []
+    out = capsys.readouterr().out
+    assert '档上限' in out                    # infeasible 分支独有(grid_executor.py:133)
+    assert '跳过(fail-open)' not in out        # 确非 fail-open 异常分支(:137)
+    assert ex._leverage_calls != []            # set_leverage 确实调了(尽力 L)
