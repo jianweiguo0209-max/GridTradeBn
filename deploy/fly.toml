@@ -42,6 +42,9 @@ primary_region = "nrt"
   SHOCK_K_HOURS = "4"
   SHOCK_PAUSE_HOURS = "2"
   MIN_ORDER_NOTIONAL = "5"     # 开仓预检全局下限，与按币 MIN_NOTIONAL 取 max（spec 2026-07-14 §5.3，testnet 同 mainnet 口径）
+  # 保险丝覆盖率门槛（spec 2026-07-15）：worst>MARKET_LOT_SIZE.maxQty 时降 cap 护全额、
+  # 降到 CAP_MIN 之下才拒币。主网当前恒不触发（临界权益 ≈$36.7k）；demo 会真实触发。0=停用（仅审计）。
+  FUSE_MIN_COVERAGE = "1.0"
   UNIVERSE_TOP_VOLUME_PCT = "0.55"  # 票池=24h 成交额前 55% 相对口径（与 mainnet 同口径，spec 2026-07-14-universe-top-volume-pct）
   # 置 false（2026-07-14 上线首日实证）：true 时每次部署/重启都把当前 offset 的格子
   # 关掉重开（churn 白交手续费；当日三次部署滚动致 XPIN 格两度轮换）。调试需重跑时

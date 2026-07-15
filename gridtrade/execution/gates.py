@@ -1,7 +1,9 @@
 """准入门链（Chain of Responsibility）—— 开网格提议的无冲突第一道闸。
 
 触发器产出 GridProposal -> GateChain 顺序过闸 -> 放行的提议交 GridManager 开仓。
-门只读状态、不下单、不写库。MarginGate/RiskBudgetGate 待保证金/风险口径决策后补。
+门只读状态、不下单、不写库。门可写 proposal 自身字段（如 cap）作门间传递——GridProposal
+本就是门链的通信载体（FuseCoverageGate 定稿 cap，spec 2026-07-15 §五）；"不写库/不下单"
+仍严格成立。MarginGate/RiskBudgetGate 待保证金/风险口径决策后补。
 """
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -100,6 +102,65 @@ class RiskBudgetGate(AdmissionGate):
                               'cap sum %.4f + %.4f > budget %.4f'
                               % (used, incoming, self.total_budget))
         return GateResult(True, 'RiskBudgetGate')
+
+
+class FuseCoverageGate(AdmissionGate):
+    """保险丝覆盖率门（spec 2026-07-15）：保险丝数量 worst=order_num×grid_count 受币安
+    MARKET_LOT_SIZE.maxQty 限制——超限被 -4005 拒（ed4616e 起适配器封顶到 maxQty，代价是
+    超出部分无原生硬保护，只剩软止损 5s 轮 + 爆仓线）。
+
+    本门在开仓前把 cap 降到"丝能护全额"的水平（保住币、只缩仓）；降到 CAP_MIN 之下才拒
+    （安全失败，不建死网格）。**降后"每笔名义额够不够"不在此重复实现**——交给链上紧随其后
+    的 MinNotionalGate 用新 cap 自然拒（DRY）。故链序必须是
+    FuseCoverage → RiskBudget → MinNotional → Margin：cap 在被任何"吃 cap"的门消费前定稿。
+
+    主网当前恒不触发（票池最小市价名义上限 $30,570 > 满仓名义额；临界权益 ≈$36,684），
+    权益长大后自动接管；demo 的 maxQty 比主网小 3-1200 倍故会真实触发。
+    min_coverage<=0 = 停用（紧急回退）。begin_batch 刷按币 maxQty 映射；取数失败 fail-open
+    （与 MinNotionalGate 同构——绝不因限额表读不到而拒单）。"""
+
+    def __init__(self, executor, min_coverage, *, adapter=None, log=None):
+        self.executor = executor
+        self.min_coverage = float(min_coverage)
+        self.adapter = adapter          # 按币 maxQty 来源（Instrument.market_max_qty）
+        self._max_qty = None            # None=未加载；{}=无数据（fail-open 不干预）
+        self.log = log
+
+    def begin_batch(self) -> None:
+        if self.adapter is None:
+            self._max_qty = {}
+            return
+        try:
+            self._max_qty = {i.symbol: float(getattr(i, 'market_max_qty', 0.0) or 0.0)
+                             for i in self.adapter.list_instruments()}
+        except Exception as exc:        # fail-open：限额表读不到只退化，不拒单
+            self._max_qty = {}
+            if self.log is not None:
+                self.log('[gate] FuseCoverageGate: list_instruments failed %r' % (exc,))
+
+    def check(self, proposal: GridProposal) -> GateResult:
+        if self._max_qty is None:       # 未经 begin_batch 的独立 evaluate → 惰性加载一次
+            self.begin_batch()
+        if self.min_coverage <= 0:      # 停用（紧急回退）
+            return GateResult(True, 'FuseCoverageGate')
+        from gridtrade.execution.fuse_policy import fuse_capped_cap
+        mx = (self._max_qty or {}).get(proposal.symbol, 0.0)
+        cap = (proposal.cap if proposal.cap is not None
+               else self.executor._resolve_cap())
+        cap2, cov = fuse_capped_cap(cap, self.executor.gearing, proposal.grid_params, mx,
+                                    min_amount=self.executor.min_amount,
+                                    min_coverage=self.min_coverage)
+        if cov is None or cap2 >= cap:  # 未知/建不了网/足额 → 放行不干预
+            return GateResult(True, 'FuseCoverageGate')
+        if cap2 < self.executor.cap_min:
+            return GateResult(False, 'FuseCoverageGate',
+                              'fuse coverage %.0f%% → cap %.2f->%.2f < CAP_MIN %.2f'
+                              % (100.0 * cov, cap, cap2, self.executor.cap_min))
+        proposal.cap = cap2             # 定稿 cap：后续门与 executor.open 都 honor
+        if self.log is not None:
+            self.log('[gate] FuseCoverageGate: %s 丝覆盖 %.0f%% → cap %.2f->%.2f（降档护全额）'
+                     % (proposal.symbol, 100.0 * cov, cap, cap2))
+        return GateResult(True, 'FuseCoverageGate')
 
 
 class MinNotionalGate(AdmissionGate):

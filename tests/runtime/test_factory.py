@@ -28,19 +28,23 @@ def test_build_runtime_wires_all_components():
     assert rt.executor.cap == 500.0 and rt.executor.gearing == 2.72   # =旧 lev4×0.68
 
 
-def test_build_runtime_gate_chain_has_four_gates_margin_last():
-    # MarginGate 必须末位（短路链中过它即准入，预留不虚高）；MinNotionalGate 在其前。
-    # SymbolLockGate 已删（同币 cap 裁决收敛到 DB 槽位 + open_proposals 捕获 SlotExhausted）。
+def test_build_runtime_gate_chain_has_five_gates_fuse_before_cap_consumers():
+    # FuseCoverageGate 必须在"吃 cap"的门（RiskBudget/MinNotional/Margin）之前：
+    # 它写回 proposal.cap，后续门须看到定稿 cap（spec 2026-07-15 §五）。MarginGate 仍末位
+    # （短路链中过它即准入，预留不虚高）。SymbolLockGate 已删（同币 cap 裁决收敛到 DB 槽位 +
+    # open_proposals 捕获 SlotExhausted）。
     from gridtrade.runtime.factory import build_runtime
-    from gridtrade.execution.gates import (MaxConcurrentGate, MinNotionalGate,
-                                           RiskBudgetGate, MarginGate)
+    from gridtrade.execution.gates import (FuseCoverageGate, MarginGate,
+                                           MaxConcurrentGate, MinNotionalGate,
+                                           RiskBudgetGate)
     rt = build_runtime(_cfg())
     gates = rt.manager.gates.gates
-    assert len(gates) == 4
+    assert len(gates) == 5
     assert isinstance(gates[0], MaxConcurrentGate)
-    assert isinstance(gates[1], RiskBudgetGate)
-    assert isinstance(gates[2], MinNotionalGate)
-    assert isinstance(gates[3], MarginGate)
+    assert isinstance(gates[1], FuseCoverageGate)
+    assert isinstance(gates[2], RiskBudgetGate)
+    assert isinstance(gates[3], MinNotionalGate)
+    assert isinstance(gates[4], MarginGate)
 
 
 def test_build_runtime_creates_tables_and_trigger_uses_engine():

@@ -54,6 +54,7 @@ class CcxtAdapter(ExchangeAdapter):
                 state='live' if m.get('active', True) else 'expired',
                 list_ts=int(info.get('listTime') or 0),
                 min_cost=float(((m.get('limits', {}) or {}).get('cost', {}) or {}).get('min') or 0.0),
+                market_max_qty=float(((m.get('limits', {}) or {}).get('market', {}) or {}).get('max') or 0.0),
             ))
         # 措辞交易所无关(通用层不泄漏 COIN 概念);币安下此数≈非 COIN TradFi(+少量 USDC-M)。
         # fail-closed 配套护栏:underlyingType 字段格式漂移致白名单误杀会使此数跳升、可见。

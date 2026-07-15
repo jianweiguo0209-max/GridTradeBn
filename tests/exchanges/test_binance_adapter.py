@@ -472,3 +472,12 @@ def test_list_instruments_logs_include_excluded(capsys):
     out = capsys.readouterr().out
     # AAPL(EQUITY)+XAU(COMMODITY)+BTC-USDC(非本结算)=3 个被 _include_market 剔除
     assert 'include 过滤剔除 3' in out
+
+
+def test_stop_order_clamp_log_reports_coverage(capsys):
+    # 封顶时须打出覆盖率与 cloid（spec 2026-07-15 §六：不足额必须响亮可见）
+    c = FakeBinanceClient()
+    a = _binance(c)
+    a.create_stop_order('BTC/USDT:USDT', 'sell', 480.0, 95.0, client_oid='9:fuse:low')
+    out = capsys.readouterr().out
+    assert '封顶' in out and '25%' in out and '9:fuse:low' in out   # 120/480 = 25%

@@ -46,6 +46,9 @@ primary_region = "nrt"
   # docs/superpowers/specs/2026-07-04-candidate-universe-port-design.md。
   UNIVERSE_TOP_VOLUME_PCT = "0.55"
   MIN_ORDER_NOTIONAL = "5"          # 开仓预检全局下限，与按币 MIN_NOTIONAL 取 max（spec 2026-07-14 §5.3，密网币直接门链拒，不留死 OPENING）
+  # 保险丝覆盖率门槛（spec 2026-07-15）：worst>MARKET_LOT_SIZE.maxQty 时降 cap 护全额、
+  # 降到 CAP_MIN 之下才拒币。主网当前恒不触发（临界权益 ≈$36.7k）；demo 会真实触发。0=停用（仅审计）。
+  FUSE_MIN_COVERAGE = "1.0"
   # 档0 硬禁名单单源在 gridtrade/config.py DEFAULT_TIER_POLICY.tier0（legacy 移植 9 币，
   # spec 2026-07-06-tiered-*）；此处 env 仅作运维紧急覆盖（非空才生效），名单变更走代码
   # commit 两侧（实盘/回测）原子同步。已持有的被禁币不强平，随 12H 换仓自然退出。

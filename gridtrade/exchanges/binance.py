@@ -91,8 +91,10 @@ class BinanceAdapter(CcxtAdapter):
         按实际持仓执行，封顶后丝仍护到 maxQty，超出部分由软止损(5s 轮)+爆仓线兜底。"""
         mx = self._market_max_qty(symbol)
         if mx is not None and size > mx:
-            print('[binance] %s 保险丝数量 %.8g > MARKET_LOT_SIZE.maxQty %.8g -> 封顶'
-                  '(丝保护不足额，超出部分依赖软止损)' % (symbol, size, mx), flush=True)
+            print('[binance] %s 保险丝封顶: %.8g -> %.8g（MARKET_LOT_SIZE.maxQty），覆盖率 %.0f%%'
+                  '——超出部分依赖软止损+爆仓线（cloid=%s；门链应已降 cap 护全额，本日志出现'
+                  '即意味着走了手动/fail-open 路径，spec 2026-07-15 §六）'
+                  % (symbol, size, mx, 100.0 * mx / size, client_oid), flush=True)
             size = mx
         trigger_price = self.quantize_price(symbol, trigger_price)   # 触发价按 tickSize 量化(防 -1111)
         p = self._params(reduce_only, client_oid)

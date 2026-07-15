@@ -203,3 +203,18 @@ def test_universe_top_volume_pct_parsed():
     from gridtrade.config import load_deploy_config
     assert load_deploy_config({'UNIVERSE_TOP_VOLUME_PCT': '0.55'}).universe_top_volume_pct == 0.55
     assert load_deploy_config({}).universe_top_volume_pct == 0.0
+
+
+def test_fuse_min_coverage_parsed():
+    # 保险丝覆盖率门槛（spec 2026-07-15）；默认 1.0=必须足额，0=仅审计不干预
+    from gridtrade.config import load_deploy_config
+    assert load_deploy_config({}).fuse_min_coverage == 1.0
+    assert load_deploy_config({'FUSE_MIN_COVERAGE': '0'}).fuse_min_coverage == 0.0
+
+
+def test_fuse_min_coverage_above_one_rejected():
+    # >1 无意义且是语义陷阱（"留 20% 余量"的自然误读会把已足额币白缩仓）→ boot 直接报错
+    import pytest
+    from gridtrade.config import load_deploy_config
+    with pytest.raises(RuntimeError):
+        load_deploy_config({'FUSE_MIN_COVERAGE': '1.2'})

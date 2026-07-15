@@ -29,7 +29,11 @@
 - 既有测试桩：`tests/exchanges/test_binance_adapter.py:15` 的 `FakeBinanceClient` BTC markets 已含 `'market': {'min': 0.001, 'max': 120.0}`，ETH **无** `market` 键（fail-open 用例）。
 - `tests/exchanges/test_ccxt_adapter.py:54-56` 的 `FakeCcxtClient.markets` 只有 `amount`/`cost` limits，**无 `market` 键**（Task 1 要加）。
 - `GridExecutor` 已有属性：`gearing`、`min_amount`、`cap_min`、`_resolve_cap()`。
-- `GridProposal` 已有 `cap` 字段；`RiskBudgetGate`/`MarginGate`/`executor.open`/`LiveEquity` 都已 honor 它。
+- `GridProposal` 已有 `cap` 字段；`RiskBudgetGate`/`MarginGate`/`LiveEquity` 已 honor 它。
+  ⚠ **但 `GridManager.open_proposals` 从不把 `proposal.cap` 传给 `executor.open`**（manager.py:32-34，
+  评审实测 2026-07-15）——`executor.open(cap=...)` 的参数只有**手动 OPEN_GRID**（commands.py）在用。
+  自动路径不接上这一行，降档 cap 只影响"准入判断"、**真实网格仍按原始 cap 建仓**，本功能等于没做。
+  Task 3 必须补这条转发（见 Task 3 Step 3⑥）。
 - `ResilientAdapter.list_instruments` 已转发（`_call('list_instruments')`）⇒ 新字段自动流过，**无需改转发**。
 
 ---
@@ -159,15 +163,38 @@ def test_full_coverage_leaves_cap_untouched():
 
 
 def test_shortfall_caps_down_to_exactly_full():
-    # maxQty = worst 的一半 → 降 cap 到刚好足额（worst' == maxQty，coverage'=1.0）
+    # maxQty = worst 的一半 → 降 cap 到足额（无取整时 worst' 恰 == maxQty，不多缩一分仓位）
     w = fuse_worst(100.0, GEARING, GP)
     mx = w / 2.0
     cap2, cov = fuse_capped_cap(100.0, GEARING, GP, mx)
     assert cov == pytest.approx(0.5)              # 干预前的覆盖率
-    assert cap2 == pytest.approx(50.0)            # 线性缩放
+    assert cap2 == pytest.approx(50.0)            # 线性缩放（min_amount=0 → 无取整）
     w2 = fuse_worst(cap2, GEARING, GP)
     assert w2 <= mx * (1 + 1e-9)                  # 足额（护全额）
-    assert w2 == pytest.approx(mx)                # 且刚好——不多缩一分仓位
+    assert w2 == pytest.approx(mx)                # 且刚好
+
+
+def test_capdown_never_raises_on_lot_step_boundary():
+    # 取整阶梯回归（评审实证 2026-07-15）：覆盖率 99% + min_amount=0.001 时，
+    # 旧算法 cap×coverage 会让每笔数量落同一档不变 → worst' 不降 → 断言抛异常。
+    # 新算法（未取整 worst 求解）必须既不抛异常、又真的足额。
+    gp = dict(GP)
+    w = fuse_worst(10.0, 1.0, gp, min_amount=0.001)
+    mx = w * 0.99                                  # 最常见的"差一点"场景
+    cap2, cov = fuse_capped_cap(10.0, 1.0, gp, mx, min_amount=0.001)   # 不得抛
+    assert cov == pytest.approx(0.99)
+    w2 = fuse_worst(cap2, 1.0, gp, min_amount=0.001)
+    assert w2 is not None and w2 <= mx * (1 + 1e-9)     # 取整后仍足额
+
+
+def test_capdown_never_increases_cap():
+    # 护栏绝不放大仓位（评审实证 2026-07-15）：min_coverage>1 时已足额币（coverage∈[1,mc)）
+    # 也会进干预分支——必须 clamp 成不动，否则 cap 会被放大到 worst==maxQty。
+    w = fuse_worst(100.0, GEARING, GP)
+    for mc, mx_mult in ((1.2, 1.10), (2.0, 1.90)):      # 已足额（coverage>1）却低于 mc
+        cap2, cov = fuse_capped_cap(100.0, GEARING, GP, w * mx_mult, min_coverage=mc)
+        assert cov == pytest.approx(mx_mult)
+        assert cap2 <= 100.0                            # 只降不升（此处应恰为不动）
 
 
 def test_unknown_max_qty_fails_open():
@@ -284,10 +311,20 @@ def fuse_capped_cap(cap, gearing, grid_params, market_max_qty, *,
     coverage = mx / worst
     if float(min_coverage) <= 0 or coverage >= float(min_coverage):
         return cap, coverage
-    cap2 = cap * coverage          # order_num 随 cap 线性 ⇒ worst' = maxQty（coverage'=1.0）
+    # 降档用**未取整** worst 求解（评审实证 2026-07-15）：min_amount=0 时 grid_order_info
+    # 跳过向下取整 ⇒ worst_raw 对 cap 严格线性 ⇒ cap'=cap×maxQty/worst_raw 使
+    # worst_raw(cap')=maxQty，而真实（取整后）worst'(cap') ≤ worst_raw(cap') = maxQty 必然成立。
+    # 【勿改回 cap×coverage】：coverage 基于取整后 worst，取整是阶梯函数——cap 降 1% 时每笔
+    # 数量可能落同一档不变 → worst' 不降 > maxQty → 断言抛异常（覆盖率 99% 实测必炸）。
+    worst_raw = fuse_worst(cap, gearing, grid_params, 0.0)
+    if worst_raw is None or worst_raw <= 0:
+        return cap, coverage       # 理论不可达（worst 已算出）；防御性 fail-open
+    # 只降不升（评审实证 2026-07-15）：min_coverage>1 时 coverage∈[1, min_coverage) 的"已足额"
+    # 币也会进到这里，若不 clamp，cap 会被**放大**到 worst==maxQty——名为降档的护栏变成仓位
+    # 放大器（运维把 FUSE_MIN_COVERAGE=1.2 理解成"留 20% 余量"即触发）。护栏绝不放大仓位。
+    cap2 = min(cap, cap * (mx / worst_raw))
     w2 = fuse_worst(cap2, gearing, grid_params, min_amount)
-    # min_amount 向下取整只减不增 ⇒ 必然成立；仍断言防未来 grid_order_info 改动悄悄破坏
-    if w2 is not None and w2 > mx * (1 + 1e-9):
+    if w2 is not None and w2 > mx * (1 + 1e-9):   # 守卫：防未来 grid_order_info 改动破坏线性
         raise AssertionError('fuse cap-down 失效: worst=%.8g > maxQty=%.8g' % (w2, mx))
     return cap2, coverage
 
@@ -298,7 +335,12 @@ def audit_fuse_coverage(universe, prices, max_qtys, cap, gearing):
 
     返回 {'need': 满仓名义额, 'total': 参与审计的币数, 'short': [(symbol, coverage)…]}
     （short 按覆盖率升序）。缺价/缺 maxQty 的币跳过（不参与审计，不误报）。
-    用途：让"逼近临界权益"提前可见——报出不足额币即"实盘几何开始偏离回测"的信号（§七）。"""
+    用途：让"逼近临界权益"提前可见——报出不足额币即"实盘几何开始偏离回测"的信号（§七）。
+
+    ⚠ **近似口径、非保守（评审实证 2026-07-15）**：选币轮拿不到 per-symbol 网格几何
+    （low/high/grid_count 由 ATR 现算），故用"现价"代替网格价梯的均价。现价落在网格带上沿时
+    会**高估**覆盖率几个百分点 → 边界处可能漏报（真实 99% 却算作足额）。这只影响"预警早晚"，
+    **不影响保护**：真正的护栏是 FuseCoverageGate 开仓前用 grid_order_info 的精确计算。"""
     need = float(cap) * float(gearing)
     short = []
     total = 0
@@ -335,6 +377,7 @@ git commit -m "feat(execution): fuse_policy 纯函数——覆盖率/降档 cap/
 - Modify: `gridtrade/execution/gates.py`（新增 `FuseCoverageGate` 类，置于 `MinNotionalGate` 之前）
 - Modify: `gridtrade/config.py`（`DeployConfig.fuse_min_coverage` + `load_deploy_config`）
 - Modify: `gridtrade/runtime/factory.py`（门链插入 + 传参）
+- Modify: `gridtrade/execution/manager.py`（`open_proposals` 转发 `cap=proposal.cap` + 建网失败逐提议隔离）
 - Modify: `deploy/fly.toml`、`deploy/fly.prod.toml`（`FUSE_MIN_COVERAGE = "1.0"`）
 - Modify: `.env.example`（新键注释）
 - Test: `tests/execution/test_gates.py`、`tests/test_config.py`
@@ -446,6 +489,38 @@ def test_fuse_gate_disabled_when_min_coverage_zero():
     assert gate.check(p).passed and p.cap is None
 
 
+def test_manager_forwards_capped_cap_to_executor():
+    # 集成守卫（评审实测 2026-07-15）：门链降档的 cap 必须真的传到 executor.open——
+    # 不传则真实网格按原始 cap 建仓、保险丝照旧超限，本功能等于没做。
+    from gridtrade.execution.gates import GateChain, GridProposal
+    from gridtrade.execution.manager import GridManager
+    seen = {}
+    class _Exec:
+        def open(self, exchange, symbol, grid_params, *, offset=0, tag='', cap=None):
+            seen['cap'] = cap
+            return 'gid1'
+    mgr = GridManager(_Exec(), GateChain([]))
+    p = GridProposal(exchange='binance', symbol='BTC/USDT:USDT',
+                     grid_params=_fuse_gp(), cap=42.0)     # 模拟 FuseCoverageGate 降档结果
+    assert mgr.open_proposals([p]) == ['gid1']
+    assert seen['cap'] == 42.0                             # 定稿 cap 到达执行器
+
+
+def test_manager_isolates_build_failure_per_proposal():
+    # 建网失败逐提议隔离（用户定 2026-07-15）：一个密网币不阻断整轮换仓
+    from gridtrade.execution.gates import GateChain, GridProposal
+    from gridtrade.execution.manager import GridManager
+    class _Exec:
+        def open(self, exchange, symbol, grid_params, *, offset=0, tag='', cap=None):
+            if symbol == 'BAD/USDT:USDT':
+                raise RuntimeError('建网失败：保证金不足')
+            return 'gid-ok'
+    mgr = GridManager(_Exec(), GateChain([]))
+    bad = GridProposal(exchange='binance', symbol='BAD/USDT:USDT', grid_params=_fuse_gp())
+    ok = GridProposal(exchange='binance', symbol='OK/USDT:USDT', grid_params=_fuse_gp())
+    assert mgr.open_proposals([bad, ok]) == ['gid-ok']     # 坏币跳过、好币照开
+
+
 def test_fuse_gate_then_min_notional_gate_rejects_unviable_capdown():
     # DRY 分工验证：FuseCoverage 只降 cap，"降后每笔名义额不够"由 MinNotionalGate 自然拒
     from gridtrade.execution.fuse_policy import fuse_worst
@@ -471,6 +546,14 @@ def test_fuse_min_coverage_parsed():
     from gridtrade.config import load_deploy_config
     assert load_deploy_config({}).fuse_min_coverage == 1.0
     assert load_deploy_config({'FUSE_MIN_COVERAGE': '0'}).fuse_min_coverage == 0.0
+
+
+def test_fuse_min_coverage_above_one_rejected():
+    # >1 无意义且是语义陷阱（"留 20% 余量"的自然误读会把已足额币白缩仓）→ boot 直接报错
+    import pytest
+    from gridtrade.config import load_deploy_config
+    with pytest.raises(RuntimeError):
+        load_deploy_config({'FUSE_MIN_COVERAGE': '1.2'})
 ```
 
 **同时**改 `tests/runtime/test_factory.py:31` 的既有用例——它钉死了"四门、Margin 最后"，现为五门（**改名 + 改断言**，保持其原意图：门链形状与顺序被守卫）：
@@ -566,13 +649,34 @@ class FuseCoverageGate(AdmissionGate):
 ② `gridtrade/config.py`——`DeployConfig` 在 `universe_top_volume_pct` 行**之后**追加：
 
 ```python
-    fuse_min_coverage: float = 1.0  # 保险丝覆盖率门槛（spec 2026-07-15）：<该值即降 cap 护全额；0=停用（仅审计）
+    fuse_min_coverage: float = 1.0  # 保险丝覆盖率门槛（spec 2026-07-15）：<该值即降 cap 护全额；0=停用（仅审计）。合法区间 (0, 1.0]——>1 无意义（覆盖率>1 只是余量，护栏已 clamp 成只降不升）
 ```
 
 `load_deploy_config` 在 `universe_top_volume_pct=...` 行**之后**追加：
 
 ```python
         fuse_min_coverage=_f(env, 'FUSE_MIN_COVERAGE', 1.0),
+```
+
+**并在 `load_deploy_config` 开头的退役键守卫之后、`cap = _f(env, 'CAP', 100.0)` 之前**追加合法
+区间守卫（沿本仓 fail-fast 惯例；评审+实现者双指出 >1 是语义陷阱：覆盖率>1 只是余量、丝本就
+能全平，设 1.2 只会把已足额的币白白缩仓）：
+
+```python
+    # 保险丝覆盖率门槛（spec 2026-07-15）：接受 <=0（停用，仅审计）或 (0, 1.0]。
+    # >1 无意义——coverage>1 只是余量（丝本就能全平最大持仓），设 1.2 这类"留余量"的自然
+    # 误读只会把已足额的币白缩一个 lot 步。禁静默 clamp：配置错了要响亮（沿退役键守卫惯例）。
+    _fmc = _f(env, 'FUSE_MIN_COVERAGE', 1.0)
+    if _fmc > 1.0:
+        raise RuntimeError('FUSE_MIN_COVERAGE=%s 无效：>1 无意义（覆盖率>1 只是余量，'
+                           '丝本就能全平最大持仓）；取 (0, 1.0] 或 <=0（停用，仅审计）' % _fmc)
+```
+
+**并把 dataclass 构造行改为复用 `_fmc`（勿重复解析同一 env 键——两处解析一旦分叉，非法值就能
+绕过守卫）**：
+
+```python
+        fuse_min_coverage=_fmc,
 ```
 
 ③ `gridtrade/runtime/factory.py`——import 增补 `FuseCoverageGate`，门链按新序：
@@ -602,6 +706,35 @@ from gridtrade.execution.gates import (FuseCoverageGate, GateChain, MarginGate,
   # 保险丝覆盖率门槛（spec 2026-07-15）：worst>MARKET_LOT_SIZE.maxQty 时降 cap 护全额、
   # 降到 CAP_MIN 之下才拒币。主网当前恒不触发（临界权益 ≈$36.7k）；demo 会真实触发。0=停用（仅审计）。
   FUSE_MIN_COVERAGE = "1.0"
+```
+
+⑥ `gridtrade/execution/manager.py`——`open_proposals` **转发定稿 cap**（否则门链降档对真实开仓无效，
+评审实测；同时按既有 `SlotExhausted` 惯例做逐提议隔离，防单币建网失败搞挂整轮换仓）：
+
+```python
+    def open_proposals(self, proposals) -> List[str]:
+        opened: List[str] = []
+        for proposal in self.gates.filter(proposals):
+            try:
+                # cap=proposal.cap：门链定稿 cap（FuseCoverageGate 降档护全额，spec 2026-07-15 §五）。
+                # None=未干预 → executor 回退自己的动态 cap（原行为）。不传即降档失效（评审实测）。
+                gid = self.executor.open(
+                    proposal.exchange, proposal.symbol, proposal.grid_params,
+                    offset=proposal.offset, tag=proposal.tag, cap=proposal.cap)
+            except SlotExhausted as exc:
+                # 同币并发 cap 的唯一裁决层=DB 槽位（SymbolLockGate 已删，spec
+                # 2026-07-06-tiered-*）：逐提议隔离——跳过本提议、其余照开；
+                # 可观测性沿用 [gate] 口径（该开未开必须留痕）。
+                print('[gate] rejected %s tag=%s by SlotCap: %s'
+                      % (proposal.symbol, proposal.tag, exc), flush=True)
+                continue
+            except RuntimeError as exc:
+                # 建网失败（降档后 cap 太小；MinNotionalGate 停用时才漏到这）：同样逐提议隔离
+                # ——一个密网币不该阻断整轮换仓（用户定 2026-07-15）。
+                print('[gate] rejected %s tag=%s by BuildFail: %s'
+                      % (proposal.symbol, proposal.tag, exc), flush=True)
+                continue
+            opened.append(gid)
 ```
 
 ⑤ `.env.example`——在 `MIN_ORDER_NOTIONAL` 行之后加：
@@ -713,7 +846,12 @@ Run: `.venv/bin/python -m pytest tests/exchanges/test_binance_adapter.py::test_s
 ② `gridtrade/runtime/scheduler.py`——在 `run_scheduler_once` 里 `universe = resolve_live_universe(...)` 之后、票池后续处理之前插入：
 
 ```python
-    # 保险丝覆盖审计（spec 2026-07-15 §六）：零额外权重（复用 list_instruments + 批量价）。
+    # 保险丝覆盖审计（spec 2026-07-15 §六）。真实成本（诚实披露，勿写"零额外 API"）：
+    #   ① limits 复用 ccxt 缓存 markets（零权重）；
+    #   ② fetch_prices_all（全市场 ticker/price，权重 2）；
+    #   ③ _resolve_cap() 在 cap_equity_frac>0（生产默认）时会触发一次 fetch_balance（权重 5）
+    #      ——本轮不开仓时这是审计独有的净增成本。
+    # 合计 ≈7 权重/选币轮（每小时一次，相对 fapi 2400/min 预算可忽略，但非零）。
     # 报出不足额币 = 权益已跨临界（≈$36.7k）→ 门链开始降 cap，且实盘几何开始偏离回测（§七）。
     try:
         from gridtrade.execution.fuse_policy import audit_fuse_coverage

@@ -71,9 +71,12 @@ def fuse_capped_cap(cap, gearing, grid_params, market_max_qty, *,
 - `grid_order_info` 返回 None(cap 太低建不了网)→ `(cap, None)`(交给 MinNotionalGate 拒);
 - `min_coverage <= 0` → 停用(仅算 coverage 供审计,不降 cap);
 - `coverage >= min_coverage` → `(cap, coverage)` 原样(容忍范围内);
-- 否则 `cap' = cap × maxQty/worst`(⇒ coverage' = 1.0 足额),再用 `grid_order_info(cap', ...)`
-  复核 `worst' ≤ maxQty`(order_num 随 cap 线性、`min_amount` 向下取整只减不增 ⇒ 必然成立;
-  **仍加断言**防未来改动)。
+- 否则用**未取整 worst** 求解(实现修正 2026-07-15,评审实证):
+  `cap' = min(cap, cap × maxQty/worst_raw)`,其中 `worst_raw` 用 `min_amount=0` 算(grid_order_info
+  跳过取整 ⇒ 对 cap 严格线性)。则取整后 `worst'(cap') ≤ worst_raw(cap') = maxQty` **数学必然**。
+  ⚠ 原式 `cap × maxQty/worst`(基于取整后 worst)**是错的**:取整是阶梯函数,cap 降 1% 时每笔数量
+  可能落同一档不变 → worst' 不降 > maxQty → 断言抛异常(15.2% 参数组合命中)。`min(cap, …)` 的
+  clamp 防 `min_coverage>1` 时护栏反把仓位放大。**断言保留**作守卫。
 
 口径与 `executor.open` 同源:`grid_order_info(cap, gearing, low, high, grid_count, stop_low,
 stop_high, min_amount=min_amount, max_rate=1.0)`,`worst = 每笔数量 × grid_count`。
@@ -102,7 +105,8 @@ stop_high, min_amount=min_amount, max_rate=1.0)`,`worst = 每笔数量 × grid_c
   设计("手动指令不经票池、保留实验自由度",fly.toml 注释),给它响亮日志而非拦截;自动路径
   已被门链保障,此告警只应在手动/fail-open 时出现。
 - **选币轮审计**(scheduler,resolve_live_universe 之后):当前 cap 下票池里**几个币不足额、
-  最差币与其覆盖率**,一行 log。零额外 API(复用 list_instruments)。作用:让"逼近 $36.7k
+  最差币与其覆盖率**,一行 log。limits 复用 ccxt 缓存 markets(零权重);价格走 fetch_prices_all
+  (权重 2,每选币轮一次 → 可忽略,非"零额外 API")。作用:让"逼近 $36.7k
   临界"提前数月可见,而非等出事;也是 §七 回测偏离的报警信号。
 
 ## 七、配置与回测口径

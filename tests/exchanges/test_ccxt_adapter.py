@@ -55,7 +55,11 @@ class FakeCcxtClient:
         tick = self.markets[sym]['precision']['price']   # 0.1；ccxt 返回字符串（%g 去浮点噪声）
         return '%.10g' % (round(float(price) / tick) * tick)
     markets = {'BTC/USDT:USDT': {'swap': True, 'precision': {'price': 0.1, 'amount': 0.001},
-                                 'limits': {'amount': {'min': 0.001}, 'cost': {'min': 5.0}},
+                                 'limits': {'amount': {'min': 0.001}, 'cost': {'min': 5.0},
+                                            'market': {'min': 0.001, 'max': 120.0}},
+                                 'active': True, 'info': {'listTime': '0'}},
+               'ETH/USDT:USDT': {'swap': True, 'precision': {'price': 0.01, 'amount': 0.01},
+                                 'limits': {'amount': {'min': 0.01}, 'cost': {'min': 20.0}},
                                  'active': True, 'info': {'listTime': '0'}}}
 
 
@@ -228,3 +232,18 @@ def test_create_stop_order_quantizes_trigger_price():
     CcxtAdapter(c, name='x').create_stop_order('BTC/USDT:USDT', 'sell', 2.0, 95.16789)
     assert c.created[-1][5]['stopLossPrice'] == 95.2
     assert c.created[-1][4] == 95.2         # 参考价（ref price）同步量化
+
+
+def test_list_instruments_fills_market_max_qty():
+    # 市价单单笔数量上限（币安 MARKET_LOT_SIZE.maxQty，ccxt limits.market.max）——
+    # 保险丝覆盖率门的数据面（spec 2026-07-15 §三）
+    insts = {i.symbol: i for i in _adapter().list_instruments()}
+    assert insts['BTC/USDT:USDT'].market_max_qty == 120.0
+    assert insts['ETH/USDT:USDT'].market_max_qty == 0.0   # 缺 market 键 → 0=未知（fail-open）
+
+
+def test_instrument_market_max_qty_defaults_zero():
+    from gridtrade.exchanges.base import Instrument
+    i = Instrument(symbol='X/USDT:USDT', tick=0.1, lot=0.1, min_size=0.1,
+                   state='live', list_ts=0)
+    assert i.market_max_qty == 0.0

@@ -376,3 +376,157 @@ def test_min_notional_gate_disabled_when_no_floor():
     assert gate.check(GridProposal(exchange='binance', symbol='X/USDT:USDT',
                                    grid_params=gp)).passed
 
+
+def _fuse_ex(cap=100.0, cap_min=20.0):
+    class _Ex:
+        gearing = 3.4
+        min_amount = 0.0
+        def __init__(self):
+            self.cap_min = cap_min
+        def _resolve_cap(self):
+            return cap
+    return _Ex()
+
+
+def _fuse_gp():
+    return dict(low_price=100.0, high_price=120.0, grid_count=20,
+                stop_low_price=95.0, stop_high_price=125.0)
+
+
+def _fuse_adapter(max_qty):
+    # FakeExchange 只需提供带 market_max_qty 的 Instrument
+    from gridtrade.exchanges.base import Instrument
+    from gridtrade.exchanges.fake import FakeExchange
+    return FakeExchange(instruments=[
+        Instrument(symbol='BTC/USDT:USDT', tick=0.1, lot=0.001, min_size=0.001,
+                   state='live', list_ts=0, min_cost=0.0, market_max_qty=max_qty)])
+
+
+def test_fuse_gate_caps_down_and_writes_back_proposal_cap():
+    # 不足额（maxQty=worst/2）→ 降 cap 到刚好足额，写回 proposal.cap 供后续门/executor 用
+    from gridtrade.execution.fuse_policy import fuse_worst
+    from gridtrade.execution.gates import FuseCoverageGate, GridProposal
+    gp = _fuse_gp()
+    w = fuse_worst(100.0, 3.4, gp)
+    gate = FuseCoverageGate(_fuse_ex(), 1.0, adapter=_fuse_adapter(w / 2.0))
+    gate.begin_batch()
+    p = GridProposal(exchange='binance', symbol='BTC/USDT:USDT', grid_params=gp)
+    res = gate.check(p)
+    assert res.passed
+    assert p.cap == pytest.approx(50.0)                       # 定稿 cap 写回提议
+    assert fuse_worst(p.cap, 3.4, gp) <= (w / 2.0) * (1 + 1e-9)   # 丝护全额
+
+
+def test_fuse_gate_passes_when_covered():
+    # 足额 → 放行且不动 cap（proposal.cap 保持 None，executor 用动态 cap）
+    from gridtrade.execution.fuse_policy import fuse_worst
+    from gridtrade.execution.gates import FuseCoverageGate, GridProposal
+    gp = _fuse_gp()
+    gate = FuseCoverageGate(_fuse_ex(), 1.0,
+                            adapter=_fuse_adapter(fuse_worst(100.0, 3.4, gp) * 10))
+    gate.begin_batch()
+    p = GridProposal(exchange='binance', symbol='BTC/USDT:USDT', grid_params=gp)
+    assert gate.check(p).passed and p.cap is None
+
+
+def test_fuse_gate_rejects_when_capped_below_cap_min():
+    # 降档后 cap' < CAP_MIN → 拒（安全失败，不建死网格）
+    from gridtrade.execution.fuse_policy import fuse_worst
+    from gridtrade.execution.gates import FuseCoverageGate, GridProposal
+    gp = _fuse_gp()
+    w = fuse_worst(100.0, 3.4, gp)
+    gate = FuseCoverageGate(_fuse_ex(cap_min=60.0), 1.0,
+                            adapter=_fuse_adapter(w * 0.5))     # cap'=50 < CAP_MIN 60
+    gate.begin_batch()
+    p = GridProposal(exchange='binance', symbol='BTC/USDT:USDT', grid_params=gp)
+    res = gate.check(p)
+    assert not res.passed and 'CAP_MIN' in res.reason
+
+
+def test_fuse_gate_fails_open_on_unknown_max_qty_and_adapter_error():
+    from gridtrade.execution.gates import FuseCoverageGate, GridProposal
+    gp = _fuse_gp()
+    # ① maxQty=0（未知）→ 放行不干预
+    gate = FuseCoverageGate(_fuse_ex(), 1.0, adapter=_fuse_adapter(0.0))
+    gate.begin_batch()
+    p = GridProposal(exchange='binance', symbol='BTC/USDT:USDT', grid_params=gp)
+    assert gate.check(p).passed and p.cap is None
+    # ② list_instruments 抛异常 → 空映射 fail-open（绝不因限额表读不到而拒单）
+    class _Boom:
+        def list_instruments(self):
+            raise RuntimeError('limits unavailable')
+    logs = []
+    gate2 = FuseCoverageGate(_fuse_ex(), 1.0, adapter=_Boom(), log=logs.append)
+    gate2.begin_batch()
+    p2 = GridProposal(exchange='binance', symbol='BTC/USDT:USDT', grid_params=gp)
+    assert gate2.check(p2).passed and p2.cap is None
+    assert any('FuseCoverageGate' in m for m in logs)
+
+
+def test_fuse_gate_disabled_when_min_coverage_zero():
+    # 停用开关（紧急回退）：不足额也放行不动 cap
+    from gridtrade.execution.fuse_policy import fuse_worst
+    from gridtrade.execution.gates import FuseCoverageGate, GridProposal
+    gp = _fuse_gp()
+    gate = FuseCoverageGate(_fuse_ex(), 0.0,
+                            adapter=_fuse_adapter(fuse_worst(100.0, 3.4, gp) * 0.1))
+    gate.begin_batch()
+    p = GridProposal(exchange='binance', symbol='BTC/USDT:USDT', grid_params=gp)
+    assert gate.check(p).passed and p.cap is None
+
+
+def test_manager_forwards_capped_cap_to_executor():
+    # 集成守卫（评审实测 2026-07-15）：门链降档的 cap 必须真的传到 executor.open——
+    # 不传则真实网格按原始 cap 建仓、保险丝照旧超限，本功能等于没做。
+    from gridtrade.execution.gates import GateChain, GridProposal
+    from gridtrade.execution.manager import GridManager
+    seen = {}
+    class _Exec:
+        def open(self, exchange, symbol, grid_params, *, offset=0, tag='', cap=None):
+            seen['cap'] = cap
+            return 'gid1'
+    mgr = GridManager(_Exec(), GateChain([]), stop_cfg={})   # open_proposals 不读 stop_cfg
+    p = GridProposal(exchange='binance', symbol='BTC/USDT:USDT',
+                     grid_params=_fuse_gp(), cap=42.0)     # 模拟 FuseCoverageGate 降档结果
+    assert mgr.open_proposals([p]) == ['gid1']
+    assert seen['cap'] == 42.0                             # 定稿 cap 到达执行器
+
+
+def test_manager_isolates_build_failure_per_proposal():
+    # 建网失败逐提议隔离（用户定 2026-07-15）：一个密网币不阻断整轮换仓
+    from gridtrade.execution.gates import GateChain, GridProposal
+    from gridtrade.execution.manager import GridManager
+    class _Exec:
+        # 合并 main@f4d053b 后 open_proposals 用 catch-all + _fail_half_open 隔离（收编了 fuse
+        # 原 except RuntimeError）；_fail_half_open 会遍历 grids.list_active()——本 fake 的 open
+        # 抛错前未建格，list_active 返空即 no-op，行为不变（隔离坏币、好币照开）。
+        class grids:
+            @staticmethod
+            def list_active():
+                return []
+        def open(self, exchange, symbol, grid_params, *, offset=0, tag='', cap=None):
+            if symbol == 'BAD/USDT:USDT':
+                raise RuntimeError('建网失败：保证金不足')
+            return 'gid-ok'
+    mgr = GridManager(_Exec(), GateChain([]), stop_cfg={})   # open_proposals 不读 stop_cfg
+    bad = GridProposal(exchange='binance', symbol='BAD/USDT:USDT', grid_params=_fuse_gp())
+    ok = GridProposal(exchange='binance', symbol='OK/USDT:USDT', grid_params=_fuse_gp())
+    assert mgr.open_proposals([bad, ok]) == ['gid-ok']     # 坏币跳过、好币照开
+
+
+def test_fuse_gate_then_min_notional_gate_rejects_unviable_capdown():
+    # DRY 分工验证：FuseCoverage 只降 cap，"降后每笔名义额不够"由 MinNotionalGate 自然拒
+    from gridtrade.execution.fuse_policy import fuse_worst
+    from gridtrade.execution.gates import (FuseCoverageGate, GateChain,
+                                           MinNotionalGate, GridProposal)
+    gp = _fuse_gp()
+    w = fuse_worst(100.0, 3.4, gp)
+    ex = _fuse_ex(cap_min=1.0)                      # CAP_MIN 极低 → 不在 FuseGate 被拒
+    adapter = _fuse_adapter(w * 0.02)               # 覆盖率 2% → cap'≈2
+    chain = GateChain([FuseCoverageGate(ex, 1.0, adapter=adapter),
+                       MinNotionalGate(ex, 5.0, adapter=adapter)])
+    p = GridProposal(exchange='binance', symbol='BTC/USDT:USDT', grid_params=gp)
+    kept = chain.filter([p])
+    assert kept == []                                # 被 MinNotionalGate 拒（非 FuseGate）
+    assert chain.evaluate(p).gate == 'MinNotionalGate'
+

@@ -29,9 +29,11 @@ class GridManager:
         opened: List[str] = []
         for proposal in self.gates.filter(proposals):
             try:
+                # cap=proposal.cap：门链定稿 cap（FuseCoverageGate 降档护全额，spec 2026-07-15 §五）。
+                # None=未干预 → executor 回退自己的动态 cap（原行为）。不传即降档失效（评审实测）。
                 gid = self.executor.open(
                     proposal.exchange, proposal.symbol, proposal.grid_params,
-                    offset=proposal.offset, tag=proposal.tag)
+                    offset=proposal.offset, tag=proposal.tag, cap=proposal.cap)
             except SlotExhausted as exc:
                 # 同币并发 cap 的唯一裁决层=DB 槽位（SymbolLockGate 已删，spec
                 # 2026-07-06-tiered-*）：逐提议隔离——跳过本提议、其余照开；
@@ -43,6 +45,9 @@ class GridManager:
                 # 逐提议隔离（与 monitor 逐格隔离同构；testnet 05:00 -2027 实证：此前只
                 # catch SlotExhausted，交易所拒单冒泡致整轮 degraded、该 offset 空 12h 到下次
                 # 轮换）：记录 + 清半开格（撤本格挂单 + 转 FAILED 释放槽位）+ 其余提议照开。
+                # 合并注（fuse-coverage-guard 2026-07-15）：fuse 建网失败（降档后 cap 太小 →
+                # RuntimeError）本另设 except RuntimeError 隔离；此 catch-all 是其超集且额外清
+                # 半开格，故收编于此，不再单列。
                 print('[open] rejected %s tag=%s: %r —— 清半开格、隔离续开'
                       % (proposal.symbol, proposal.tag, exc), flush=True)
                 self._fail_half_open(proposal.exchange, proposal.symbol)
