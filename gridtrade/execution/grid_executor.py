@@ -246,7 +246,7 @@ class GridExecutor:
             by_oid[t.order_id] = go        # 同轮多笔部分成交累计正确
             # 该线一旦有成交(部分/全额)即非 filled==0 满额单 → 腾出满额占位（spec 2026-07-15）：
             # 部分成交后残额单不再占位,下方兄弟吃满时照挂整额回购单;全额则本就离场。
-            full_lines.discard((line_index, t.side))
+            full_lines.discard((line_index, t.side))   # 键级非计数：可达态下同线不会满额单+残额单并存(任一诞生事件消耗另一张),故安全(2026-07-15 终审)
             if not fully:
                 continue                   # 未吃满:线仍占用、不补单,等后续部分成交
             # 补对侧单（halt 时跳过：fills/记账/止损仍正常，但不挂新单）

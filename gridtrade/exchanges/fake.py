@@ -186,13 +186,15 @@ class FakeExchange(ExchangeAdapter):
         self._stops.pop(symbol, None)
 
     def order_status(self, symbol, order_id) -> str:
-        # 测试替身语义：有成交记录=filled；仍在 book（限价/触发）=open；否则视为 canceled。
-        if any(t.order_id == order_id for t in self._trades):
-            return 'filled'
+        # 测试替身语义：仍在 book（限价/触发）=open；已离簿且有成交=filled；否则 canceled。
+        # 在簿判定必须先于成交判定（2026-07-15 终审）：partial_fill 造的残单既在簿又有成交，
+        # 真所语义是 open（PARTIALLY_FILLED），trades 优先会误判 filled。
         if order_id in self._open:
             return 'open'
         if any(s.id == order_id for ss in self._stops.values() for s in ss):
             return 'open'
+        if any(t.order_id == order_id for t in self._trades):
+            return 'filled'
         return 'canceled'
 
     def fetch_open_orders(self, symbol) -> List[Order]:

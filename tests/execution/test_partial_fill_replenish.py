@@ -1,7 +1,7 @@
 """部分成交残额补单收口（spec 2026-07-15）：守卫从"对侧有 open 单就跳过"精确化为
 "对侧有 filled==0 满额单才跳过"——残额单照挂整额回购单，消除净仓永久偏差 1×order_num。
 双倍建仓防护（filled==0 满额单占位不重复挂）是红线，一并钉死。"""
-from gridtrade.exchanges.base import Instrument, Order
+from gridtrade.exchanges.base import Instrument
 from gridtrade.exchanges.fake import FakeExchange
 from gridtrade.execution.grid_executor import GridExecutor
 from gridtrade.state.models import GridOrder
@@ -46,7 +46,7 @@ def test_full_order_still_blocks_double_build(store):
     # （testnet OP/gt00 双倍建仓事故防护——精确化绝不能削弱）。
     ex, gx, gid = _open_grid(store)
     pa = gx._geom[gid]['price_array']
-    ex.set_price(BTC, pa[4]); gx.sync(gid, BTC)     # L4 买单全额成交 → 补 L5 卖 & L3 买（满额）
+    ex.set_price(BTC, pa[4]); gx.sync(gid, BTC)     # L4 买单全额成交（补对侧 L5 卖被初始 L5 满额单挡住）
     n_before = len([o for o in gx.orders.list_by_grid(gid) if o.status == 'open'])
     gx.sync(gid, BTC); gx.sync(gid, BTC)            # 重复 sync：满额单占位，不得重复挂
     n_after = len([o for o in gx.orders.list_by_grid(gid) if o.status == 'open'])
