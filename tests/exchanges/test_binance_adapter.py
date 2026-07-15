@@ -523,7 +523,23 @@ def test_order_status_maps_all_ccxt_statuses():
 def test_order_status_both_books_not_found_returns_unknown():
     import ccxt
     c = FakeBinanceClient()
+    calls = []
     def fake_fetch_order(oid, symbol=None, params=None):
+        calls.append(dict(params or {}))
         raise ccxt.OrderNotFound('binanceusdm gone from both books')
     c.fetch_order = fake_fetch_order
     assert _binance(c).order_status('BTC/USDT:USDT', '999') == 'unknown'
+    assert calls == [{}, {'trigger': True}]   # 两簿都查过才判 unknown(非只查一簿)
+
+
+def test_order_status_propagates_non_ordernotfound():
+    """绑定需求 2:两簿间只 catch ccxt.OrderNotFound;其它异常(网络/限流)须上抛,
+    由 monitor 轮的 except Exception 干净降级重试,而非被吞成 'unknown' 误触 fills 兜底。
+    守护未来若被重构成宽 except Exception 的回归。"""
+    import ccxt, pytest
+    c = FakeBinanceClient()
+    def fake_fetch_order(oid, symbol=None, params=None):
+        raise ccxt.NetworkError('binanceusdm connection reset')
+    c.fetch_order = fake_fetch_order
+    with pytest.raises(ccxt.NetworkError):
+        _binance(c).order_status('BTC/USDT:USDT', '999')

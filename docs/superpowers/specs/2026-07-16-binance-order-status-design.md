@@ -65,7 +65,10 @@ def order_status(self, symbol, order_id) -> str:
 ### 3.3 状态映射 `_map_order_status`
 
 ccxt 归一化 order['status']:`'open'`(binance NEW / PARTIALLY_FILLED)、`'closed'`(FILLED)、
-`'canceled'`(CANCELED / EXPIRED / REJECTED)。映射到调用方三态词表:
+`'canceled'`(CANCELED)。注(ccxt 4.5.61 实测):EXPIRED/REJECTED 被归一化为 `'expired'`/`'rejected'`
+(非 `'canceled'`),经下方 fall-through 落到 `'unknown'`——功能等价且更稳:无成交的 canceled 与
+unknown 在两消费者都走重挂,而 unknown 还先跑 `_fuse_filled` 兜底(能救到期但已部分成交的丝)。
+映射到调用方三态词表:
 
 ```python
 @staticmethod
