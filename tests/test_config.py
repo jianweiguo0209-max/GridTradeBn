@@ -128,10 +128,11 @@ def test_strategy_defaults_mirror_legacy():
     assert DEFAULT_STRATEGY_CONFIG['price_limit'] == [0.25, 0.25]
     assert DEFAULT_STRATEGY_CONFIG['stop_limit'] == 0.01
     assert DEFAULT_STRATEGY_CONFIG['grid_v2_config']['grid_count_max'] == 149
-    # legacy 止盈止损 + 已接线的资金费/pv 主动止损参数（pv 由 2026-03~06 回测扫描调优）
-    assert DEFAULT_STOP_CFG['stop_loss'] == 0.045   # 固定止损放宽(2026-07-10 stop 扫描保守候选,详 config 注释)
-    assert DEFAULT_STOP_CFG['trailing_k'] == 0.15    # 回撤止盈换挡(2026-07-10 trail 扫描,k 不敏感取最优)
-    assert DEFAULT_STOP_CFG['trailing_floor'] == 0.015  # floor 单调敏感,0.015 饱和点;触发占比 6-12%→~1%
+    assert DEFAULT_STRATEGY_CONFIG['grid_v2_config']['grid_count_min'] == 20  # 币安重扫加密(2026-07-15 候选A)
+    # 止盈止损 + 资金费/pv 主动止损参数（2026-07-15 币安三轮坐标下降+留出窗验收更新，候选A）
+    assert DEFAULT_STOP_CFG['stop_loss'] == 0.035   # 固定止损收紧(MDD 单调,0.035→最差窗 MDD −1.4%;详 config)
+    assert DEFAULT_STOP_CFG['trailing_k'] is None    # 连续回撤止盈关闭(三轮 OFF 都在顶部;None=引擎跳过整块)
+    assert DEFAULT_STOP_CFG['trailing_floor'] is None
     assert DEFAULT_STOP_CFG['fundingRate_stop_loss'] == 0.0015
     assert DEFAULT_STOP_CFG['pv_pnl_thr'] == 0.005    # 尖峰时浮盈<+0.5%即撤(2026-07-07 PV研究)
     assert DEFAULT_STOP_CFG['pv_mult'] == 3

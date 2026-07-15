@@ -165,6 +165,9 @@ def test_parse_coord_roundtrips_every_arm_label(family):
         assert c is not None, '%s 的 label 解析失败: %s' % (family, arm.label)
         for dim in SW.DIM_LIMITS[family]:
             expected = arm.overrides.get(dim, base[dim])
+            if expected is None:            # 关闭型维（如 trailing 现值=None）：不比数值
+                assert c[dim] is None
+                continue
             assert abs(float(c[dim]) - float(expected)) < 1e-9, arm.label
 
 
