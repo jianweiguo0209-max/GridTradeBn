@@ -481,3 +481,49 @@ def test_stop_order_clamp_log_reports_coverage(capsys):
     a.create_stop_order('BTC/USDT:USDT', 'sell', 480.0, 95.0, client_oid='9:fuse:low')
     out = capsys.readouterr().out
     assert '封顶' in out and '25%' in out and '9:fuse:low' in out   # 120/480 = 25%
+
+
+def test_order_status_regular_book_maps_status():
+    import ccxt
+    c = FakeBinanceClient()
+    calls = []
+    def fake_fetch_order(oid, symbol=None, params=None):
+        calls.append(dict(params or {}))
+        if (params or {}).get('trigger'):
+            raise ccxt.OrderNotFound('binanceusdm order not in trigger book')
+        return {'status': 'closed'}          # 常规簿命中,FILLED
+    c.fetch_order = fake_fetch_order
+    assert _binance(c).order_status('BTC/USDT:USDT', '115773892') == 'filled'
+    assert calls == [{}]                      # 常规簿命中即返,不试 trigger
+
+
+def test_order_status_algo_book_falls_back_to_trigger():
+    import ccxt
+    c = FakeBinanceClient()
+    calls = []
+    def fake_fetch_order(oid, symbol=None, params=None):
+        calls.append(dict(params or {}))
+        if not (params or {}).get('trigger'):
+            raise ccxt.OrderNotFound('binanceusdm not in regular book')
+        return {'status': 'closed'}          # algo/trigger 簿命中(丝触发=FILLED)
+    c.fetch_order = fake_fetch_order
+    assert _binance(c).order_status('BTC/USDT:USDT', '1000000136629136') == 'filled'
+    assert calls == [{}, {'trigger': True}]   # 常规→OrderNotFound→trigger
+
+
+def test_order_status_maps_all_ccxt_statuses():
+    import ccxt
+    a = _binance()
+    for ccxt_status, expect in (('open', 'open'), ('closed', 'filled'),
+                                ('canceled', 'canceled'), (None, 'unknown'),
+                                ('weird', 'unknown')):
+        assert a._map_order_status(ccxt_status) == expect
+
+
+def test_order_status_both_books_not_found_returns_unknown():
+    import ccxt
+    c = FakeBinanceClient()
+    def fake_fetch_order(oid, symbol=None, params=None):
+        raise ccxt.OrderNotFound('binanceusdm gone from both books')
+    c.fetch_order = fake_fetch_order
+    assert _binance(c).order_status('BTC/USDT:USDT', '999') == 'unknown'

@@ -236,6 +236,31 @@ class BinanceAdapter(CcxtAdapter):
             # 仍不存在则由 algo 路径原样抛 OrderNotFound（语义=确实已不在）。
             self.client.cancel_order(order_id, native, {'trigger': True})
 
+    def order_status(self, symbol, order_id) -> str:
+        """权威单状态('open'/'filled'/'canceled'/'unknown')。双簿查单:常规簿→algo/trigger 簿
+        (同 cancel_order;保险丝是 STOP_MARKET 在 algo 簿,demo 实测常规簿查不到)。两簿皆
+        OrderNotFound(古老/purged,极罕见)→ 'unknown',保留调用方 fills 兜底(spec 2026-07-16)。"""
+        native = self.to_native(symbol)
+        for params in ({}, {'trigger': True}):
+            try:
+                o = self.client.fetch_order(order_id, native, params)
+                return self._map_order_status(o.get('status'))
+            except ccxt.OrderNotFound:
+                continue
+        return 'unknown'
+
+    @staticmethod
+    def _map_order_status(ccxt_status) -> str:
+        """ccxt 归一化 status → reconciler 三态词表。'open'(NEW/PARTIALLY_FILLED)保'open'——
+        在挂优先于成交(与 FakeExchange.order_status 终审语义一致,fake.py:193)。"""
+        if ccxt_status == 'closed':
+            return 'filled'
+        if ccxt_status == 'open':
+            return 'open'
+        if ccxt_status == 'canceled':
+            return 'canceled'
+        return 'unknown'
+
     def fetch_open_orders(self, symbol):
         # 两簿并读（常规限价 + algo 触发单）——镜像 fake/HL 的"挂单含触发单"既有语义，
         # 保险丝对账依赖看得见触发单。
