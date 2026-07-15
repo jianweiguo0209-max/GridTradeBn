@@ -277,3 +277,27 @@ def test_fetch_leverage_tiers_delegates_to_inner():
     out = ra.fetch_leverage_tiers('X/USDT:USDT')
     assert out == [{'maxLeverage': 5, 'maxNotional': 5000.0}]   # 绝不允许基类默认 []
     assert ('fetch_leverage_tiers', 'X/USDT:USDT') in inner.calls
+
+
+def test_max_leverage_delegates_to_inner_not_base_fetch():
+    """max_leverage 显式转发回归(防御性,同 fetch_max_leverages/fetch_leverage_tiers 教训):
+    ResilientAdapter 逐方法显式转发、无 __getattr__。若漏代理 max_leverage,则落到基类实现
+    `self.fetch_max_leverages().get(sym)`——当内层将来给出异于 fetch_max_leverages 的 Binance
+    专属 max_leverage 覆写时会被静默绕过。让内层 max_leverage 返 7、fetch_max_leverages 返
+    {sym:3},断言穿透到内层 max_leverage(得 7、非基类委托的 3、且不误走 fetch_max_leverages)。"""
+    SYM = 'X/USDT:USDT'
+    class _MLInner(_Inner):
+        def max_leverage(self, symbol):
+            self._maybe_fail('max_leverage')
+            self.calls.append(('max_leverage', symbol))
+            return 7.0
+        def fetch_max_leverages(self):
+            self.calls.append(('fetch_max_leverages',))
+            return {SYM: 3.0}
+
+    inner = _MLInner()
+    ra = ResilientAdapter(inner, policy=FAST, sleep=NOSLEEP)
+    out = ra.max_leverage(SYM)
+    assert out == 7.0                                    # 穿透内层 max_leverage(非基类委托的 3.0)
+    assert ('max_leverage', SYM) in inner.calls
+    assert ('fetch_max_leverages',) not in inner.calls   # 未走基类委托路径

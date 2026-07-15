@@ -102,6 +102,11 @@ class ResilientAdapter(ExchangeAdapter):
         # → open 设杠杆永不生效。内层有实例缓存,零额外请求。
         return self._call('fetch_leverage_tiers', symbol)
 
+    def max_leverage(self, symbol):
+        # 必须显式代理:基类默认 max_leverage=self.fetch_max_leverages().get(sym),漏代理时
+        # 虽因该委托碰巧穿透,但会绕过内层未来的 Binance 专属 max_leverage 覆写(同上教训,防御)。
+        return self._call('max_leverage', symbol)
+
     # ---- 账户/交易（私有）----
     def fetch_balance(self) -> Balance:
         return self._call('fetch_balance')
