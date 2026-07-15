@@ -1,7 +1,9 @@
 """OrderRepository：网格挂单的持久化（按 client_oid 主键 upsert）。"""
 from typing import List, Optional
 
-from sqlalchemy import insert, select, update
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from gridtrade.state.models import GridOrder, grid_orders, now_ms
 
@@ -19,25 +21,19 @@ class OrderRepository:
         self.engine = store.engine
 
     def upsert(self, order: GridOrder) -> GridOrder:
-        import sqlalchemy as sa
+        # 原生 upsert（ON CONFLICT DO UPDATE）取代 INSERT→catch IntegrityError→UPDATE：每轮
+        # reconcile/sync 更新挂单（补单/重挂/吃单）都撞 client_oid 主键，旧模式每次一条 PG
+        # duplicate-key ERROR（grid_orders_pkey 洪水，量最大——每轮所有挂单）+ 废事务 ROLLBACK
+        # 开销（testnet PG 尖峰断连贡献因子，2026-07-15 实证）。ON CONFLICT 原子一次写、保留 created_at。
         ts = now_ms()
         values = {f: getattr(order, f) for f in _FIELDS}
         values['created_at'] = order.created_at or ts
         values['updated_at'] = ts
-        try:
-            with self.engine.begin() as c:
-                c.execute(insert(grid_orders), values)
-        except sa.exc.IntegrityError:
-            # client_oid already exists -> update mutable fields, preserve created_at
-            with self.engine.begin() as c:
-                c.execute(
-                    update(grid_orders)
-                    .where(grid_orders.c.client_oid == order.client_oid)
-                    .values(grid_id=order.grid_id, line_index=order.line_index,
-                            exchange_order_id=order.exchange_order_id,
-                            side=order.side, price=order.price, size=order.size,
-                            status=order.status, filled=order.filled, updated_at=ts)
-                )
+        ins = (pg_insert if self.engine.dialect.name == 'postgresql' else sqlite_insert)(grid_orders)
+        set_ = {k: values[k] for k in _FIELDS if k not in ('client_oid', 'created_at')}
+        stmt = ins.values(**values).on_conflict_do_update(index_elements=['client_oid'], set_=set_)
+        with self.engine.begin() as c:
+            c.execute(stmt)
         return self.get(order.client_oid)
 
     def get(self, client_oid: str) -> Optional[GridOrder]:
