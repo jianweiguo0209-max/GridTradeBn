@@ -29,6 +29,8 @@ class FakeExchange(ExchangeAdapter):
         self._default_price = price
         self._stops = {}
         self._quote_volumes = {}
+        self._leverage_tiers = {}       # symbol -> [{'maxLeverage','maxNotional'}]（测试钩子）
+        self._leverage_calls = []       # [(symbol, leverage)]（open 设杠杆断言用）
 
     # ---- 测试钩子 ----
     def set_price(self, symbol: str, price: float) -> None:
@@ -47,6 +49,9 @@ class FakeExchange(ExchangeAdapter):
 
     def seed_quote_volumes(self, vols: dict) -> None:
         self._quote_volumes = dict(vols)
+
+    def seed_leverage_tiers(self, symbol: str, tiers: list) -> None:
+        self._leverage_tiers[symbol] = [dict(t) for t in tiers]
 
     def partial_fill(self, symbol: str, price: float, qty: float) -> bool:
         """测试钩子（spec 2026-07-15 §3.2）：让 price 处的挂单只成交 qty、残量留簿，
@@ -207,7 +212,10 @@ class FakeExchange(ExchangeAdapter):
                 and (since_ms is None or t.ts >= since_ms)]
 
     def set_leverage(self, symbol, leverage) -> None:
-        pass
+        self._leverage_calls.append((symbol, leverage))
+
+    def fetch_leverage_tiers(self, symbol) -> list:
+        return [dict(t) for t in self._leverage_tiers.get(symbol, [])]   # 防御拷贝(同 ccxt)
 
     def exchange_status(self) -> str:
         return 'ok'
