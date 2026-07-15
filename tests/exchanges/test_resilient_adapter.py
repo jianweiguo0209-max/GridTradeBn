@@ -259,3 +259,21 @@ def test_fetch_max_leverages_delegates_to_inner():
     out = ra.fetch_max_leverages()
     assert out == {'VVV/USDC:USDC': 3.0, 'PUMP/USDC:USDC': 10.0}   # 绝不允许 {}
     assert ('fetch_max_leverages',) in inner.calls
+
+
+def test_fetch_leverage_tiers_delegates_to_inner():
+    """档位表接线断层回归(同 fetch_max_leverages 教训):ResilientAdapter 逐方法显式
+    转发、无 __getattr__——漏代理 fetch_leverage_tiers → 落基类默认 [] → open 设杠杆
+    永不生效(实盘架空,单测因 GridExecutor 直挂 FakeExchange 抓不到)。包装层必须穿透
+    内层非空档位表。"""
+    class _LTInner(_Inner):
+        def fetch_leverage_tiers(self, symbol):
+            self._maybe_fail('fetch_leverage_tiers')
+            self.calls.append(('fetch_leverage_tiers', symbol))
+            return [{'maxLeverage': 5, 'maxNotional': 5000.0}]
+
+    inner = _LTInner()
+    ra = ResilientAdapter(inner, policy=FAST, sleep=NOSLEEP)
+    out = ra.fetch_leverage_tiers('X/USDT:USDT')
+    assert out == [{'maxLeverage': 5, 'maxNotional': 5000.0}]   # 绝不允许基类默认 []
+    assert ('fetch_leverage_tiers', 'X/USDT:USDT') in inner.calls

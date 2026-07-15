@@ -97,6 +97,11 @@ class ResilientAdapter(ExchangeAdapter):
         # 2026-07-12 mainnet 实证 VVV maxlev=3 开出双格)。内层有实例缓存,零额外请求。
         return self._call('fetch_max_leverages')
 
+    def fetch_leverage_tiers(self, symbol: str) -> list:
+        # 必须显式代理:基类默认 [] 会把档位表静默吸掉(同 fetch_max_leverages 教训,fail-open 掩盖)
+        # → open 设杠杆永不生效。内层有实例缓存,零额外请求。
+        return self._call('fetch_leverage_tiers', symbol)
+
     # ---- 账户/交易（私有）----
     def fetch_balance(self) -> Balance:
         return self._call('fetch_balance')
