@@ -27,6 +27,21 @@
 席,上真钱那刻才第一次遇到。**2026-07-15 更新**:demo 现已有 50 个 TradFi(28 个与 mainnet 重叠)
 ——部分可观测,但不能依赖 testnet 覆盖,验证靠单测 + mainnet 上线核对票池无 TradFi。
 
+**选币缓存实证(2026-07-15,7 个回测 select_cache,窗口 2024-10→2026-07,当前 exchangeInfo 品类回填)**:
+不止进候选池,TradFi **确已被选中开格**——唯一选中币 55/677=8.1% 非 COIN,选中实例(≈开格时间去向)
+856/61971=1.4%;近窗 2026(TradFi 上市后、最贴近实盘)真·非24/7 TradFi 占选中实例 **1.9%**。被选中过
+的真 TradFi 54 个:CL/BZ(原油)、XAG/XAU/XPT/XPD(贵金属)、NATGAS、CRCL/HOOD/COIN/TSLA/META/
+MSTR/PLTR、SOXL(3倍ETF)、SAMSUNG/SKHYNIX(韩股)、OPENAI/ANTHROPIC(Pre-IPO)等,全是隔夜/周末
+跳空标的。唯一币 8% vs 实例 1% 之差=TradFi 被选但轮动不持久,但 8% 的不同网格碰过股票、每格周末跳空
+尾险与其频率不成比例,money-safety 视角即须堵。
+
+**加密指数决策(用户定 2026-07-15,严格 COIN-only)**:当前 exchangeInfo 的 INDEX 类仅 3 个,全是
+**加密指数**(ALL 全市场 / BTCDOM BTC 市占率 / DEFI),24/7、不带隔夜跳空风险(无 SPX/NDX 股指)。
+严格白名单 `=='COIN'` 会连这 3 个一并剔(实测仅 BTCDOM 被选过 221 次)。用户选**一并剔**:fail-closed
+最稳、零黑名单维护、未来若上 TradFi 股指(走 INDEX 类)自动被挡;BTCDOM 系市占率比值,网格几何按币
+波动率标定、未在指数上验证;剔掉由次名币替补、成本可忽略。→ 谓词维持纯 `underlyingType=='COIN'`,
+不加任何 INDEX/符号放行。
+
 ## 二、根因(代码)
 
 - `resolve_live_universe`(runtime/universe.py:16)取 `adapter.list_instruments()` 中 state=='live' 的符号。
