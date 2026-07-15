@@ -72,6 +72,27 @@ def test_replenish_opposite_path_same_guard(store):
     assert _line_qty(gx, gid, 4, 'buy') > q * 1.5   # 残额 + 整额回购单并存
 
 
+def test_same_sync_batched_partial_then_full_replenishes(store):
+    # 最要命场景（评审实证 2026-07-15）：同一次 sync() 批量摄入两笔成交——L4 部分成交 +
+    # 兄弟 L5 全额成交（一次 whipsaw 拉取两笔 fill）。若 full_lines 的 discard 只在 fully 路径
+    # （旧代码），同轮内 L4 残额线仍被误挡、回购单不挂。构造集合级重建掩盖不了这条——
+    # 两笔在同一 candidates 循环里，L4 partial 必须实时从 full_lines 腾出，L5 吃满才补得上 L4。
+    from gridtrade.exchanges.base import Trade
+    ex, gx, gid = _open_grid(store)
+    q = gx._geom[gid]['order_num']; pa = gx._geom[gid]['price_array']
+    # 直接注入两笔成交到交易所流水（不经 set_price，避免整簿撮合改变场景）：
+    # ① L4 买单部分成交 0.3q（残额留簿）② L5 卖单全额成交 q
+    by_line = {(o.line_index, o.side): o for o in gx.orders.list_by_grid(gid) if o.status == 'open'}
+    l4, l5 = by_line[(4, 'buy')], by_line[(5, 'sell')]
+    ex._trades.append(Trade(id='pt-l4', client_oid=l4.client_oid, symbol=BTC, side='buy',
+                            price=pa[4], size=q * 0.3, fee=0.0, ts=1, order_id=l4.exchange_order_id))
+    ex._trades.append(Trade(id='ft-l5', client_oid=l5.client_oid, symbol=BTC, side='sell',
+                            price=pa[5], size=q, fee=0.0, ts=2, order_id=l5.exchange_order_id))
+    gx.sync(gid, BTC)                              # 一次 sync 批量摄入两笔
+    # L4 残额线在同轮内被腾出 → L5 吃满补 L4 回购单：L4 买侧挂量 = 残额 0.7q + 回购 1.0q
+    assert _line_qty(gx, gid, 4, 'buy') > q * 1.5
+
+
 def test_two_orders_same_line_survive_restart_reconcile(store):
     # 不变量①（spec §四实测）：同线两单（残额+整额回购）经 restore+reconcile → 各带独立
     # exchange_order_id、逐单对账，2 单存活、无误撤/漏挂/重复。

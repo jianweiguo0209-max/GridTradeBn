@@ -158,8 +158,8 @@ class GridExecutor:
         return gid
 
     def _replenish_opposite(self, grid_id, symbol, line_index, side):
-        """按 sync 同款守卫补对侧单（E2 兜底路径复用；guard=对侧 (line,side) 已有 open 行则跳过）。
-        与 sync 内联块语义一致（memory quantized-size-fallback-bug 修复配套）。"""
+        """按 sync 同款守卫补对侧单（E2 兜底路径复用；guard=对侧 (line,side) 有 filled==0 满额单才跳过，
+        残额单不挡整额回购单，spec 2026-07-15 §3.1）。与 sync 内联块语义一致。"""
         geom = self._geom.get(grid_id)
         if not geom:
             return False
