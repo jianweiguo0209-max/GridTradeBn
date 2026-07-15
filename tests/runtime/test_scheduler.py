@@ -182,10 +182,9 @@ def test_run_scheduler_once_prefilters_locked_symbols_except_current_tag():
               stop_low_price=97.0, stop_high_price=103.0, cap=100.0, leverage=5.0)
     grids.create(Grid(id='', exchange='fake', symbol='AAA/USDC:USDC',
                       status=ACTIVE, tag=cur_tag, **gp))   # 本 tag：不剔（会被换仓真实关闭，需可 restore）
-    # cap=2 语义（2026-07-12 恢复）：他 tag 持有 2 格才触顶被剔（1 格时还有名额、不剔）
-    for i, tg in enumerate(('gt98', 'gt99')):
-        grids.create(Grid(id='', exchange='fake', symbol='BBB/USDC:USDC',
-                          status=ACTIVE, tag=tg, **gp))    # 他 tag ×2：触顶 → 剔
+    # cap=1 语义（2026-07-15 用户定 2→1）：他 tag 持有 1 格即触顶被剔
+    grids.create(Grid(id='', exchange='fake', symbol='BBB/USDC:USDC',
+                      status=ACTIVE, tag='gt98', **gp))    # 他 tag ×1：cap=1 触顶 → 剔
     seen = {}
     def _fake_fetch(adapter, symbols, run_time, **kw):
         seen['symbols'] = list(symbols)

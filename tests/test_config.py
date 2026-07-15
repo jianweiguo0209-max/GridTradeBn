@@ -83,7 +83,7 @@ def test_default_tier_policy_content():
     assert 'FARTCOIN/USDT:USDT' in DEFAULT_TIER_POLICY.tier0     # 币安迁移 USDT 后缀
     assert 'NEIRO/USDT:USDT' in DEFAULT_TIER_POLICY.tier0        # KNEIRO→NEIRO(币安 TRADING)
     assert len(DEFAULT_TIER_POLICY.tier0) == 9
-    assert DEFAULT_TIER_POLICY.tier1 == () and DEFAULT_TIER_POLICY.tier2_cap == 2  # 同币开仓上限(2026-07-12 用户定)
+    assert DEFAULT_TIER_POLICY.tier1 == () and DEFAULT_TIER_POLICY.tier2_cap == 1  # 同币开仓上限(2026-07-15 用户定 2→1)
 
 
 def test_tier0_binance_usdt_symbols():

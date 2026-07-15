@@ -178,7 +178,7 @@ DEFAULT_TIER_POLICY = TierPolicy(
     # （PI/DEGEN/ALCH/MAX/OL/MASK/ACT/SONIC/BR/RDNT/MAGIC/CSPR/LOOKS/MEW/NEIROETH/IP），
     # 上市巡检再补。
     tier1=(),
-    tier2_cap=2,   # 同币开仓上限(2026-07-12 用户定)
+    tier2_cap=1,   # 同币开仓上限(2026-07-15 用户定 2→1;强制每币≤1格,更分散;lev_caps 叠加取更严)
 )
 
 DEFAULT_STRATEGY_CONFIG = {

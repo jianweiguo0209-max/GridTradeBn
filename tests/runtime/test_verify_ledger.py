@@ -2,11 +2,24 @@
 """组件三(spec 2026-07-11-symbol-desk):verify-ledger 守恒审计。
 正常库静默;单边合成行/量不守恒对 → pairs_bad;accounting 被篡改 → replay_bad;
 旧格式行计 legacy 不误报。masking 从"查不到"变"必留痕"。"""
+from dataclasses import replace
+
+import pytest
+
+import gridtrade.config as _cfg
 from gridtrade.exchanges.base import Instrument
 from gridtrade.exchanges.fake import FakeExchange
 from gridtrade.execution.grid_executor import GridExecutor
 from gridtrade.runtime.dbadmin import verify_ledger
 from gridtrade.state.models import Fill
+
+
+@pytest.fixture(autouse=True)
+def _multigrid_slots(monkeypatch):
+    # 同币双格审计场景需 ≥2 槽位，与部署默认 tier2_cap(线上 1) 解耦（见 tests/execution/conftest.py）。
+    monkeypatch.setattr(_cfg, 'DEFAULT_TIER_POLICY',
+                        replace(_cfg.DEFAULT_TIER_POLICY, tier2_cap=2))
+
 
 BTC = 'BTC/USDT:USDT'
 GP = {'low_price': 98.0, 'high_price': 102.0, 'grid_count': 8,
