@@ -195,3 +195,18 @@ def test_exclude_non_coin_drops_tradfi_keeps_delisted_coin():
     kept, removed = exclude_non_coin(archive, a)
     assert kept == ['BTC/USDT:USDT', 'FOO/USDT:USDT']   # TradFi 剔除;退市 COIN 保留(无幸存者偏差)
     assert removed == 2                                  # SOXL + XAU
+
+
+def test_exclude_non_coin_raises_on_empty_markets():
+    # 降级响应(load_markets 返回空 markets、未抛异常)不得静默 fail-open 为"保留全量归档"
+    # (等于放行 TradFi)——必须 fail-loud,与实盘 fail-closed 同向(spec 2026-07-15 §4.3)。
+    import pytest
+
+    from gridtrade.backtest.backtest_run import exclude_non_coin
+    from gridtrade.exchanges.binance import BinanceAdapter
+    from tests.exchanges.test_binance_adapter import FakeBinanceClient
+    c = FakeBinanceClient()
+    c.markets = {}   # 模拟降级:load_markets 幂等返回空,不抛
+    a = BinanceAdapter(c)
+    with pytest.raises(RuntimeError):
+        exclude_non_coin({'BTC/USDT:USDT'}, a)

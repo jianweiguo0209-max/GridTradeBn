@@ -23,8 +23,13 @@ def execute_command(cmd, manager, flags, *, exchange: str) -> str:
         return 'closed %s' % p['grid_id']
     if cmd.type == 'OPEN_GRID':
         # 注:手动开仓直调 ex.open、不经 list_instruments/_include_market 的 COIN 过滤——
-        # 手动开 TradFi 代币化永续仍可下单,但其账户快照映射(_id_map)已剔除该品类→快照漏该仓
-        # (半碎)。此为有意取舍(spec 2026-07-15 §4.2):作为对"手动玩 TradFi"的隐性劝阻,非 bug。
+        # 手动开 TradFi 代币化永续仍可下单。账户快照三路读并非均漏:仓位
+        # (fetch_positions_all 按 to_canonical+want 过滤全账户持仓)与价格
+        # (fetch_prices_all 批量未命中时逐币回退 fetch_price)均不依赖 _id_map,照常可见;
+        # 唯资金费(fetch_funding_payments_all)靠 _id_map 把原生 symbol 换回 canonical 才能
+        # 归位——_id_map 已剔除该品类,income 行匹配不到任何 want 键且无回退,交易所实扣
+        # 资金费在该格账本里静默永久丢失(半碎:资金费史/PnL 失真)。此为有意取舍
+        # (spec 2026-07-15 §4.2):作为对"手动玩 TradFi"的隐性劝阻,非 bug。
         if flags.get('trading_halted'):
             raise RuntimeError('trading halted: OPEN refused')
         if _braked(p['symbol']):

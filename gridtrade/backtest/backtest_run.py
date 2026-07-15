@@ -455,9 +455,14 @@ def exclude_non_coin(symbols, adapter):
     _include_market 共用同一 is_coin_market 谓词(单一事实源,spec 2026-07-15 §4.3)。
     保留退市 COIN:退市币不在当前 markets → 不在 non_coin → 不被剔(无幸存者偏差)。
     markets 未加载则 load(幂等;ccxt 缓存,紧随 prewarm 复用,全程一次 exchangeInfo)。
+    fail-loud:load_markets 降级返回空(未抛异常)不得静默 fail-open 为"保留全量归档"
+    (等于放行 TradFi)——此为回测唯一可能与实盘 fail-closed 背离之处,宁可整跑失败。
     返回 (kept: sorted list[str], removed: int)。"""
     adapter.client.load_markets()
-    markets = adapter.client.markets or {}
+    markets = adapter.client.markets
+    if not markets:
+        raise RuntimeError('load_markets 返回空 markets,无法做 COIN-only 过滤;'
+                           '拒绝 fail-open 到含 TradFi 的旧票池')
     non_coin = {adapter.to_canonical(m['symbol']) for m in markets.values()
                 if m.get('swap') and m.get('settle') == adapter.quote_currency
                 and not is_coin_market(m)}
