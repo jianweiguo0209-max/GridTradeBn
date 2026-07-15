@@ -51,6 +51,9 @@ class FakeCcxtClient:
         self._lev = (leverage, symbol)
     def load_markets(self):
         return {'BTC/USDT:USDT': {}}
+    def price_to_precision(self, sym, price):
+        tick = self.markets[sym]['precision']['price']   # 0.1；ccxt 返回字符串（%g 去浮点噪声）
+        return '%.10g' % (round(float(price) / tick) * tick)
     markets = {'BTC/USDT:USDT': {'swap': True, 'precision': {'price': 0.1, 'amount': 0.001},
                                  'limits': {'amount': {'min': 0.001}, 'cost': {'min': 5.0}},
                                  'active': True, 'info': {'listTime': '0'}}}
@@ -207,3 +210,21 @@ def test_instrument_min_cost_defaults_zero():
     i = Instrument(symbol='X/USDT:USDT', tick=0.1, lot=0.1, min_size=0.1,
                    state='live', list_ts=0)
     assert i.min_cost == 0.0
+
+
+def test_create_limit_order_quantizes_price():
+    # 挂单价必须按 tickSize 量化——超精度价格被交易所 -1111 拒（testnet KITE 实证：等比几何价
+    # round(8) 超 tickSize 1e-05，11/11 拒、开格零挂单卡 OPENING 15 分钟自愈 FAILED）。
+    from gridtrade.exchanges.ccxt_adapter import CcxtAdapter
+    c = FakeCcxtClient()
+    CcxtAdapter(c, name='x').create_limit_order('BTC/USDT:USDT', 'buy', 100.12345, 2.0)
+    assert c.created[-1][4] == 100.1        # price（第5位）量化到 tickSize 0.1
+
+
+def test_create_stop_order_quantizes_trigger_price():
+    # 保险丝触发价同样量化（stop_low/high_price 也是几何价、会超精度）。
+    from gridtrade.exchanges.ccxt_adapter import CcxtAdapter
+    c = FakeCcxtClient()
+    CcxtAdapter(c, name='x').create_stop_order('BTC/USDT:USDT', 'sell', 2.0, 95.16789)
+    assert c.created[-1][5]['stopLossPrice'] == 95.2
+    assert c.created[-1][4] == 95.2         # 参考价（ref price）同步量化

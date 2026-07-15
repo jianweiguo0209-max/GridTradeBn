@@ -84,6 +84,7 @@ class BinanceAdapter(CcxtAdapter):
             print('[binance] %s 保险丝数量 %.8g > MARKET_LOT_SIZE.maxQty %.8g -> 封顶'
                   '(丝保护不足额，超出部分依赖软止损)' % (symbol, size, mx), flush=True)
             size = mx
+        trigger_price = self.quantize_price(symbol, trigger_price)   # 触发价按 tickSize 量化(防 -1111)
         p = self._params(reduce_only, client_oid)
         p['stopLossPrice'] = trigger_price
         r = self.client.create_order(self.to_native(symbol), 'market', side, size,

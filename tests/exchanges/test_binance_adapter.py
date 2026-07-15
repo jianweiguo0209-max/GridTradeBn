@@ -277,6 +277,13 @@ def test_create_stop_order_clamps_to_market_max_qty():
     assert c.created[-1][3] == 9999.0                   # 无 market.max（缺失）→ fail-open 不封顶
 
 
+def test_create_stop_order_quantizes_trigger_price():
+    # 触发价按 tickSize 量化（stop_low/high_price 也是等比几何价、会超精度 → -1111 拒）
+    c = FakeBinanceClient()
+    _binance(c).create_stop_order('BTC/USDT:USDT', 'sell', 1.5, 95.16789, client_oid='9:fuse:low')
+    assert c.created[-1][5]['stopLossPrice'] == 95.2   # tickSize 0.1
+
+
 def test_set_leverage_cross_then_int():
     c = FakeBinanceClient()
     lev_calls = []

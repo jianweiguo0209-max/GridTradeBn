@@ -116,6 +116,12 @@ class ExchangeAdapter(ABC):
         HL create 响应不带数量，存储量依赖回传会退化为原始值 → 吃满判定永假）。"""
         return float(amount)
 
+    def quantize_price(self, symbol: str, price: float) -> float:
+        """交易所价格精度量化（tickSize）。默认原样返回（测试桩 fail-open）；ccxt 覆写为真实
+        精度表。挂单价/触发价必须先经它——等比网格几何价 round(8) 常超粗 tickSize（testnet KITE
+        tickSize=1e-05 实证 11/11 价超精度 → 限价单 -1111 拒 → 开格零挂单卡 OPENING）。"""
+        return float(price)
+
     @abstractmethod
     def create_limit_order(self, symbol: str, side: str, price: float, size: float,
                            *, post_only: bool = False, reduce_only: bool = False,

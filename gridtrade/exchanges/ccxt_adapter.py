@@ -212,8 +212,18 @@ class CcxtAdapter(ExchangeAdapter):
         except Exception:
             return float(amount)
 
+    def quantize_price(self, symbol, price) -> float:
+        """按交易所 tickSize 量化价格（ccxt price_to_precision）；异常 fail-open 原样返回。"""
+        try:
+            if not getattr(self.client, 'markets', None):
+                self.client.load_markets()
+            return float(self.client.price_to_precision(self.to_native(symbol), price))
+        except Exception:
+            return float(price)
+
     def create_limit_order(self, symbol, side, price, size, *,
                            post_only=False, reduce_only=False, client_oid=None) -> Order:
+        price = self.quantize_price(symbol, price)   # 几何价按 tickSize 量化，防 -1111 精度拒
         r = self.client.create_order(self.to_native(symbol), 'limit', side, size, price,
                                      self._params(reduce_only, client_oid, post_only))
         return self._to_order(r)
@@ -228,6 +238,7 @@ class CcxtAdapter(ExchangeAdapter):
                           reduce_only=True, slippage=0.15, client_oid=None) -> Order:
         # 触发市价单：ccxt 统一参数由各交易所子类翻译为原生字段；参考价传触发价本身，
         # 故成交底线 = trigger_price×(1∓slippage)，slippage 控制为保成交愿追多远。
+        trigger_price = self.quantize_price(symbol, trigger_price)   # 触发价按 tickSize 量化
         p = self._params(reduce_only, client_oid)
         p['stopLossPrice'] = trigger_price
         p['slippage'] = slippage
