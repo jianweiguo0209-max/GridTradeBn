@@ -14,6 +14,14 @@ from gridtrade.exchanges.ccxt_adapter import CcxtAdapter
 _CLOID_BAD = re.compile(r'[^\.A-Z\:/a-z0-9_-]')
 
 
+def is_coin_market(m) -> bool:
+    """币安 market 是否为 COIN(加密)永续。TradFi 代币化永续(EQUITY/KR_EQUITY/COMMODITY/
+    INDEX/PREMARKET)非 7×24、隔夜跳空打穿网格,一律剔除。白名单口径(fail-closed):
+    underlyingType 缺失/未知也排除(安全优先;实测 swap+USDT+active 659 个全带该字段、0 缺失)。
+    实盘 _include_market 与回测 exclude_non_coin 共用此谓词(单一事实源,spec 2026-07-15 §4.1)。"""
+    return ((m.get('info') or {}).get('underlyingType')) == 'COIN'
+
+
 class BinanceAdapter(CcxtAdapter):
     name = 'binance'
     FUNDING_INTERVAL_HOURS = 8   # 信息性：部分币 4h/1h；记账走真实流水不受影响（spec §九）
@@ -21,9 +29,11 @@ class BinanceAdapter(CcxtAdapter):
     def __init__(self, client):
         super().__init__(client, name='binance')
 
-    # fapi 同时挂 USDT-M 与 USDC-M 合约：只收本结算币，防 USDC 合约混入票池（spec §3.1）
+    # fapi 同时挂 USDT-M 与 USDC-M 合约：只收本结算币，防 USDC 合约混入票池（spec §3.1）；
+    # 且只收 COIN 加密永续,剔 TradFi 代币化永续(非 7×24 跳空打穿网格,spec 2026-07-15）。
+    # 一处收窄即覆盖 list_instruments→票池 与 _id_map(账户快照映射)。
     def _include_market(self, m) -> bool:
-        return m.get('settle') == self.quote_currency
+        return m.get('settle') == self.quote_currency and is_coin_market(m)
 
     def encode_cloid(self, client_oid):
         if client_oid is None:

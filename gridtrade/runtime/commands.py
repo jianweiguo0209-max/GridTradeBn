@@ -22,6 +22,9 @@ def execute_command(cmd, manager, flags, *, exchange: str) -> str:
         ex.close(p['grid_id'], p['symbol'], p.get('reason', 'manual'))
         return 'closed %s' % p['grid_id']
     if cmd.type == 'OPEN_GRID':
+        # 注:手动开仓直调 ex.open、不经 list_instruments/_include_market 的 COIN 过滤——
+        # 手动开 TradFi 代币化永续仍可下单,但其账户快照映射(_id_map)已剔除该品类→快照漏该仓
+        # (半碎)。此为有意取舍(spec 2026-07-15 §4.2):作为对"手动玩 TradFi"的隐性劝阻,非 bug。
         if flags.get('trading_halted'):
             raise RuntimeError('trading halted: OPEN refused')
         if _braked(p['symbol']):
