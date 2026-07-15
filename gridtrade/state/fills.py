@@ -2,7 +2,9 @@
 from typing import List
 
 import sqlalchemy as sa
-from sqlalchemy import insert, select
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from gridtrade.state.models import Fill, grid_fills, now_ms
 
@@ -19,14 +21,17 @@ class FillRepository:
         self.engine = store.engine
 
     def add_if_new(self, fill: Fill) -> bool:
+        # 原生 upsert（ON CONFLICT DO NOTHING）取代 INSERT→catch IntegrityError：重叠窗口
+        # （_TRADE_REFETCH_OVERLAP_MS）每轮重复摄入已入账成交，旧模式每次都产生一条 PG
+        # duplicate-key ERROR（grid_fills_pkey 洪水）+ 失败事务 ROLLBACK 开销。rowcount>0=真新
+        # 插入（幂等语义不变：新=True、重复=False）。
         values = {f: getattr(fill, f) for f in _FIELDS}
         values['created_at'] = fill.created_at or now_ms()
-        try:
-            with self.engine.begin() as c:
-                c.execute(insert(grid_fills), values)
-            return True
-        except sa.exc.IntegrityError:
-            return False
+        ins = (pg_insert if self.engine.dialect.name == 'postgresql' else sqlite_insert)(grid_fills)
+        stmt = ins.values(**values).on_conflict_do_nothing(index_elements=['trade_id'])
+        with self.engine.begin() as c:
+            r = c.execute(stmt)
+        return r.rowcount > 0
 
     def list_by_grid(self, grid_id: str) -> List[Fill]:
         with self.engine.connect() as c:

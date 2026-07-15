@@ -1,8 +1,9 @@
 """HeartbeatRepository：机器心跳行（machine -> last_beat_ts）。fly 判活/告警靠它。"""
 from typing import List, Optional
 
-import sqlalchemy as sa
-from sqlalchemy import insert, select, update
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from gridtrade.state.models import Heartbeat, heartbeats, now_ms
 
@@ -19,16 +20,16 @@ class HeartbeatRepository:
         self.engine = store.engine
 
     def beat(self, machine: str, ts: Optional[int] = None) -> Heartbeat:
+        # 原生 upsert（ON CONFLICT DO UPDATE）取代 INSERT→catch IntegrityError→UPDATE：旧模式
+        # 每次心跳（machine 已存在）必产生一条 PG duplicate-key ERROR（monitor/scheduler ~5-10s
+        # 一次 → 洪水），且失败事务 ROLLBACK + 二次 UPDATE 往返加重 PG 负载（testnet X:10 选币/
+        # 开格尖峰断连的贡献因子，2026-07-15 实证）。ON CONFLICT 原子一次写、无 ERROR、无竞态。
         ts = int(ts) if ts is not None else now_ms()
-        try:
-            with self.engine.begin() as c:
-                c.execute(insert(heartbeats),
-                          {'machine': machine, 'last_beat_ts': ts})
-        except sa.exc.IntegrityError:
-            with self.engine.begin() as c:
-                c.execute(update(heartbeats)
-                          .where(heartbeats.c.machine == machine)
-                          .values(last_beat_ts=ts))
+        ins = (pg_insert if self.engine.dialect.name == 'postgresql' else sqlite_insert)(heartbeats)
+        stmt = ins.values(machine=machine, last_beat_ts=ts).on_conflict_do_update(
+            index_elements=['machine'], set_={'last_beat_ts': ts})
+        with self.engine.begin() as c:
+            c.execute(stmt)
         return self.get(machine)
 
     def get(self, machine: str) -> Optional[Heartbeat]:
