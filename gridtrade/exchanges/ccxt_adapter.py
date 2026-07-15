@@ -34,10 +34,12 @@ class CcxtAdapter(ExchangeAdapter):
         self.client.load_markets()
         out = []
         seen = set()
+        excluded = 0                               # 通过 swap 但被 _include_market 剔除的合约数(可观测性)
         for sym, m in self.client.markets.items():
             if m.get('swap') is not True:          # 只留永续合约，丢 spot/其它类型
                 continue
             if not self._include_market(m):        # 交易所特有剔除（子类按需过滤，见 _include_market）
+                excluded += 1
                 continue
             canonical = self.to_canonical(sym)
             if canonical in seen:                   # 同 canonical 去重（部分交易所 spot+swap 等多键折叠）
@@ -53,6 +55,10 @@ class CcxtAdapter(ExchangeAdapter):
                 list_ts=int(info.get('listTime') or 0),
                 min_cost=float(((m.get('limits', {}) or {}).get('cost', {}) or {}).get('min') or 0.0),
             ))
+        # 措辞交易所无关(通用层不泄漏 COIN 概念);币安下此数≈非 COIN TradFi(+少量 USDC-M)。
+        # fail-closed 配套护栏:underlyingType 字段格式漂移致白名单误杀会使此数跳升、可见。
+        if excluded:
+            print('[universe] include 过滤剔除 %d 个合约' % excluded, flush=True)
         return out
 
     def _now_ms(self):

@@ -13,17 +13,17 @@ class FakeBinanceClient(FakeCcxtClient):
                               # market = MARKET_LOT_SIZE（市价单单笔上限；ccxt 标准映射）
                               'limits': {'amount': {'min': 0.001}, 'cost': {'min': 50.0},
                                          'market': {'min': 0.001, 'max': 120.0}},
-                              'info': {'listTime': '0'}},
+                              'info': {'listTime': '0', 'underlyingType': 'COIN'}},
             'ETH/USDT:USDT': {'id': 'ETHUSDT', 'symbol': 'ETH/USDT:USDT', 'swap': True,
                               'settle': 'USDT', 'base': 'ETH', 'active': True,
                               'precision': {'price': 0.01, 'amount': 0.01},
                               'limits': {'amount': {'min': 0.01}, 'cost': {'min': 20.0}},
-                              'info': {'listTime': '0'}},
+                              'info': {'listTime': '0', 'underlyingType': 'COIN'}},
             'BTC/USDC:USDC': {'id': 'BTCUSDC', 'symbol': 'BTC/USDC:USDC', 'swap': True,
                               'settle': 'USDC', 'base': 'BTC', 'active': True,
                               'precision': {'price': 0.1, 'amount': 0.001},
                               'limits': {'amount': {'min': 0.001}, 'cost': {'min': 5.0}},
-                              'info': {'listTime': '0'}},
+                              'info': {'listTime': '0', 'underlyingType': 'COIN'}},
         }
     def load_markets(self):
         return self.markets
@@ -405,3 +405,70 @@ def test_encode_cloid_compresses_uuid_gid():
     assert a.encode_cloid('999999:1:1') == '999999:1:1'
     # 确定性：同输入恒同输出（交易所端幂等去重语义保持）
     assert a.encode_cloid('%s:5:2' % gid) == a.encode_cloid('%s:5:2' % gid)
+
+
+def test_is_coin_market_predicate():
+    from gridtrade.exchanges.binance import is_coin_market
+    assert is_coin_market({'info': {'underlyingType': 'COIN'}}) is True
+    # TradFi 各品类一律 False
+    for t in ('EQUITY', 'KR_EQUITY', 'COMMODITY', 'INDEX', 'PREMARKET'):
+        assert is_coin_market({'info': {'underlyingType': t}}) is False
+    # fail-closed:字段缺失 / info 为 None / underlyingType 为 None → False
+    assert is_coin_market({'info': {'listTime': '0'}}) is False
+    assert is_coin_market({'info': None}) is False
+    assert is_coin_market({}) is False
+    assert is_coin_market({'info': {'underlyingType': None}}) is False
+
+
+_MIXED_MARKETS = {
+    'BTC/USDT:USDT': {'id': 'BTCUSDT', 'symbol': 'BTC/USDT:USDT', 'swap': True,
+                      'settle': 'USDT', 'precision': {'price': 0.1, 'amount': 0.001},
+                      'limits': {}, 'info': {'underlyingType': 'COIN'}},
+    'AAPL/USDT:USDT': {'id': 'AAPLUSDT', 'symbol': 'AAPL/USDT:USDT', 'swap': True,
+                       'settle': 'USDT', 'precision': {'price': 0.1, 'amount': 0.001},
+                       'limits': {}, 'info': {'underlyingType': 'EQUITY'}},
+    'XAU/USDT:USDT': {'id': 'XAUUSDT', 'symbol': 'XAU/USDT:USDT', 'swap': True,
+                      'settle': 'USDT', 'precision': {'price': 0.1, 'amount': 0.001},
+                      'limits': {}, 'info': {'underlyingType': 'COMMODITY'}},
+    'BTC/USDC:USDC': {'id': 'BTCUSDC', 'symbol': 'BTC/USDC:USDC', 'swap': True,
+                      'settle': 'USDC', 'precision': {'price': 0.1, 'amount': 0.001},
+                      'limits': {}, 'info': {'underlyingType': 'COIN'}},
+}
+
+
+def _mixed_client():
+    c = FakeBinanceClient()
+    c.markets = dict(_MIXED_MARKETS)
+    return c
+
+
+def test_include_market_coin_and_settle():
+    a = _binance()
+    assert a._include_market({'settle': 'USDT', 'info': {'underlyingType': 'COIN'}}) is True
+    assert a._include_market({'settle': 'USDT', 'info': {'underlyingType': 'EQUITY'}}) is False
+    assert a._include_market({'settle': 'USDT', 'info': {'listTime': '0'}}) is False  # 缺字段 fail-closed
+    assert a._include_market({'settle': 'USDC', 'info': {'underlyingType': 'COIN'}}) is False  # 非本结算币
+
+
+def test_list_instruments_excludes_tradfi():
+    syms = [i.symbol for i in _binance(_mixed_client()).list_instruments()]
+    assert syms == ['BTC/USDT:USDT']                       # 只 COIN+本结算币
+    assert 'AAPL/USDT:USDT' not in syms and 'XAU/USDT:USDT' not in syms
+
+
+def test_id_map_excludes_tradfi():
+    m = _binance(_mixed_client())._id_map()
+    assert m == {'BTCUSDT': 'BTC/USDT:USDT'}                # TradFi 与 USDC 都不入映射
+
+
+def test_resolve_live_universe_excludes_tradfi():
+    from gridtrade.runtime.universe import resolve_live_universe
+    out = resolve_live_universe(_binance(_mixed_client()))
+    assert out == ['BTC/USDT:USDT']                        # 票池透传过滤,无 TradFi
+
+
+def test_list_instruments_logs_include_excluded(capsys):
+    _binance(_mixed_client()).list_instruments()
+    out = capsys.readouterr().out
+    # AAPL(EQUITY)+XAU(COMMODITY)+BTC-USDC(非本结算)=3 个被 _include_market 剔除
+    assert 'include 过滤剔除 3' in out

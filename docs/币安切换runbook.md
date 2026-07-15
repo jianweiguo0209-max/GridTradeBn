@@ -32,6 +32,10 @@
       确认历史无需再查（或已导出）后可 `fly apps destroy gridtrade-prod`。
 
 ## 阶段 3：生产切换
+- [ ] **前置门槛(代码):票池 COIN-only 过滤已落地**——`BinanceAdapter._include_market` 仅收
+      `underlyingType=='COIN'`(实盘+回测同口径);切换后核对 mainnet 票池无 TradFi
+      (`resolve_live_universe` 结果中 `underlyingType!='COIN'` 应为 0)。背景:币安 mainnet 上
+      美股/韩股/商品代币化永续,非 7×24 跳空打穿网格+保险丝(spec 2026-07-15)。
 - [ ] 币安主网 API key：只开合约交易、**禁提现**、不绑 IP 白名单
       （Fly 出口 IP 非静态；如启用 Fly static egress 再收紧，spec §7.3）。
 - [ ] 新建生产环境：`fly apps create gridtrade-bi-prod` + PG `gridtrade-pg-bi-prod` 建库挂载

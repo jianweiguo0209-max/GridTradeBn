@@ -172,3 +172,41 @@ def test_default_fee_rates_binance_vip0():
         sig = inspect.signature(fn)
         assert sig.parameters['fee_rate'].default == 0.0002
         assert sig.parameters['taker_rate'].default == 0.0005
+
+
+def test_exclude_non_coin_drops_tradfi_keeps_delisted_coin():
+    from gridtrade.backtest.backtest_run import exclude_non_coin
+    from gridtrade.exchanges.binance import BinanceAdapter
+    from tests.exchanges.test_binance_adapter import FakeBinanceClient
+    c = FakeBinanceClient()
+    c.markets = {
+        'BTC/USDT:USDT': {'symbol': 'BTC/USDT:USDT', 'swap': True, 'settle': 'USDT',
+                          'info': {'underlyingType': 'COIN'}},
+        'SOXL/USDT:USDT': {'symbol': 'SOXL/USDT:USDT', 'swap': True, 'settle': 'USDT',
+                           'info': {'underlyingType': 'EQUITY'}},
+        'XAU/USDT:USDT': {'symbol': 'XAU/USDT:USDT', 'swap': True, 'settle': 'USDT',
+                          'info': {'underlyingType': 'COMMODITY'}},
+        'BTC/USDC:USDC': {'symbol': 'BTC/USDC:USDC', 'swap': True, 'settle': 'USDC',
+                          'info': {'underlyingType': 'COIN'}},   # 非本结算币,不算入 non_coin
+    }
+    a = BinanceAdapter(c)
+    # 归档含:现存 COIN(BTC)、现存 TradFi(SOXL/XAU)、已退市 COIN(FOO 不在当前 exchangeInfo)
+    archive = {'BTC/USDT:USDT', 'SOXL/USDT:USDT', 'XAU/USDT:USDT', 'FOO/USDT:USDT'}
+    kept, removed = exclude_non_coin(archive, a)
+    assert kept == ['BTC/USDT:USDT', 'FOO/USDT:USDT']   # TradFi 剔除;退市 COIN 保留(无幸存者偏差)
+    assert removed == 2                                  # SOXL + XAU
+
+
+def test_exclude_non_coin_raises_on_empty_markets():
+    # 降级响应(load_markets 返回空 markets、未抛异常)不得静默 fail-open 为"保留全量归档"
+    # (等于放行 TradFi)——必须 fail-loud,与实盘 fail-closed 同向(spec 2026-07-15 §4.3)。
+    import pytest
+
+    from gridtrade.backtest.backtest_run import exclude_non_coin
+    from gridtrade.exchanges.binance import BinanceAdapter
+    from tests.exchanges.test_binance_adapter import FakeBinanceClient
+    c = FakeBinanceClient()
+    c.markets = {}   # 模拟降级:load_markets 幂等返回空,不抛
+    a = BinanceAdapter(c)
+    with pytest.raises(RuntimeError):
+        exclude_non_coin({'BTC/USDT:USDT'}, a)
