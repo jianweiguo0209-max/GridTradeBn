@@ -15,6 +15,7 @@ import sys
 import time
 
 from gridtrade.backtest import sweep as SW
+from gridtrade.backtest import safe_workers
 from gridtrade.backtest import vision as V
 from gridtrade.backtest.cache import ParquetCache
 from gridtrade.core.tier_policy import effective_blacklist
@@ -52,7 +53,7 @@ def main(argv=None):
     root = V.default_cache_root()
     cache = ParquetCache(root)
     out_dir = args.out or os.path.join(root, '..', 'sweep')
-    workers = int(os.environ.get('BT_WORKERS', '1'))
+    workers = safe_workers(os.environ.get('BT_WORKERS', '1'))  # 夹 ≤半数核心，防超订假死
 
     if args.baseline:
         if not args.out:

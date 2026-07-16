@@ -12,6 +12,10 @@
 import heapq
 import os
 
+from gridtrade.backtest._resource_guard import apply_thread_caps, safe_workers
+
+apply_thread_caps()  # 必须在 import pandas(→numpy/OpenBLAS)前锁每进程线程，防多进程超订
+
 import pandas as pd
 
 from gridtrade.backtest import selection_replay as SR
@@ -552,7 +556,7 @@ def main(argv=None):
     from gridtrade.backtest import vision as V
     root = V.default_cache_root()
     cache = ParquetCache(root)
-    workers = int(os.environ.get('BT_WORKERS', '1'))
+    workers = safe_workers(os.environ.get('BT_WORKERS', '1'))  # 夹 ≤半数核心，防超订假死
     print('[BT] window %s -> %s | sim_tf=%s' % (win_start, win_end, sim_tf))
 
     t0 = time.time()
