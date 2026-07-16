@@ -36,19 +36,35 @@ def test_capped_symbols_matches_pick_semantics():
 
 
 def test_lev_caps_tiers():
-    """组件四(spec 2026-07-11-symbol-desk):杠杆感知上限——maxlev≤3→1、≤5→2、
-    其余→tier2_cap;None=不启用(向后兼容);与 tier2_cap 取更严者。"""
+    """cap_for 杠杆感知逻辑(spec 2026-07-11-symbol-desk 组件四):显式 lev_caps=((3,1),(5,2)) 下
+    maxlev≤3→1、≤5→2、其余→tier2_cap;None=不启用(向后兼容);与 tier2_cap 取更严者。
+    (纯逻辑测试用显式 lev_caps,独立于生产默认——见 test_lev_caps_default_binance_calibrated。)"""
     from gridtrade.core.tier_policy import TierPolicy, cap_for, capped_symbols
-    tp = TierPolicy(tier2_cap=4)
+    LC = ((3, 1), (5, 2))
+    tp = TierPolicy(tier2_cap=4, lev_caps=LC)
     s = 'X/USDC:USDC'
     assert cap_for(s, tp, maxlev=3) == 1
     assert cap_for(s, tp, maxlev=5) == 2
     assert cap_for(s, tp, maxlev=20) == 4
     assert cap_for(s, tp) == 4                      # None → 原行为
-    assert cap_for(s, TierPolicy(tier2_cap=1), maxlev=5) == 1   # 取更严
+    assert cap_for(s, TierPolicy(tier2_cap=1, lev_caps=LC), maxlev=5) == 1   # 取更严
     # map 注入:lev3 币持 1 格即触顶;高杠杆币持 3 格不触
     held = {'A/USDC:USDC': 1, 'B/USDC:USDC': 3}
     mm = {'A/USDC:USDC': 3.0, 'B/USDC:USDC': 20.0}
     assert capped_symbols(['A/USDC:USDC', 'B/USDC:USDC'], held, tp, maxlev_map=mm) \
         == {'A/USDC:USDC'}
     assert capped_symbols(['A/USDC:USDC'], held, tp) == set()   # 无 map → 原行为
+
+
+def test_lev_caps_default_binance_calibrated():
+    """生产默认按币安杠杆刻度重标(2026-07-16):币安最低杠杆 5x、无 ≤3x,故 maxlev≤10 → cap 1
+    (罩住 5x/10x 脆弱尾部,COIN-only 票池 14/614≈2.3% 币),其余(>10x)走 tier2_cap。"""
+    from gridtrade.core.tier_policy import cap_for
+    from gridtrade.config import DEFAULT_TIER_POLICY as P
+    assert P.lev_caps == ((10, 1),)
+    s = 'X/USDT:USDT'
+    assert cap_for(s, P, maxlev=5) == 1       # 币安最脆弱
+    assert cap_for(s, P, maxlev=10) == 1      # ≤10 上界仍收紧到 1
+    assert cap_for(s, P, maxlev=20) == 2      # >10 → tier2_cap
+    assert cap_for(s, P, maxlev=125) == 2
+    assert cap_for(s, P, maxlev=None) == 2    # 未知 → 原行为(不收紧)

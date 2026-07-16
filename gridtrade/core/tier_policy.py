@@ -14,10 +14,11 @@ class TierPolicy:
     tier0: tuple = ()      # 硬禁：票池级剔除
     tier1: tuple = ()      # 名单币并发上限 1
     tier2_cap: int = 2     # 其余币(OTHERS)并发上限；0 = 不限
-    # 杠杆感知上限(spec 2026-07-11-symbol-desk 组件四,档位用户定):maxlev≤3 → cap 1、
-    # ≤5 → cap 2(维持率高/薄盘,压脆弱币堆叠);其余走 tier2_cap。maxlev 由调用方注入
-    # (本层禁止 import 交易所);maxlev=None 不适用(向后兼容)。
-    lev_caps: tuple = ((3, 1), (5, 2))
+    # 杠杆感知上限(spec 2026-07-11-symbol-desk 组件四;2026-07-16 按币安杠杆刻度重标,用户定):币安
+    # 最低杠杆 5x、无 ≤3x,故 HL 的 (3,1)(5,2) 在币安空转(每币仍 cap 2)。改 maxlev≤10 → cap 1,罩住
+    # 币安最脆弱的 5x/10x 尾部(维持率高/薄盘;COIN-only 票池实测 14/614≈2.3% 币),不误伤 20x+ 主力;
+    # 其余走 tier2_cap、取更严者。maxlev 由调用方注入(本层禁 import 交易所);None=不适用(向后兼容/金标)。
+    lev_caps: tuple = ((10, 1),)
 
 
 def effective_blacklist(blacklist, tiers) -> tuple:

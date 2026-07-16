@@ -127,6 +127,27 @@ class BinanceAdapter(CcxtAdapter):
                 raise
         self.client.set_leverage(int(leverage), native)
 
+    def fetch_max_leverages(self) -> dict:
+        """{canonical: maxLeverage} 自私有杠杆档 bulk(ccxt fetch_leverage_tiers 无参=全量、单次
+        调用、权重 1、实例缓存)。覆写 CcxtAdapter 版本(读公共 market limits.leverage.max)——币安
+        公共 exchangeInfo 不带每币最大杠杆、真值只在私有档;公共版返 {} → 杠杆感知同币 cap 静默失效
+        (2026-07-16 实测 0 条,与'开格设杠杆'用对了 fetch_leverage_tiers 割裂)。maxLeverage=各档
+        最大者(首档/最小名义);ccxt bulk 键即 canonical。取数失败 → {}(fail-open,同基类语义,
+        调用方退化无分级)。"""
+        cache = getattr(self, '_maxlev_cache', None)
+        if cache is None:
+            cache = {}
+            try:
+                raw = self.client.fetch_leverage_tiers() or {}   # 无 symbol=全量
+                for sym, brs in raw.items():
+                    mls = [int(t['maxLeverage']) for t in (brs or []) if t.get('maxLeverage')]
+                    if mls:
+                        cache[sym] = float(max(mls))
+            except Exception:
+                cache = {}
+            self._maxlev_cache = cache
+        return cache
+
     def assert_account_mode(self) -> None:
         """单向持仓 + 关闭联合保证金（引擎净仓/单币权益假设，spec §3.1）。"""
         dual = self.client.fapiPrivateGetPositionSideDual() or {}

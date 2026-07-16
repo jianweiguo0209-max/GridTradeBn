@@ -557,3 +557,28 @@ def test_order_status_propagates_non_ordernotfound():
     c.fetch_order = fake_fetch_order
     with pytest.raises(ccxt.NetworkError):
         _binance(c).order_status('BTC/USDT:USDT', '999')
+
+
+def test_fetch_max_leverages_from_private_bracket():
+    """币安 fetch_max_leverages 从私有杠杆档 bulk(fetch_leverage_tiers 无参=全量,权重1)取每币
+    最大杠杆——覆写 CcxtAdapter 读公共 market limits.leverage.max(币安公共 exchangeInfo 不填 → {}、
+    杠杆感知同币 cap 静默失效,2026-07-16 实测)。maxLeverage=各档最大者;实例缓存,bulk 只调一次。"""
+    from gridtrade.config import DEFAULT_TIER_POLICY
+    from gridtrade.core.tier_policy import cap_for
+    c = FakeBinanceClient()
+    calls = []
+    def fake_bulk(symbols=None, params=None):
+        calls.append(symbols)
+        return {'KITE/USDT:USDT': [{'maxLeverage': 5, 'maxNotional': 1000.0},
+                                   {'maxLeverage': 3, 'maxNotional': 5000.0}],
+                'BTC/USDT:USDT': [{'maxLeverage': 125, 'maxNotional': 50000.0}]}
+    c.fetch_leverage_tiers = fake_bulk
+    a = _binance(c)
+    out = a.fetch_max_leverages()
+    assert out == {'KITE/USDT:USDT': 5.0, 'BTC/USDT:USDT': 125.0}   # 各档最大者(非公共版的 {})
+    a.fetch_max_leverages()
+    assert calls == [None]                                          # bulk 无 symbol、实例缓存只调一次
+    # 端到端:低杠杆币经 max_leverage → cap 收紧(生产默认 lev_caps=((10,1),))
+    assert a.max_leverage('KITE/USDT:USDT') == 5.0
+    assert cap_for('KITE/USDT:USDT', DEFAULT_TIER_POLICY, maxlev=5) == 1
+    assert cap_for('BTC/USDT:USDT', DEFAULT_TIER_POLICY, maxlev=125) == 2   # 高杠杆走 tier2_cap

@@ -1,6 +1,7 @@
 # tests/execution/test_lev_slot_cap.py
-"""组件四集成:executor.open 槽位上限杠杆感知——lev3 币同币第 2 格被 DB 槽位拒;
-FakeExchange 默认 max_leverage=None → 原行为(全部既有测试零波及)。"""
+"""组件四集成:executor.open 槽位上限杠杆感知——币安重标 lev_caps=((10,1),):maxlev≤10 币同币
+第 2 格被 DB 槽位拒(cap 1);>10 走 tier2_cap=2;maxlev=None(FakeExchange 默认)→ tier2_cap=2
+(既有测试零波及)。"""
 import pytest
 
 from gridtrade.exchanges.base import Instrument
@@ -29,8 +30,25 @@ def test_lev3_symbol_capped_at_one(store):
         gx.open('fake', BTC, dict(GP), tag='b')
 
 
-def test_lev5_symbol_capped_at_two(store):
+def test_lev5_symbol_capped_at_one(store):
+    # 币安重标:maxlev≤10(含 5x 脆弱尾部)→ cap 1,同币第 2 格被拒
     gx = _gx(store, 5.0)
+    gx.open('fake', BTC, dict(GP), tag='a')
+    with pytest.raises(SlotExhausted):
+        gx.open('fake', BTC, dict(GP), tag='b')
+
+
+def test_lev10_symbol_capped_at_one(store):
+    # ≤10 上界:maxlev=10 仍 cap 1
+    gx = _gx(store, 10.0)
+    gx.open('fake', BTC, dict(GP), tag='a')
+    with pytest.raises(SlotExhausted):
+        gx.open('fake', BTC, dict(GP), tag='b')
+
+
+def test_lev20_symbol_keeps_tier2_cap(store):
+    # >10:maxlev=20 走 tier2_cap=2,第 3 格才被拒
+    gx = _gx(store, 20.0)
     gx.open('fake', BTC, dict(GP), tag='a')
     gx.open('fake', BTC, dict(GP), tag='b')
     with pytest.raises(SlotExhausted):
