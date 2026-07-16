@@ -23,12 +23,13 @@ from gridtrade.runtime.universe import resolve_live_universe
 
 # 逐币取数间隔（ms）。币安 USDM 权重制（2026-07-16 testnet 实测重校，替代原 HL candleSnapshot 推导）：
 # scheduler 有独立出口 IP（实测 .109，与 monitor .111 分离）→ 独享 2400 权重/分；klines 取 160 根
-# limit≤500 实测权重 2/币（配合 fetch_ohlcv 的 limit 贴合修复；原恒 limit=1500=权重 10）。500ms →
-# 120 请求/分 × 2 ≈ 240 权重/分（仅 10% 预算，余量给突发/重试），~91 币一轮 ≈ 45s（原 2000ms≈3.5 分钟，
-# 按 HL 1200/分 IP 预算 + candleSnapshot ≈23 权重/币 估，对币安过度保守约 5×）。env SCHEDULER_FETCH_PACE_MS
-# 可调、0=关。ccxt enableRateLimit 的 50ms 名义间隔对权重制无效（2026-07-05 mainnet 429 风暴实证，故须
-# 显式节流：未节流时 50ms=1200 请求/分 × 权重 ≫ 2400，会打爆 scheduler 自身那个 IP）。
-FETCH_PACE_MS_DEFAULT = 500.0
+# limit≤500 实测权重 2/币（配合 fetch_ohlcv 的 limit 贴合修复；原恒 limit=1500=权重 10）。COIN-only 票池
+# 实测 ~275 币。250ms → 每币 ~0.31s(+~0.06s 拉取延迟) → 一轮 ~1.4 分钟，峰值 ~390 权重/分（~16% 预算，
+# 余量给重试突发；原 2000ms≈9.5 分钟/275 币，严重超 HH:00–12 窗）。串行往返地板 ~17s（275 次×~60ms），
+# 再快需并发（过度工程）。env SCHEDULER_FETCH_PACE_MS 可调、0=关。ccxt enableRateLimit 的 50ms 名义间隔对
+# 权重制无效（2026-07-05 mainnet 429 风暴实证，故须显式节流：未节流时 50ms=1200 请求/分 × 权重 ≫ 2400，
+# 会打爆 scheduler 自身那个 IP）。
+FETCH_PACE_MS_DEFAULT = 250.0
 
 
 def fetch_universe_candles(adapter, symbols, run_time, *, timeframe='1h',

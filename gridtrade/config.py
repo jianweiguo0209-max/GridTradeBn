@@ -75,7 +75,7 @@ class DeployConfig:
     universe_top_volume_pct: float = 0.0  # >0 → 票池按 24h 成交额取前 ceil(pct×N)（相对口径，spec 2026-07-14-universe-top-volume-pct）；生产设 0.55
     fuse_min_coverage: float = 1.0  # 保险丝覆盖率门槛（spec 2026-07-15）：<该值即降 cap 护全额；0=停用（仅审计）。合法区间 (0, 1.0]——>1 无意义（覆盖率>1 只是余量，护栏已 clamp 成只降不升）
     min_order_notional: float = 0.0     # >0 → 开仓预检单笔名义额下限（币安按币 5/20/50，与 Instrument.min_cost 取 max）；0=停用
-    scheduler_fetch_pace_ms: float = 500.0    # 选币取数币间间隔（币安权重实测重校，见 scheduler.py）；0=关
+    scheduler_fetch_pace_ms: float = 250.0    # 选币取数币间间隔（币安权重实测重校，见 scheduler.py）；0=关
     monitor_parallel: int = 4           # monitor per-grid 并行 worker 数；1=退回全串行（保底开关）
     monitor_unit_warn_sec: float = 30.0  # 单网格监控单元耗时告警阈值（病态格日志指名道姓）
     # MarketShockBrake(spec 2026-07-08)：|票池中位数 k 小时收益|≥thr → 暂停开格 pause 小时(只关不开)。
@@ -154,7 +154,7 @@ def load_deploy_config(env=None) -> DeployConfig:
         universe_top_volume_pct=_f(env, 'UNIVERSE_TOP_VOLUME_PCT', 0.0),
         fuse_min_coverage=_fmc,
         min_order_notional=_f(env, 'MIN_ORDER_NOTIONAL', 0.0),
-        scheduler_fetch_pace_ms=_f(env, 'SCHEDULER_FETCH_PACE_MS', 500.0),
+        scheduler_fetch_pace_ms=_f(env, 'SCHEDULER_FETCH_PACE_MS', 250.0),
         monitor_parallel=_i(env, 'MONITOR_PARALLEL', 4),
         monitor_unit_warn_sec=_f(env, 'MONITOR_UNIT_WARN_SEC', 30.0),
         shock_thr=_f(env, 'SHOCK_THR', 0.025),

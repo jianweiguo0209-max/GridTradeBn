@@ -142,7 +142,7 @@ def test_strategy_defaults_mirror_legacy():
 
 def test_scheduler_fetch_pace_ms_default_and_override():
     from gridtrade.config import load_deploy_config
-    assert load_deploy_config(env={'EXCHANGE': 'fake'}).scheduler_fetch_pace_ms == 500.0
+    assert load_deploy_config(env={'EXCHANGE': 'fake'}).scheduler_fetch_pace_ms == 250.0
     assert load_deploy_config(env={'EXCHANGE': 'fake',
                                    'SCHEDULER_FETCH_PACE_MS': '0'}).scheduler_fetch_pace_ms == 0.0
 
