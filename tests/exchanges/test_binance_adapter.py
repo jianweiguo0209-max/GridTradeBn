@@ -272,6 +272,7 @@ def test_create_stop_order_stop_market():
     assert params['stopLossPrice'] == 95.0
     assert params['reduceOnly'] is True
     assert params['clientOrderId'] == '9:fuse:low'
+    assert params['workingType'] == 'MARK_PRICE'        # 触发按标记价(防插针+对齐爆仓口径),非默认末价
     assert 'slippage' not in params                     # 币安无滑点底线参数（spec §5.2）
 
 

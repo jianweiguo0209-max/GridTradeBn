@@ -99,6 +99,10 @@ class BinanceAdapter(CcxtAdapter):
         trigger_price = self.quantize_price(symbol, trigger_price)   # 触发价按 tickSize 量化(防 -1111)
         p = self._params(reduce_only, client_oid)
         p['stopLossPrice'] = trigger_price
+        # 触发按标记价而非默认末价(CONTRACT_PRICE):防恶意插针把末价瞬打到丝价即成交,并与币安
+        # 爆仓口径(只看标记价)一致——灾难丝在爆仓前、按同一价触发。字段已实测在 algo 簿丝单上有效
+        # (2026-07-16 现挂丝单 workingType=CONTRACT_PRICE)。软止损(5s 轮 pnl_ratio)仍走末价/回测对齐。
+        p['workingType'] = 'MARK_PRICE'
         r = self.client.create_order(self.to_native(symbol), 'market', side, size,
                                      None, p)
         return self._to_order(r)
