@@ -144,9 +144,13 @@ class PositionLedger:
             side = 'sell' if remaining > 0 else 'buy'
             o = ex.adapter.create_market_order(symbol, side, qty, reduce_only=True,
                                                client_oid='%s:close:%d' % (grid_id, attempt))
-            r_px, r_fee = ex._reduce_fill_px_fee(symbol, o)   # 真实成交均价+真实费
-            self._record_synthetic(grid_id, side, qty, r_px, 'reduce', fee=r_fee)
-            remaining -= qty if remaining > 0 else -qty
+            r_px, r_fee, r_filled = ex._reduce_fill_px_fee(symbol, o)   # 真实成交均价+真实费+真实成交量
+            # 按**实际成交量**记账+扣 remaining(非请求量 qty):reduce-only 市价单可部分成交,
+            # 按 qty 记会过度减仓、remaining 提前归 0 → 循环误退出、交易所留孤儿仓 → 账本背离/熔断
+            # (GP 系统实战坑;循环已每轮重读净仓,续减剩余量即可,≤3 次内收敛,超则走残余分摊)。
+            if r_filled > eps:
+                self._record_synthetic(grid_id, side, r_filled, r_px, 'reduce', fee=r_fee)
+                remaining -= r_filled if remaining > 0 else -r_filled
             attempt += 1
             pos = ex.adapter.fetch_positions(symbol)
         if abs(remaining) <= eps:

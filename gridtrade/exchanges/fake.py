@@ -170,13 +170,26 @@ class FakeExchange(ExchangeAdapter):
             id=oid, client_oid=o.client_oid, symbol=symbol, side=side, price=price,
             size=size, filled=size, status='closed', reduce_only=reduce_only)
 
+    def queue_market_fills(self, *fills):
+        """测试钩子:为接下来的市价单排定成交量(部分成交模拟)。每个元素=该单实际成交量,
+        None=全额成交。用尽后恢复默认全成。(mainnet 实证:reduce-only 市价单可部分成交,
+        账本须按实际成交量记而非请求量,防过度减仓留孤儿仓。)"""
+        self._market_fill_q = [None if x is None else float(x) for x in fills]
+
     def create_market_order(self, symbol, side, size, *,
                             reduce_only=False, client_oid=None) -> Order:
         oid = str(next(self._ids))
+        q = float(size)
+        queue = getattr(self, '_market_fill_q', None)
+        if queue:                                 # 部分成交钩子:队列头限制本单成交量
+            cap = queue.pop(0)
+            if cap is not None:
+                q = min(q, float(cap))
         o = Order(id=oid, client_oid=client_oid or oid, symbol=symbol, side=side,
-                  price=self._price_of(symbol), size=size, filled=size,
-                  status='closed', reduce_only=reduce_only)
-        self._fill(o, self._price_of(symbol))
+                  price=self._price_of(symbol), size=size, filled=q,
+                  status='closed' if q >= size else 'open', reduce_only=reduce_only)
+        if q > 0:
+            self._fill(o, self._price_of(symbol), qty=q)
         return o
 
     def cancel_order(self, symbol, order_id) -> None:

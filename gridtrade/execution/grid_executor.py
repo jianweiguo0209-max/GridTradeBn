@@ -393,14 +393,17 @@ class GridExecutor:
             trades = [t for t in self.adapter.fetch_my_trades(symbol)
                       if t.order_id is not None and str(t.order_id) == str(order.id)]
         except Exception as exc:
-            print('[ledger] reduce 真实费回捞失败 %s: %r(回退 mark+0 费)' % (symbol, exc),
+            print('[ledger] reduce 真实费回捞失败 %s: %r(回退 order.filled+mark+0 费)' % (symbol, exc),
                   flush=True)
             trades = []
         tot = sum(float(t.size) for t in trades)
         if tot <= 0:
-            return float(self.adapter.fetch_price(symbol)), 0.0
+            # 拉不到成交:成交量回退订单自报 order.filled(非请求量;part-fill 也须真量,防过度减仓
+            # 留孤儿仓),价回退 mark、费 0(原 fail-open)
+            return (float(self.adapter.fetch_price(symbol)), 0.0,
+                    float(getattr(order, 'filled', 0.0) or 0.0))
         vwap = sum(float(t.price) * float(t.size) for t in trades) / tot
-        return float(vwap), float(sum(float(t.fee) for t in trades))
+        return float(vwap), float(sum(float(t.fee) for t in trades)), float(tot)
 
     def _flatten_symbol(self, grid_id, symbol):
         """无兄弟收尾段:symbol 级扫平(孤儿仓卫生,旧行为);reduce 市价单可能部分成交,
@@ -416,10 +419,11 @@ class GridExecutor:
             qty = abs(pos.net_size)
             o = self.adapter.create_market_order(symbol, side, qty, reduce_only=True,
                                                  client_oid='%s:close:%d' % (grid_id, attempt))
-            r_px, r_fee = self._reduce_fill_px_fee(symbol, o)
-            self.ledger._record_synthetic(grid_id, side, qty, r_px, 'reduce', fee=r_fee)
+            r_px, r_fee, r_filled = self._reduce_fill_px_fee(symbol, o)
+            if r_filled > 0:                      # 按实际成交量记(非请求量 qty):部分成交防过量记
+                self.ledger._record_synthetic(grid_id, side, r_filled, r_px, 'reduce', fee=r_fee)
             attempt += 1
-            pos = self.adapter.fetch_positions(symbol)
+            pos = self.adapter.fetch_positions(symbol)   # 循环由交易所净仓驱动,续平剩余量
 
     def _finalize_record(self, grid_id, symbol, reason):
         """落库段(拆分复用):snapshot → record(幂等) → CLOSED → 结构化日志。"""

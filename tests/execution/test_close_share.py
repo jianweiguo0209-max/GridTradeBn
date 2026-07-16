@@ -93,3 +93,17 @@ def test_drift_check_clean_after_hedged_close(store):
     rec = Reconciler(gx)
     out = rec.check_position_drift(gb, BTC)
     assert out is not None and out['ok'], out
+
+
+def test_reduce_partial_fill_records_actual_size_and_continues(store):
+    """reduce-only 市价单部分成交:合成行按**实际成交量**记、循环续减剩余量 → 账本与交易所
+    双双归 0(不留孤儿仓)。修复前按请求量 qty 记 → remaining 提前归 0、循环退出,交易所留残仓
+    → 账本以为平了、真背离(GP 系统实战坑;Bi 同源)。"""
+    ex, gx, ga, gb = _setup_two_grids(store)
+    _force_claims(ex, gx, ga, gb, 100.0, 0.0)     # A 多 100、B 0、交易所净 +100(单格全清场景)
+    ex.queue_market_fills(60.0)                    # 第一次 reduce 只成交 60,其余全成
+    gx.ledger.close_share(ga, BTC)
+    assert abs(ex.fetch_positions(BTC).net_size) < 1e-9   # 交易所已平(续减剩余 40)
+    assert abs(gx.live[ga].net_position) < 1e-9           # A 账本归 0、无过量减
+    reduce_rows = [f for f in _ledger_rows(gx, ga) if ':reduce:' in f.trade_id]
+    assert sorted(round(f.size, 6) for f in reduce_rows) == [40.0, 60.0]   # 按实际成交量 60+40,非请求量 100
