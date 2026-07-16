@@ -217,6 +217,36 @@ universe_snapshots = Table(
     Column('created_at', BigInteger, nullable=False),
 )
 
+# 选币名次快照(record-and-replay,2026-07-17 实盘对账):universe_snapshots 记了"进入排名
+# 的集合",但因子值/最终名次没记 → choose_symbols=1 的 razor-thin top-1 离线复现不了(实盘
+# vs 回测实证 3/6,差在因子输入精度)。此表记每 tick 的排名因子表+实选 picks;回测复放读它
+# → 选币名次 byte 级对齐。scheduler 选币后写一行,幂等(exchange+run_time),fail-soft。
+selection_snapshots = Table(
+    'selection_snapshots', metadata,
+    Column('exchange', String, primary_key=True),
+    Column('run_time', BigInteger, primary_key=True),   # tick 整点 ms(UTC)
+    Column('offset', Integer, nullable=False),          # compute_offset(run_time)
+    Column('ranked', Text, nullable=False),             # JSON: [{symbol,factors,rank_sum,rank}] 名次升序
+    Column('picks', Text, nullable=False),              # JSON list: 实际选中(top choose_symbols)
+    Column('created_at', BigInteger, nullable=False),
+)
+
+# 信号快照(record-and-replay,2026-07-17 实盘对账):pv 是实时量能信号、funding 是实时费率,
+# 离线重算/取数比实盘敏感或不同源 → pv主动止损过度触发、demo funding 与 mainnet 不符(实证
+# exit_reason 仅 45% 对上)。此表记实盘每次评估出的止损相关信号事件(pv_spike==1 或 funding
+# 超阈),回测复放读它 → pv/资金费率止损 byte 级对齐。执行循环算信号后按事件写,幂等,fail-soft。
+signal_snapshots = Table(
+    'signal_snapshots', metadata,
+    Column('grid_id', String, primary_key=True),
+    Column('ts', BigInteger, primary_key=True),         # 评估时刻 ms(UTC)
+    Column('symbol', String, nullable=False),
+    Column('pv_spike', Integer, nullable=False, default=0),
+    Column('funding_rate', Float, nullable=False, default=0.0),
+    Column('pnl_ratio', Float, nullable=True),          # 评估时净值-1(诊断触发条件用)
+    Column('created_at', BigInteger, nullable=False),
+    Index('ix_signal_snapshots_grid', 'grid_id'),
+)
+
 
 # ---- 数据类（仓储层入参/出参）----
 @dataclass
