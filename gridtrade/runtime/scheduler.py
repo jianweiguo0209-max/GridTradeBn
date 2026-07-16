@@ -163,6 +163,17 @@ def run_scheduler_once(runtime, *, now_fn=time.time,
     result = run_scheduler_cycle(rt.manager, rt.trigger_engine, rt.reconciler,
                                  ctx, close_tag=tag, open_enabled=open_enabled,
                                  braked_symbols=frozenset(braked))
+    # 选币名次快照(record-and-replay,2026-07-17 实盘对账):记本 tick 排名 picks+因子值,
+    # 供离线复放精确对齐名次(universe 记了票池集合、此表补因子/名次)。fail-soft:绝不阻塞。
+    try:
+        if ctx.selection_ranked:
+            from gridtrade.state.reconciliation_snapshots import SelectionSnapshotRepository
+            SelectionSnapshotRepository(rt.store).add(
+                rt.config.exchange, int(run_time.value // 1_000_000),
+                ctx.selection_offset or 0, ctx.selection_ranked,
+                [r['symbol'] for r in ctx.selection_ranked])
+    except Exception as exc:
+        print('[scheduler] selection snapshot skipped: %r' % exc, flush=True)
     rt.heartbeats.beat('scheduler')
     return result
 

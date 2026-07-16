@@ -92,6 +92,31 @@ def test_scheduled_trigger_maps_selection_rows_to_proposals_v1():
     assert out[0].offset == off and out[0].tag == 'acc1at%d' % off
 
 
+def test_scheduled_trigger_stashes_ranked_on_ctx():
+    """record-and-replay(2026-07-17):propose 把排名 picks(符号+因子值+名次)写回
+    ctx.selection_ranked/offset,供 scheduler 落 selection_snapshots。fail-soft。"""
+    from gridtrade.execution.triggers import ScheduledSelectionTrigger
+    from gridtrade.core.selection import compute_offset
+    run_time = pd.Timestamp('2025-06-24 14:00:00')
+
+    def _row(sym, rank, reg, sgcz):
+        r = _factor_row(sym, rank, run_time)
+        r.update({'Reg_v2_2': reg, 'Sgcz_2': sgcz, 'rank_sum': float(rank * 2)})
+        return r
+    rows = pd.DataFrame([_row('BTC/USDT:USDT', 1, 0.5, -0.03),
+                         _row('ETH/USDT:USDT', 2, 0.2, -0.05)])
+    trig = ScheduledSelectionTrigger(_strategy_config(), {'Reg_v2_2': True, 'Sgcz_2': True},
+                                     [1, 1], select_fn=lambda scd, rt, off: rows)
+    ctx = TriggerContext(exchange='okx', run_time=run_time,
+                         symbol_candle_data={'BTC/USDT:USDT': None})
+    trig.propose(ctx)
+    assert ctx.selection_offset == compute_offset(run_time, '12H')
+    assert ctx.selection_ranked is not None and len(ctx.selection_ranked) == 2
+    top = ctx.selection_ranked[0]
+    assert top['symbol'] == 'BTC/USDT:USDT' and top['rank'] == 1 and top['rank_sum'] == 2.0
+    assert top['factors']['Reg_v2_2'] == 0.5 and top['factors']['Sgcz_2'] == -0.03
+
+
 def test_scheduled_trigger_empty_selection_returns_empty():
     from gridtrade.execution.triggers import ScheduledSelectionTrigger
     run_time = pd.Timestamp('2025-06-24 14:00:00')

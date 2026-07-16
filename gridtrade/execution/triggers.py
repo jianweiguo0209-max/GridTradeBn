@@ -21,6 +21,11 @@ class TriggerContext:
     exchange: str
     run_time: pd.Timestamp
     symbol_candle_data: Optional[dict] = None
+    # record-and-replay(2026-07-17 实盘对账):ScheduledSelectionTrigger 把排名结果写回,
+    # scheduler 落 selection_snapshots → 离线复放精确对齐选币名次。触发器不落库(无 store),
+    # 经 ctx 交给 scheduler(有 store)统一 fail-soft 写。
+    selection_offset: Optional[int] = None
+    selection_ranked: Optional[list] = None   # [{symbol, factors, rank_sum, rank}] 名次升序
 
 
 class TriggerCondition(ABC):
@@ -84,6 +89,20 @@ class ScheduledSelectionTrigger(TriggerCondition):
         if factor_data.empty:
             return []
         factor_data = factor_data.sort_values('rank')
+
+        # record-and-replay(2026-07-17):把排名 picks(选中币+因子值+名次)写回 ctx,供
+        # scheduler 落 selection_snapshots。fail-soft:序列化失败绝不阻断开格。
+        try:
+            _fcols = [c for c in self.factors if c in factor_data.columns]
+            ctx.selection_offset = int(offset)
+            ctx.selection_ranked = [
+                {'symbol': r['symbol'],
+                 'factors': {c: float(r[c]) for c in _fcols},
+                 'rank_sum': float(r['rank_sum']) if 'rank_sum' in factor_data.columns else 0.0,
+                 'rank': int(r['rank']) if 'rank' in factor_data.columns else 0}
+                for _, r in factor_data.iterrows()]
+        except Exception:
+            ctx.selection_ranked = None
 
         grid_version = cfg.get('grid_version', 1)
         calc_fn = calc_grid_params_v2 if grid_version == 2 else calc_grid_params_v1
