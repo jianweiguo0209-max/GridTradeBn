@@ -91,26 +91,31 @@ def test_evict_removes_cache_entry():
     prov.evict('missing')            # 缺失也安全、不抛
 
 
-def _bars_15m(n=108, base_qv=1e5, last_qv=None):
-    t = pd.date_range('2026-06-01', periods=n, freq='15min')
+def _bars_1m(n=1620, base_qv=1e5, spike_qv=None, spike_len=15):
+    """n 根 1m。spike_qv 非空时把**最后 spike_len 根**换成尖峰量(=滚动窗刚好装满)。"""
+    t = pd.date_range('2026-06-01', periods=n, freq='1min')
     qv = np.full(n, base_qv, dtype=float)
-    if last_qv is not None:
-        qv[-1] = last_qv
+    if spike_qv is not None:
+        qv[-spike_len:] = spike_qv
     return pd.DataFrame({'candle_begin_time': t, 'open': 100.0, 'high': 100.0,
                          'low': 100.0, 'close': 100.0, 'quote_volume': qv})
 
 
-def test_fetch_window_is_15m_lookback_decoupled_from_open_ms():
-    """legacy 满窗语义:取数=原生 15m、窗口=now−(n+8)×15min,与 open_ms 解耦
-    (spec 2026-07-07-pv-legacy-semantics-live)。"""
-    adp = FakeAdapter(bars=_bars_15m(), funding=_funding([0.001]))
+def test_fetch_is_1m_lookback_decoupled_from_open_ms():
+    """方案C(2026-07-18):取数粒度=**原生 1m**,窗口=now−(n+8)×period,与 open_ms 解耦。
+
+    calc_pv_spike 现在算「截至 now 的滚动 period 窗」,需要 period 内的细粒度成交额。
+    此前取原生 15m → 该函数的 resample 退化成空操作 → iloc[-1] 拿到的是**进行中的半截桶**,
+    而回测那侧是**整桶(含未来)**广播 —— 两侧从不同源(回测 67.2% 的格窗见尖峰 vs 实盘 20.6%)。
+    """
+    adp = FakeAdapter(bars=_bars_1m(), funding=_funding([0.001]))
     prov = LiveSignalProvider(adp, mult=3, period='15min', n=100, now_fn=lambda: 1_000_000.0)
     now_ms = 1_000_000_000
     prov.get('g1', 'X', open_ms=now_ms - 60_000)      # 开格才 1 分钟
     sym, tf, start, end = adp.last_ohlcv
-    assert tf == '15m'
+    assert tf == '1m', '滚动窗需 1m 粒度;取 15m 会退化回半截桶语义'
     assert end == now_ms
-    assert start == now_ms - 108 * 900_000            # (n+8)×15min,与 open_ms 无关
+    assert start == now_ms - 108 * 900_000            # (n+8)×period,与 open_ms 无关
 
     prov2 = LiveSignalProvider(adp, mult=3, period='15min', n=100, now_fn=lambda: 1_000_000.0)
     prov2.get('g2', 'X', open_ms=0)                   # 开格很久
@@ -118,12 +123,12 @@ def test_fetch_window_is_15m_lookback_decoupled_from_open_ms():
 
 
 def test_full_window_baseline_detects_spike_vs_long_history():
-    """满窗行为差分:107 根低量历史 + 最后一根 5×爆量 → rolling(100) 满窗基线判尖峰。
-    (旧实现开格 1 分钟只有 1 根 bar,expanding 基线=自身,永远判不出尖峰。)"""
-    bars = _bars_15m(n=108, base_qv=1e5, last_qv=5e5)   # 5×基线 > mult=3
+    """满窗行为差分:1605 根低量历史 + 末 15 根(=一个滚动窗)5×爆量 → 满窗基线判出尖峰。
+    (最初实现只取「开网→现在」,开格 1 分钟时基线=自身 expanding,永远判不出。)"""
+    bars = _bars_1m(n=1620, base_qv=1e5, spike_qv=5e5)   # 5×基线 > mult=3
     adp = FakeAdapter(bars=bars, funding=_funding([0.001]))
     prov = LiveSignalProvider(adp, mult=3, period='15min', n=100, now_fn=lambda: 1_000_000.0)
-    pv, _ = prov.get('g1', 'X', open_ms=999_940_000)    # 开格才 1 分钟,旧语义必 0
+    pv, _ = prov.get('g1', 'X', open_ms=999_940_000)    # 开格才 1 分钟
     assert pv == 1
 
 

@@ -130,22 +130,36 @@ def get_trade_info(touch_df, open_price, grid_info, drop_first_closest=True):
 
 
 def calc_pv_spike(bars_df, active_period='15min', mult=3, n=233, body_ratio_min=0.0):
-    """复刻 calc_active_loss_signal_pv 的量能部分：active_period 重采样后 quote_volume > mult×rolling(n).mean。
-    返回 (candle_begin_time, pv_spike) 逐 1m 映射。需 bars 含 quote_volume。
-    注：窗口内 1m 数据有限，rolling(n) 用 min_periods 近似，缺 n 根前置历史（fidelity 限制，已知）。
-    body_ratio_min>0 时叠加 con2（1m 实体占比 |close-open|/(high-low)>阈值）：pv_spike = con1 & con2；
-    默认 0=关（与历史一致，金标不变）。"""
+    """**截至 t 的滚动窗**成交额 > mult × 同口径均量基线 → pv_spike=1。逐 bar 返回，**无前视**。
+
+    2026-07-18 改口径（方案C）。旧实现是「resample(active_period) + merge_asof(backward) 广播」：
+    桶标签是桶**起点**，于是桶内每根 bar 都拿到**整桶（含未来）**算出的信号 → **前视最多一个
+    active_period**（实证：尖峰真实发生在 10:10，10:00 那根的 pv_spike 已是 1）。而实盘
+    signals.py 取的是**进行中的半截桶**——两侧从不同源：回测 67.2% 的格窗见到尖峰、实盘仅 20.6%
+    （丢 69%）。pv 主动止损是回测 53.9% 的退出路径（第一大），故这条前视污染的是全系统最大单项。
+
+    滚动窗后两侧可精确对齐，且都只用截至 t 的数据：
+      cur(t)  = (t-active_period, t] 的成交额
+      base(t) = 过去 n 个同口径窗的均量
+    副产品：窗宽 = active_period → 信号在尖峰后**粘住整整一个 period**，实盘按 refresh_sec(=period)
+    采样必有一次落在粘滞区内 → 旧口径的**相位锁**（scheduler 整点唤醒使实盘整个 12h 都卡在桶内
+    第 1-7 分钟采样、命中率 0.16%）一并消失。
+
+    bar 间隔由数据推断（两侧均传 1m）。需 bars 含 quote_volume。
+    body_ratio_min>0 时叠加 con2（1m 实体占比 |close-open|/(high-low)>阈值）；默认 0=关。
+    """
     if 'quote_volume' not in bars_df.columns:
         return None
-    b = bars_df[['candle_begin_time', 'quote_volume']].copy()
-    b = b.set_index('candle_begin_time').resample(active_period).agg({'quote_volume': 'sum'})
-    b['mean_n'] = b['quote_volume'].rolling(n, min_periods=1).mean()
-    b['pv_spike'] = (b['quote_volume'] > mult * b['mean_n']).astype(int)
-    b = b.reset_index()[['candle_begin_time', 'pv_spike']]
-    # 映射回 1m：用 merge_asof 取每个 1m bar 所属的 active_period 信号
-    out = bars_df[['candle_begin_time']].copy().sort_values('candle_begin_time')
-    out = pd.merge_asof(out, b.sort_values('candle_begin_time'), on='candle_begin_time', direction='backward')
-    out['pv_spike'].fillna(value=0, inplace=True)
+    b = bars_df[['candle_begin_time', 'quote_volume']].copy().sort_values('candle_begin_time')
+    step = b['candle_begin_time'].diff().median()
+    if pd.isna(step) or step <= pd.Timedelta(0):
+        step = pd.Timedelta('1min')
+    win = max(1, int(round(pd.Timedelta(active_period) / step)))    # 一个 active_period 含几根 bar
+    v = b['quote_volume']
+    cur = v.rolling(win, min_periods=1).sum()                       # 截至 t 的窗内成交额
+    base = v.rolling(win * n, min_periods=1).mean() * win           # 同口径均量基线（过去 n 个窗）
+    out = b[['candle_begin_time']].copy()
+    out['pv_spike'] = (cur > mult * base).astype(int).values
     if body_ratio_min and body_ratio_min > 0:      # con2：1m 实体占比过滤（默认关=金标不变）
         src = bars_df[['candle_begin_time', 'open', 'high', 'low', 'close']].copy()
         src['con2'] = ((src['close'] - src['open']).abs()

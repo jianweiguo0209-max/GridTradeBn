@@ -1,18 +1,30 @@
-"""实盘退出信号提供者：pv_spike（量能尖峰）+ funding_rate（HL 真实资金费率）。
+"""实盘退出信号提供者：pv_spike（量能尖峰）+ funding_rate（真实资金费率）。
 
 设计要点：
-- **legacy 满窗语义（2026-07-07）**：pv_spike 复用 core.grid_engine.calc_pv_spike（同一函数、
-  同一 15min 粒度），数据取原生 15m K线 n+8 根（n=100 → 108 根 ≈ 27h），rolling(n) 为
-  真滑动基线——对齐 legacy（OKX 时代 15m×rolling 满窗）语义；取数窗口与开格时刻解耦。
-  （此前取「开网时刻→现在」1m，基线退化为开格以来 expanding，系移植漂移，已修。）
-- **按 grid 节流缓存**：pv 是 15min 粒度、funding 是小时粒度，无需每 5s tick 打接口；
-  每 grid 每 refresh_sec（默认 900s=15min）刷新一次，其余 tick 用缓存。
+- **与回测同源（方案C，2026-07-18）**：pv_spike 复用 core.grid_engine.calc_pv_spike —— 现在真的
+  同源了。该函数算「**截至 now 的滚动 period 窗**」，故这里必须喂**原生 1m**、取 n+8 个 period
+  （n=100 → 1620 根 ≈27h）供 rolling 基线；窗口与开格时刻解耦。
+  修正史：①最初取「开网→现在」1m，基线退化为 expanding（移植漂移，07-07 修）；②改取原生 15m 后，
+  calc_pv_spike 的 resample 成空操作、`iloc[-1]` 取到**进行中的半截桶**，而回测那侧是**整桶
+  （含未来）**广播 —— 两侧口径从未对账过（回测 67.2% 的格窗见尖峰 vs 实盘 20.6%，丢 69%）。
+  07-15 那次只对齐了 rolling 基线（n+8 根前置历史），**评估点没对齐**。方案C 两侧统一为滚动窗。
+- **按 grid 节流缓存**：每 grid 每 refresh_sec（默认 900s=15min）刷新一次，其余 tick 用缓存。
+  滚动窗宽 = period，信号在尖峰后粘住整整一个 period → refresh_sec ≤ period 时**必能命中**，
+  旧口径的相位锁（scheduler 整点唤醒使采样卡在桶内第 1-7 分钟、命中率 0.16%）已消失。
+  残留：回测逐 1m 判、实盘每 refresh_sec 判 → 实盘可能晚至多 refresh_sec 才动作（已知、二阶）。
 - **失败降级**：任一取数异常→返回该项安全默认（pv_spike=0 / funding_rate=0.0）+ 日志，
   不阻塞 sync/固定止损等其他退出判定。
 """
 import time
 
+import pandas as pd
+
 from gridtrade.core.grid_engine import calc_pv_spike
+
+
+def _period_ms(period):
+    """'15min' → 900_000。此前硬编码 900_000，period 可配时会悄悄失配。"""
+    return int(pd.Timedelta(period).total_seconds() * 1000)
 
 
 class LiveSignalProvider:
@@ -45,10 +57,14 @@ class LiveSignalProvider:
 
     def _pv_spike(self, symbol, open_ms, now_ms):
         try:
-            # legacy 满窗语义（spec 2026-07-07-pv-legacy-semantics-live）：原生 15m 取 n+8 根
-            # （n=100→108 根≈27h），rolling(n) 为真滑动基线；窗口与 open_ms 解耦（open_ms 仅留签名兼容）。
-            since_ms = now_ms - (self.n + 8) * 900_000
-            bars = self.adapter.fetch_ohlcv(symbol, '15m', since_ms, now_ms)
+            # 取数窗与 open_ms 解耦（open_ms 仅留签名兼容），覆盖 n+8 个 period 供 rolling 基线。
+            # **粒度必须是 1m**（方案C，2026-07-18）：calc_pv_spike 现在算「截至 t 的滚动窗」，
+            # 需要 period 内的细粒度成交额。此前取原生 15m → resample 成空操作 → iloc[-1] 是
+            # **进行中的半截桶**，而回测那侧是**整桶（含未来）**广播 —— 两侧从不同源，实测回测
+            # 67.2% 的格窗见尖峰、实盘仅 20.6%（丢 69%），且相位锁使实盘命中率低至 0.16%。
+            # adapter.fetch_ohlcv 自动分页（每次 limit=1000），1620 根 ≈2 次调用，权重可忽略。
+            since_ms = now_ms - (self.n + 8) * _period_ms(self.period)
+            bars = self.adapter.fetch_ohlcv(symbol, '1m', since_ms, now_ms)
             if bars is None or len(bars) == 0 or 'quote_volume' not in bars.columns:
                 return 0
             sp = calc_pv_spike(bars, active_period=self.period, mult=self.mult, n=self.n)
