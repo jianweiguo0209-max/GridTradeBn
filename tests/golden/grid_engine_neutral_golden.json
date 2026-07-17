@@ -1,0 +1,11 @@
+{
+  "simulate_neutral": {
+    "pnl_ratio": -0.00431074480705218,
+    "net_value_final": 0.9956892551929478,
+    "terminated": false,
+    "exit_reason": "窗口结束",
+    "blown_up": false,
+    "n_trades": 18,
+    "broke": false
+  }
+}

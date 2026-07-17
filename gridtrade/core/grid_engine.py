@@ -94,8 +94,16 @@ def grid_touch_info(df, grid_info):
     return touch_df[['candle_begin_time', 'tick_price', 'touch', 'touch_times']]
 
 
-def get_trade_info(touch_df, open_price, grid_info):
-    """触网→交易信息。"""
+def get_trade_info(touch_df, open_price, grid_info, drop_first_closest=True):
+    """触网→交易信息。
+
+    drop_first_closest: 首触若落在离 open_price 最近的线上则丢弃。**该规则仅在「做多式底仓」
+        (simulate_grid_engine(neutral_init=True)) 下成立**——底仓已按 entry 预置多头,最近线
+        首触与底仓重复计,故丢。纯中性(生产默认 neutral_init=False)不注入底仓,实盘
+        grid_executor 在该线挂的是真限价单(逐线挂,只跳过恰好 ==entry 的线),其成交是真 PnL;
+        此时丢弃会吞掉约七成格子的首笔成交 —— 回测/实盘对不上的根因(2026-07-18,同源系统实证 73%)。
+        默认 True 以保 legacy 3 参调用与金标 parity 零漂移;由调用方按 neutral_init 显式传入。
+    """
     if touch_df.empty:
         return pd.DataFrame()
     trade_df = pd.DataFrame()
@@ -105,10 +113,11 @@ def get_trade_info(touch_df, open_price, grid_info):
     trade_df['touch'] = touch_df['touch'].sum()
     con = trade_df['touch'] == trade_df['touch'].shift()
     trade_df = trade_df[~con]
-    price_array = grid_info['价格序列']
-    closest = price_array[np.argmin(abs(price_array - open_price))]
-    if not trade_df.empty and trade_df['touch'].iloc[0] == closest:
-        trade_df = trade_df[1:]
+    if drop_first_closest:              # 仅做多式底仓：与 entry 预置多头去重（见 docstring）
+        price_array = grid_info['价格序列']
+        closest = price_array[np.argmin(abs(price_array - open_price))]
+        if not trade_df.empty and trade_df['touch'].iloc[0] == closest:
+            trade_df = trade_df[1:]
     trade_df.reset_index(drop=True, inplace=True)
     if trade_df.empty:
         return pd.DataFrame()
@@ -376,7 +385,9 @@ def simulate_grid_engine(bars_df, grid_params, cap=10000.0, leverage=5.0, fee=0.
     tick_df, broke = trans_candle_to_tick(bars, gi)
     touch_df = grid_touch_info(tick_df, gi)
     entry = bars['open'].iloc[0]
-    trade_df = get_trade_info(touch_df, entry, gi)
+    # 首触丢弃与底仓注入是一对：做多式底仓在 entry 预置多头，最近线首触与之重复计故丢；纯中性
+    # 无底仓，实盘该线挂真限价单、成交是真 PnL，丢了就是回测凭空少一笔（2026-07-18 根因）。
+    trade_df = get_trade_info(touch_df, entry, gi, drop_first_closest=neutral_init)
 
     # 做多式底仓（neutral_init=True，非默认）：开网即在 entry 预置 (entry 上方线数) 笔、每笔每格量 的多头，
     # 使仓位恒 ≥0（只多不空）。默认 False 时不注入 → 纯中性：上穿转空、下穿转多，仓位对称于 entry。
