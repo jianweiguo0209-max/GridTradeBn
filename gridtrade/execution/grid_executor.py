@@ -426,8 +426,21 @@ class GridExecutor:
             pos = self.adapter.fetch_positions(symbol)   # 循环由交易所净仓驱动,续平剩余量
 
     def _finalize_record(self, grid_id, symbol, reason):
-        """落库段(拆分复用):snapshot → record(幂等) → CLOSED → 结构化日志。"""
+        """落库段(拆分复用):真平净守卫 → snapshot → record(幂等) → CLOSED → 结构化日志。
+        **真平净守卫(spec 2026-07-11 组件三补,防孤儿仓)**:孤儿的定义=交易所仍有残仓且无活跃兄弟
+        吸收。故仅当**无活跃兄弟**且 reduce/flatten 后**交易所净仓仍 >min_amount**(3 次未平净:持续
+        部分成交/maxQty)→ 本格转 CLOSED 会把残仓落终态、排除出活跃 Σclaims → 孤儿+背离 → 改**留
+        CLOSING**,交 finalize_close 自愈续平。有兄弟时残余已由 close_share 比例转兄弟、其 claim 吸收,
+        可正常关(丝触发平净后交易所 flat 同样放行)。dust(≤min)放行。"""
         grid = self.grids.get(grid_id)
+        siblings = [g for g in self.grids.list_active()
+                    if g.symbol == symbol and g.exchange == grid.exchange and g.id != grid_id]
+        if not siblings:
+            net = abs(float(self.adapter.fetch_positions(symbol).net_size))
+            if net > self.min_amount:
+                print('[close] grid %s %s 未平净 交易所净仓=%.8g > min=%.8g、无兄弟可转 — 留 CLOSING '
+                      '续平(防孤儿)' % (grid_id, symbol, net, self.min_amount), flush=True)
+                return {'grid_id': grid_id, 'reason': None, 'pnl_ratio': None, 'closed': False}
         snap = self.live[grid_id].snapshot(float(self.adapter.fetch_price(symbol)))
         # 记录按该格真实资金计钱：pnl_ratio 分母是 LiveEquity.cap==grid.cap（动态 cap），
         # 乘 executor 静态默认 cap 会整体错标（restore-cap 同族，mainnet 实证低报 3x）。
@@ -441,7 +454,7 @@ class GridExecutor:
         self.grids.transition_status(grid_id, CLOSED, expected_version=g2.version)
         print('[close] grid %s %s tag=%s reason=%s pnl_ratio=%+.6f'
               % (grid_id, symbol, grid.tag, reason, snap['pnl_ratio']), flush=True)
-        return {'grid_id': grid_id, 'reason': reason, 'pnl_ratio': snap['pnl_ratio']}
+        return {'grid_id': grid_id, 'reason': reason, 'pnl_ratio': snap['pnl_ratio'], 'closed': True}
 
     def finalize_close(self, grid_id, symbol, reason):
         # 幂等续平（grid 须已 CLOSING）：撤单 + 有界 reduce 残仓 + 落库(只一次) + 转 CLOSED。

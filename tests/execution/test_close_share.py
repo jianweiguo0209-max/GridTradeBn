@@ -107,3 +107,18 @@ def test_reduce_partial_fill_records_actual_size_and_continues(store):
     assert abs(gx.live[ga].net_position) < 1e-9           # A 账本归 0、无过量减
     reduce_rows = [f for f in _ledger_rows(gx, ga) if ':reduce:' in f.trade_id]
     assert sorted(round(f.size, 6) for f in reduce_rows) == [40.0, 60.0]   # 按实际成交量 60+40,非请求量 100
+
+
+def test_finalize_leaves_closing_when_not_flat(store):
+    """真平净守卫(模式3):单格无兄弟、reduce 持续部分成交 → 3 次后交易所仍有残仓 → 格**留 CLOSING**
+    (非 CLOSED)、交 finalize_close 自愈续平,防残余落终态成孤儿。修复前无条件转 CLOSED → 孤儿。"""
+    ex = FakeExchange(instruments=[Instrument(BTC, 0.1, 0.001, 0.001, 'live', 0)], price=100.0)
+    ex.set_price(BTC, 100.0)
+    gx = GridExecutor(ex, store, cap=1000.0, leverage=5.0)
+    ga = gx.open('fake', BTC, dict(GP), tag='tA')
+    gx.live[ga].record_fill(100.0, 'buy', 100.0, 1000)                 # 账本多 100
+    ex._pos[BTC] = type(ex.fetch_positions(BTC))(BTC, 100.0, 100.0)    # 交易所净 +100
+    ex.queue_market_fills(10.0, 10.0, 10.0)                            # 每次 reduce 只成交 10 → 3 次共 30、残 70
+    gx.close(ga, BTC, 'test')
+    assert gx.grids.get(ga).status == 'CLOSING'                        # 未平净 → 留 CLOSING(非 CLOSED)
+    assert abs(ex.fetch_positions(BTC).net_size - 70.0) < 1e-6         # 交易所残 70,待自愈续平

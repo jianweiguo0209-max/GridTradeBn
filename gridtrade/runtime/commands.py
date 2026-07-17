@@ -19,6 +19,10 @@ def execute_command(cmd, manager, flags, *, exchange: str) -> str:
         if _braked(p['symbol']):
             raise RuntimeError('intervention braked %s: CLOSE refused, resolve first'
                                % p['symbol'])
+        # mode4:命令平仓补 sync-before(监控轮有此不变量,指令路径此前绕过)——先摄入最新成交,
+        # 否则近 5s 未入账的成交会让 close 用陈旧 claim 减错量、漏平留孤儿(与并发成交竞态)。
+        if ex.is_loaded(p['grid_id']):
+            ex.sync(p['grid_id'], p['symbol'], skip_replenish=True)
         ex.close(p['grid_id'], p['symbol'], p.get('reason', 'manual'))
         return 'closed %s' % p['grid_id']
     if cmd.type == 'OPEN_GRID':
@@ -47,6 +51,8 @@ def execute_command(cmd, manager, flags, *, exchange: str) -> str:
                 skipped.append(g.id)
                 continue
             try:
+                if ex.is_loaded(g.id):               # mode4:平仓前补 sync-before(同 CLOSE_GRID)
+                    ex.sync(g.id, g.symbol, skip_replenish=True)
                 ex.close(g.id, g.symbol, 'panic')
                 ok.append(g.id)
             except Exception as exc:                 # per-grid 隔离，不中断其他

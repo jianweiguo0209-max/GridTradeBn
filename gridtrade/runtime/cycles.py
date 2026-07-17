@@ -275,7 +275,9 @@ def run_monitor_cycle(reconciler, manager, log=print, *,
         for r in results:
             o = outcome.get(r['grid_id'])
             if o is not None:
-                r['closed'] = True
+                # 尊重 finalize 的 closed 标志:真平净守卫下未平净的格返回 closed=False、留 CLOSING,
+                # 不得据此发 GridClosed(否则等同 mode5 未平净误当已关);其 pnl/reason 为 None。
+                r['closed'] = bool(o.get('closed', True))
                 r['reason'] = o['reason']
                 r['pnl_ratio'] = o['pnl_ratio']
     for r in results:                         # 事件/归类收在主线程（EventBus 不进多线程）

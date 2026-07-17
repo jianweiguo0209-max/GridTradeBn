@@ -17,6 +17,7 @@ class _Executor:
         from gridtrade.exchanges.fake import FakeExchange
         self.adapter = FakeExchange(instruments=[], price=1.0)   # 快照构建可用（返回空集）
     def is_loaded(self, gid): return True
+    def sync(self, gid, symbol, *, skip_replenish=False): pass
     def close(self, gid, symbol, reason): self.closed.append(gid)
 class _Manager:
     def __init__(self): self.executor = _Executor()

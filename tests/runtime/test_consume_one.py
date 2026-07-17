@@ -7,7 +7,9 @@ from gridtrade.state.models import CMD_DONE, CMD_FAILED
 class _Grids:
     def list_active(self): return []
 class _Executor:
-    def __init__(self): self.grids = _Grids(); self.closed = []
+    def __init__(self): self.grids = _Grids(); self.closed = []; self.synced = []
+    def is_loaded(self, gid): return True
+    def sync(self, gid, symbol, *, skip_replenish=False): self.synced.append(gid)
     def close(self, gid, symbol, reason): self.closed.append(gid)
 class _Manager:
     def __init__(self): self.executor = _Executor()
