@@ -218,3 +218,40 @@ def test_fuse_min_coverage_above_one_rejected():
     from gridtrade.config import load_deploy_config
     with pytest.raises(RuntimeError):
         load_deploy_config({'FUSE_MIN_COVERAGE': '1.2'})
+
+
+def test_live_open_offsets_parsing():
+    # 实盘 offset 启用数组（int CSV）：空=停用；去空白+去重+排序（spec 2026-07-17）
+    from gridtrade.config import load_deploy_config
+    assert load_deploy_config(env={}).live_open_offsets == ()
+    assert load_deploy_config(env={'LIVE_OPEN_OFFSETS': '0,6'}).live_open_offsets == (0, 6)
+    assert load_deploy_config(env={'LIVE_OPEN_OFFSETS': ' 6 , 0 , 6 '}).live_open_offsets == (0, 6)
+
+
+def test_live_open_offsets_out_of_range_or_nonint_rejected():
+    # 越界/非 int → 响亮报错（禁静默丢弃，沿退役键惯例）。period=12H → 合法 0..11
+    import pytest
+    from gridtrade.config import load_deploy_config
+    for bad in ('12', '15', '-1', 'a'):
+        with pytest.raises(RuntimeError):
+            load_deploy_config(env={'LIVE_OPEN_OFFSETS': bad})
+
+
+def test_live_open_offsets_validated_against_scheduler_period():
+    # 校验区间由 SCHEDULER_PERIOD 定：24H → 合法 0..23，15 放行
+    from gridtrade.config import load_deploy_config
+    cfg = load_deploy_config(env={'SCHEDULER_PERIOD': '24H', 'LIVE_OPEN_OFFSETS': '15'})
+    assert cfg.live_open_offsets == (15,)
+
+
+def test_live_open_offsets_rescales_cap_frac_by_enabled_count():
+    # 方案 B：frac 分母 = 启用 offset 数 N（去重后），空集/全开都回落到 max_concurrent=12
+    from gridtrade.config import load_deploy_config, derive_frac
+    assert abs(load_deploy_config(env={}).cap_equity_frac - 0.24510) < 1e-4      # 空=停用 → N=12
+    cfg2 = load_deploy_config(env={'LIVE_OPEN_OFFSETS': '0,6'})                   # N=2
+    assert abs(cfg2.cap_equity_frac - derive_frac(5.0, 2, 3.4)) < 1e-4
+    assert abs(cfg2.cap_equity_frac - 1.47059) < 1e-4
+    alloff = ','.join(str(i) for i in range(12))                                 # 显式全开 → N=12
+    assert abs(load_deploy_config(env={'LIVE_OPEN_OFFSETS': alloff}).cap_equity_frac - 0.24510) < 1e-4
+    dup = load_deploy_config(env={'LIVE_OPEN_OFFSETS': '0,0,6'})                  # 去重后 N=2（非 3）
+    assert abs(dup.cap_equity_frac - derive_frac(5.0, 2, 3.4)) < 1e-4

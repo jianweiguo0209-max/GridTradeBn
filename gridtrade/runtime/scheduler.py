@@ -74,6 +74,21 @@ def run_scheduler_once(runtime, *, now_fn=time.time,
     period = rt.config.scheduler_period
     offset = compute_offset(run_time, period)
     tag = '%s%d' % (DEFAULT_STRATEGY_CONFIG['strategy_tag'], offset)
+    # 实盘 offset 启用门(spec 2026-07-17)：当前 offset ∉ 启用集 → 只关不开(灰度上量/减仓)。
+    # 前移到取数之前——被拦的小时跳过 universe 解析/保险丝审计/~275 币 K 线取数/选币,只做换仓关格
+    # +心跳(关格不需 K 线;不开仓则审计/shock/快照都无意义)。旧 cohort 在各自换仓轮被自然排空。
+    _oe = getattr(rt.config, 'live_open_offsets', ())
+    if _oe and offset not in _oe:
+        print('[offset-gate] offset=%d 不在实盘启用集 %s → 本轮只关不开(跳过取数/选币)'
+              % (offset, list(_oe)), flush=True)
+        braked = braked_symbols(flags)        # 仍排除干预熔断币,不轮换关其格
+        result = run_scheduler_cycle(rt.manager, rt.trigger_engine, rt.reconciler,
+                                     ctx=None, close_tag=tag, open_enabled=False,
+                                     braked_symbols=frozenset(braked))
+        result.pop('shock_braked', None)      # 非 shock:去误导键,只留 offset_gated
+        result['offset_gated'] = True
+        rt.heartbeats.beat('scheduler')
+        return result
     universe = resolve_live_universe(rt.adapter, rt.config.blacklist,
                                      rt.config.whitelist, rt.config.min_quote_volume_24h,
                                      top_volume_pct=rt.config.universe_top_volume_pct)
@@ -208,9 +223,10 @@ def run_scheduler(runtime, *, once=False, sleep=time.sleep, now_fn=time.time,
 def main() -> None:   # composition root（不单测）
     rt = build_runtime(load_deploy_config())
     rt.adapter.assert_account_mode()   # 账户模式不符→boot 失败（fail-fast，勿带病起跑）
-    print('[scheduler] exchange=%s testnet=%s endpoint=%s run_on_start=%s period=%s'
+    print('[scheduler] exchange=%s testnet=%s endpoint=%s run_on_start=%s period=%s open_offsets=%s'
           % (rt.config.exchange, rt.config.testnet, adapter_endpoint(rt.adapter),
-             rt.config.scheduler_run_on_start, rt.config.scheduler_period),
+             rt.config.scheduler_run_on_start, rt.config.scheduler_period,
+             list(rt.config.live_open_offsets) or '全开'),
           flush=True)
     stop = {'flag': False}
 

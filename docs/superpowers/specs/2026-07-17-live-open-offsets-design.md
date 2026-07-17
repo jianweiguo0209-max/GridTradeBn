@@ -83,22 +83,29 @@ cap_equity_frac = derive_frac(account_leverage, eff_concurrency, grid_gearing)
 
 ### 组件 3 — scheduler.py:offset 门
 
-- `run_scheduler_once` 内,`offset = compute_offset(...)`(现 line 75)之后、shock 块(现 line 142)之前,
-  用 offset 门初始化 `open_enabled`:
+- **门前移到取数之前**(优化,2026-07-17):`run_scheduler_once` 内 `tag = ...`(现 line 76)之后、
+  `resolve_live_universe`/保险丝审计/K 线取数之前,加 offset 门快路径。被拦时**直接 early-return**——
+  跳过 universe 解析、保险丝审计、~275 币 K 线取数、选币,只做换仓关格 + 心跳:
 
   ```python
-  open_enabled = True
-  _oe = rt.config.live_open_offsets
+  _oe = getattr(rt.config, 'live_open_offsets', ())
   if _oe and offset not in _oe:
-      open_enabled = False
-      print('[offset-gate] offset=%d 不在实盘启用集 %s → 本轮只关不开'
-            % (offset, sorted(_oe)), flush=True)
+      print('[offset-gate] offset=%d 不在实盘启用集 %s → 本轮只关不开(跳过取数/选币)'
+            % (offset, list(_oe)), flush=True)
+      braked = braked_symbols(flags)        # 仍排除干预熔断币,不轮换关其格
+      result = run_scheduler_cycle(rt.manager, rt.trigger_engine, rt.reconciler,
+                                   ctx=None, close_tag=tag, open_enabled=False,
+                                   braked_symbols=frozenset(braked))
+      result.pop('shock_braked', None)      # 非 shock:去误导键
+      result['offset_gated'] = True
+      rt.heartbeats.beat('scheduler')
+      return result
   ```
 
-  与 shock 块是"或"关系(任一为真都只关不开;二者都只降不升,天然叠加——现有 `open_enabled = True`
-  初始化行被本块替换)。
-- `run_scheduler_cycle` 返回后,若被 offset 门拦,给 `result['offset_gated'] = True`(供测试/可观测,
-  避免与 shock 的 `shock_braked` 混淆)。
+  依据:关格(`close_by_tag` + `reconciler.restore`)不需 K 线;不开仓则审计/shock/快照都无意义。
+  `ctx=None` 安全——`open_enabled=False` 时 `run_scheduler_cycle` 在 `trigger.collect(ctx)` 之前返回
+  (`test_cycle_open_disabled_still_closes` 已证)。shock 的暂停窗是时间态、下个启用小时按 k 小时 K 线窗
+  自刷新,门跳过 shock 不丢保护。
 - `main()` 启动日志追加打印启用集,便于运维核对。
 
 ### 连带效应(诚实披露,非阻塞)
@@ -116,9 +123,11 @@ cap_equity_frac = derive_frac(account_leverage, eff_concurrency, grid_gearing)
   去重后计数(`"0,0,6"` → N=2 → 1.4706)。
 
 **scheduler**(`tests/runtime/test_scheduler*.py`,假 runtime/now_fn 复用现有模式):
-- offset ∈ 启用集 → 正常开(opened 非空、无 `offset_gated`)。
-- offset ∉ 启用集 → `open_enabled=False`:opened=[]、`result['offset_gated']=True`、close 照跑。
-- 空集(默认) → 恒开,不受 offset 影响(回归:零行为变更)。
+- offset ∈ 启用集 → 不拦(无 `offset_gated`)。
+- offset ∉ 启用集 → `opened=[]`、`result['offset_gated']=True`(且无 `shock_braked`)。
+- 空集(默认) → 恒不拦(回归:零行为变更)。
+- **前移优化**:offset ∉ 集 → `fetch_candles` 调用 0 次、心跳仍打;offset ∈ 集 → `fetch_candles` 调 1 次
+  (回归护栏:全流水线照跑)。
 
 ## 六、文档
 

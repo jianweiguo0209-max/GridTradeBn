@@ -38,6 +38,28 @@ def _csv(env, key):
     return tuple(s.strip() for s in v.split(',') if s.strip())
 
 
+def _offsets(env, key, period_hours):
+    """实盘启用 offset 数组（int CSV）：空=停用；去空白→int→去重→排序。
+    越界(∉[0,period_hours))/非整数 → 响亮报错（禁静默丢弃，沿退役键惯例）。"""
+    v = env.get(key)
+    if not v:
+        return ()
+    out = set()
+    for tok in (t.strip() for t in v.split(',')):
+        if not tok:
+            continue
+        try:
+            n = int(tok)
+        except ValueError:
+            raise RuntimeError('%s=%r 含非整数项 %r；须为 [0, %d) 的整数 CSV'
+                               % (key, v, tok, period_hours))
+        if not (0 <= n < period_hours):
+            raise RuntimeError('%s 的 offset %d 越界；合法区间 [0, %d)（由 SCHEDULER_PERIOD 定）'
+                               % (key, n, period_hours))
+        out.add(n)
+    return tuple(sorted(out))
+
+
 @dataclass
 class DeployConfig:
     exchange: str
@@ -84,6 +106,10 @@ class DeployConfig:
     shock_thr: float = 0.025
     shock_k_hours: int = 4
     shock_pause_hours: int = 2
+    # 实盘 offset 启用数组(spec 2026-07-17)：空=停用=全 offset 开(默认零行为变更)。非空时
+    # 当前 offset ∉ 集 → 本轮只关不开(灰度上量/减仓)；且 cap frac 分母按启用数 N 重算(方案B,
+    # 满配仍达目标 AL)。合法值 ∈ [0, period_hours)，越界 boot 报错。
+    live_open_offsets: tuple = ()
 
 
 def compute_cap(equity, frac, cap_min, cap_max):
@@ -119,6 +145,15 @@ def load_deploy_config(env=None) -> DeployConfig:
         raise RuntimeError('FUSE_MIN_COVERAGE=%s 无效：>1 无意义（覆盖率>1 只是余量，'
                            '丝本就能全平最大持仓）；取 (0, 1.0] 或 <=0（停用，仅审计）' % _fmc)
     cap = _f(env, 'CAP', 100.0)
+    # 实盘 offset 启用数组(spec 2026-07-17)：越界校验用 SCHEDULER_PERIOD 定的相位数。
+    _period_hours = int(_s(env, 'SCHEDULER_PERIOD', '12H')[:-1])
+    _live_offsets = _offsets(env, 'LIVE_OPEN_OFFSETS', _period_hours)
+    _max_conc = _i(env, 'MAX_CONCURRENT', 12)
+    # cap frac 分母(方案B)：非空启用集时用实际可达并发 N=min(启用数×choose_symbols, max_concurrent)；
+    # 空集回落到 max_concurrent(零行为变更)。choose_symbols=1 是"一 offset 一格"不变式的来源。
+    _eff_concurrency = (min(len(_live_offsets) * DEFAULT_STRATEGY_CONFIG['choose_symbols'],
+                            _max_conc)
+                        if _live_offsets else _max_conc)
     return DeployConfig(
         exchange=_s(env, 'EXCHANGE', 'binance'),
         api_key=_s(env, 'BINANCE_API_KEY', ''),
@@ -146,8 +181,9 @@ def load_deploy_config(env=None) -> DeployConfig:
         grid_gearing=_f(env, 'GRID_GEARING', 3.4),
         account_leverage=_f(env, 'ACCOUNT_LEVERAGE', 5.0),
         cap_equity_frac=derive_frac(_f(env, 'ACCOUNT_LEVERAGE', 5.0),
-                                    _i(env, 'MAX_CONCURRENT', 12),
+                                    _eff_concurrency,
                                     _f(env, 'GRID_GEARING', 3.4)),
+        live_open_offsets=_live_offsets,
         cap_min=_f(env, 'CAP_MIN', 20.0),
         cap_max=_f(env, 'CAP_MAX', 100000.0),
         min_quote_volume_24h=_f(env, 'MIN_QUOTE_VOLUME_24H', 0.0),

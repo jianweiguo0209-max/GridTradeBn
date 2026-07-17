@@ -274,6 +274,68 @@ def test_cycle_open_disabled_still_closes():
     assert mgr.closed_tag == 'gt3'
 
 
+def _cur_offset(now, period='12H'):
+    import pandas as pd
+    from gridtrade.core.selection import compute_offset
+    return compute_offset(pd.Timestamp(now, unit='s').floor('H'), period)
+
+
+def test_offset_gate_blocks_open_when_current_offset_not_enabled():
+    # 当前 offset ∉ 启用集 → 本轮 open_enabled=False（只关不开）、标记 offset_gated（spec 2026-07-17）
+    from gridtrade.runtime.scheduler import run_scheduler_once
+    now = 1_750_000_000.0
+    disabled_only = str((_cur_offset(now) + 1) % 12)      # 只启用非当前 offset
+    rt = _rt(LIVE_OPEN_OFFSETS=disabled_only)
+    out = run_scheduler_once(rt, now_fn=lambda: now, fetch_candles=lambda *a, **k: {})
+    assert out['opened'] == [] and out.get('offset_gated') is True
+
+
+def test_offset_gate_allows_open_when_current_offset_enabled():
+    # 当前 offset ∈ 启用集 → 不拦（无 offset_gated 标记）
+    from gridtrade.runtime.scheduler import run_scheduler_once
+    now = 1_750_000_000.0
+    rt = _rt(LIVE_OPEN_OFFSETS=str(_cur_offset(now)))
+    out = run_scheduler_once(rt, now_fn=lambda: now, fetch_candles=lambda *a, **k: {})
+    assert 'offset_gated' not in out
+
+
+def test_offset_gate_disabled_by_default_never_gates():
+    # 未设 LIVE_OPEN_OFFSETS（默认停用）→ 恒不拦，零行为变更（回归护栏）
+    from gridtrade.runtime.scheduler import run_scheduler_once
+    rt = _rt()
+    out = run_scheduler_once(rt, now_fn=lambda: 1_750_000_000.0,
+                             fetch_candles=lambda *a, **k: {})
+    assert 'offset_gated' not in out
+
+
+def test_offset_gate_skips_candle_fetch_when_gated():
+    # 优化(spec 2026-07-17)：门前移到取数之前——被拦小时跳过 ~275 币 K 线取数，只关格+心跳
+    from gridtrade.runtime.scheduler import run_scheduler_once
+    now = 1_750_000_000.0
+    called = {'n': 0}
+    def _spy_fetch(*a, **k):
+        called['n'] += 1
+        return {}
+    rt = _rt(LIVE_OPEN_OFFSETS=str((_cur_offset(now) + 1) % 12))    # 当前 offset 被拦
+    out = run_scheduler_once(rt, now_fn=lambda: now, fetch_candles=_spy_fetch)
+    assert out.get('offset_gated') is True and out['opened'] == []
+    assert called['n'] == 0
+    assert rt.heartbeats.get('scheduler') is not None              # 心跳照打
+
+
+def test_offset_gate_enabled_hour_still_fetches():
+    # 未拦小时走全流水线（回归护栏：取数照常）
+    from gridtrade.runtime.scheduler import run_scheduler_once
+    now = 1_750_000_000.0
+    called = {'n': 0}
+    def _spy_fetch(*a, **k):
+        called['n'] += 1
+        return {}
+    rt = _rt(LIVE_OPEN_OFFSETS=str(_cur_offset(now)))
+    run_scheduler_once(rt, now_fn=lambda: now, fetch_candles=_spy_fetch)
+    assert called['n'] == 1
+
+
 def _seed_universe(rt, symbol, price, max_qty):
     """给 fake 交易所塞一个带 market_max_qty 的在市币（ResilientAdapter 内层）。"""
     from gridtrade.exchanges.base import Instrument
