@@ -133,9 +133,14 @@ def _simulate_grid_task(payload):
     27h 前置历史预算（实盘同源语义，见 assemble_grid_tasks）。"""
     (rt, offset, sym, entry, gp, bars_df, funding_df, pv_spike_df), cfg = payload
     pv_cfg = cfg['pv_cfg']
+    # 下单量按该币真实 stepSize **向下截断**，对齐实盘（quantize_amount → ccxt
+    # amount_to_precision 是 TRUNCATE，wire_qty <= order_num 恒成立）。此前硬传 0.0 把引擎自带的
+    # 同款截断关掉了 → 系统性高估下单量。缺表/缺币 → 0.0 = 不取整 = 旧行为（fail-soft）。
+    min_amount = float(cfg.get('lot_by_sym', {}).get(sym, 0.0) or 0.0)
     sim = simulate_grid_engine(bars_df, gp, cap=1000.0, leverage=cfg['lev'], fee=cfg['fee_rate'],
                                c_rate_taker=cfg.get('taker_rate', 0.0005),
-                               max_rate=cfg['max_rate'], min_amount=0.0, stop_cfg=cfg['stop_cfg'],
+                               max_rate=cfg['max_rate'], min_amount=min_amount,
+                               stop_cfg=cfg['stop_cfg'],
                                funding_df=funding_df, neutral_init=False,
                                pv_spike_df=pv_spike_df,
                                active_stop_mode=cfg['active_stop_mode'],
@@ -271,13 +276,17 @@ def build_grid_tasks(cache, universe, window_start, window_end, strategy_config,
 
 def simulate_tasks(data_tasks, *, leverage, fee_rate=0.0002, taker_rate=0.0005,
                    max_rate=0.68, stop_cfg=None,
-                   active_stop_mode='pv', pv_cfg=None, workers=1):
+                   active_stop_mode='pv', pv_cfg=None, workers=1, lot_by_sym=None):
     """对已组装的 data_tasks 跑仿真（可并行）→ 明细 DataFrame。仿真配置在此传入，故同一批
     data_tasks 可反复用不同 (active_stop_mode/pv_cfg/stop_cfg) 仿真——扫参提速的关键。
     fee_rate=maker（网格挂单成交，默认 2bps）、taker_rate=taker（平仓/止损/破网，默认
     5bps）——对齐币安 USDT-M VIP0 无折扣费率（maker 2bps/taker 5bps，用户定 2026-07-14）。"""
+    if lot_by_sym is None:      # 惰性导入避免与 vision 循环依赖；缺缓存 → {} = 不取整(fail-soft)
+        from gridtrade.backtest import lot_sizes as _LS
+        from gridtrade.backtest import vision as _V
+        lot_by_sym = _LS.load(_V.default_cache_root())
     cfg = {'lev': leverage, 'fee_rate': fee_rate, 'taker_rate': taker_rate,
-           'max_rate': max_rate, 'stop_cfg': stop_cfg,
+           'max_rate': max_rate, 'stop_cfg': stop_cfg, 'lot_by_sym': lot_by_sym,
            'active_stop_mode': active_stop_mode, 'pv_cfg': pv_cfg or {}}
     payloads = [(dt, cfg) for dt in data_tasks]
     if workers and workers > 1 and len(payloads) > 1:
