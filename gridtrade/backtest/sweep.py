@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 import pandas as pd
 
 from gridtrade.backtest import selection_replay as SR
+from gridtrade.backtest.backtest_run import _FUNDING_BACK_MS  # noqa: F401  预切窗宽,与引擎同源
 from gridtrade.backtest.backtest_run import (BT_FACTORS, BT_STRATEGY, BT_UNIVERSE_TOP_PCT,
                                              allocate_with_tiers, holding_bars,
                                              pv_spike_for_window, select_grids,
@@ -158,9 +159,11 @@ def preload_window(cache, universe, name, start, end, *, workers=1, log=print):
             funding_by_sym[sym] = cache.read_all_days('funding', sym)
         fd = funding_by_sym[sym]
         if fd is not None and not fd.empty:
+            # lo 往前扩一个回看窗，理由同 backtest_run.assemble_grid_tasks：资金费率止损用
+            # 「最后已结算费率」，窗前那次结算切掉后回测永远看不见（实盘开格瞬间即可命中）。
             lo = int(bars['candle_begin_time'].min().value // 1_000_000)
             hi = int(bars['candle_begin_time'].max().value // 1_000_000)
-            fd = fd[(fd['ts'] >= lo) & (fd['ts'] <= hi)]
+            fd = fd[(fd['ts'] >= lo - _FUNDING_BACK_MS) & (fd['ts'] <= hi)]
         raw.append((rt, int(offset), row, bars, fd, series[sym]))
     days = int((pd.Timestamp(end) - pd.Timestamp(start)).days) + 1
     log('[sweep] %s preload: grids=%d syms=%d blocked_rt=%d days=%d'

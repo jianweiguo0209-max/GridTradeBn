@@ -19,7 +19,10 @@ def _make_df(net_values, funding=None, pv=None):
         'close': np.full(n, 100.0),
     })
     if funding is not None:
-        df['fundingRate'] = np.asarray(funding, dtype='float64')
+        # 语义 = 该 tick 看到的「最后已结算费率」(实盘 signals 在 9h 回看窗取的那个值)。
+        # 回测侧对应列是 fr_last;`fundingRate` 是**收费**用(只在结算时刻非 0)、不参与判定,
+        # 故此处不设——两列分工见 grid_engine.cal_equity_curve。
+        df['fr_last'] = np.asarray(funding, dtype='float64')
     pv_df = None
     if pv is not None:
         pv_df = pd.DataFrame({'candle_begin_time': t, 'pv_spike': np.asarray(pv, dtype='int64')})
@@ -35,7 +38,7 @@ def _scalar_first(df, pv_df, stop_cfg):
     if pv_df is not None:
         pv_map = dict(zip(pv_df['candle_begin_time'], pv_df['pv_spike']))
     for i in range(len(df)):
-        fr = float(df['fundingRate'].iloc[i]) if 'fundingRate' in df.columns else None
+        fr = float(df['fr_last'].iloc[i]) if 'fr_last' in df.columns else None
         pv = int(pv_map.get(df['candle_begin_time'].iloc[i], 0))
         r = evaluate_exit(float(pr[i]), float(pr_max[i]),
                           net_value=float(df['net_value'].iloc[i]),

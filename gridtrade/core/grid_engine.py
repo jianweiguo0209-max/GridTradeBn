@@ -17,6 +17,10 @@ import datetime
 import numpy as np
 import pandas as pd
 
+# 资金费率止损的回看上限：复刻实盘 signals._funding_rate 的 `FUNDING_INTERVAL_HOURS + 1`
+# （币安 8h 结算 → 9h 窗）。超出即取不到最新费率、实盘退化为 0.0，回测须同样看不见。
+FUNDING_STOP_LOOKBACK_H = 9.0
+
 
 def grid_order_info(cap, leverage, low, high, grid_num, stop_low, stop_high,
                     min_amount=0.0, max_rate=0.68):
@@ -241,8 +245,10 @@ def _apply_exit(df, cap, c_rate_taker, stop_cfg=None, margin_rate=0.05, pv_spike
             allowed = np.maximum(floor, k * pr_max)
             mark((pr_max - pr >= allowed) & (pr_max > floor), '连续回撤止盈')
         fr_thr = stop_cfg.get('fundingRate_stop_loss')
-        if fr_thr is not None and 'fundingRate' in df.columns:
-            mark(np.abs(df['fundingRate'].values) > fr_thr, '资金费率止损')
+        # 用 fr_last（最后已结算费率）而非 fundingRate（只在结算时刻非 0）——实盘每 tick 拿
+        # 最后已结算费率判，开格瞬间即可命中窗前那次结算。见 cal_equity_curve 两列分工。
+        if fr_thr is not None and 'fr_last' in df.columns:
+            mark(np.abs(df['fr_last'].values) > fr_thr, '资金费率止损')
 
         # ---- 主动止损（按 mode 分派）----
         pnl_thr = -0.01  # 新型主动止损的统一亏损门槛（1%）
@@ -344,8 +350,11 @@ def cal_equity_curve(candle_df, trade_df, fee, cap, c_rate_taker=0.0005, funding
     df['unreal_profit'] = df['hold_num'] * (df['close'] - df['avg_price'])
 
     # 资金费：+给出/-收回 = hold_num * close * fundingRate（用 close 近似 mark，微小误差）
+    # 两列分工（勿合并）：fundingRate=**收费**用，只在结算时刻非 0；fr_last=**止损判定**用，
+    # 为「最后已结算费率」。直接把 fundingRate ffill 会变成每分钟都收一次资金费。
     df['fr_fee'] = 0.0
     df['fundingRate'] = 0.0
+    df['fr_last'] = 0.0
     if funding_df is not None and not funding_df.empty:
         fr = funding_df.copy()
         fr['candle_begin_time'] = pd.to_datetime(fr['ts'], unit='ms')  # UTC，与缓存 candle_begin_time 同口径
@@ -360,6 +369,24 @@ def cal_equity_curve(candle_df, trade_df, fee, cap, c_rate_taker=0.0005, funding
         # 那根 bar 开盘跳空跨 ≥2 线)。每个时刻只收一次，取该时刻**终仓**——与 N=1 时的既有约定
         # (按成交后仓位收)一致，N=0/1 行为不变。
         df.loc[df.duplicated(subset=['candle_begin_time'], keep='last'), 'fr_fee'] = 0.0
+
+        # fr_last = 该 bar 时点的**最后已结算**费率，供资金费率止损判定（收费不用它）。
+        # 实盘 signals._funding_rate 在 9h 回看窗（结算周期 8h + 1h）里取最后已结算费率、
+        # core/stop_rules.py 每 tick 判 → **开格瞬间**就能读到开格**之前**那次结算；而精确
+        # 时间戳 merge 只在结算那根 bar 非 0，窗前结算完全看不见（实测 2.2% 的格因此在回测里
+        # 跑满、实盘却开格即关）。tolerance 复刻实盘回看上限：超 9h 无结算时实盘取不到、
+        # 退化为 0.0，回测同样不得看见陈旧费率。
+        # 注：df 已由上面的 outer merge(sort=True) 按时间排好；此处不可再 sort_values——
+        # 默认 quicksort 不稳定，会打乱同时刻多笔成交的 hold_num 阶梯顺序。
+        _last = (funding_df.copy()
+                 .assign(candle_begin_time=lambda d: pd.to_datetime(d['ts'], unit='ms'))
+                 [['candle_begin_time', 'fundingRate']]
+                 .rename(columns={'fundingRate': '_fr_last'})
+                 .sort_values('candle_begin_time'))
+        df = pd.merge_asof(df, _last, on='candle_begin_time', direction='backward',
+                           tolerance=pd.Timedelta(hours=FUNDING_STOP_LOOKBACK_H))
+        df['fr_last'] = df['_fr_last'].fillna(value=0.0)
+        del df['_fr_last']
 
     df['fee'] = df['fee'].expanding().sum()
     df['fr_fee'] = df['fr_fee'].expanding().sum()

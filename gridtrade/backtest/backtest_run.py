@@ -21,7 +21,12 @@ import pandas as pd
 from gridtrade.backtest import selection_replay as SR
 from gridtrade.backtest.cache import ParquetCache
 from gridtrade.config import DEFAULT_STOP_CFG, DEFAULT_STRATEGY_CONFIG
-from gridtrade.core.grid_engine import calc_pv_spike, simulate_grid_engine
+from gridtrade.core.grid_engine import (FUNDING_STOP_LOOKBACK_H, calc_pv_spike,
+                                        simulate_grid_engine)
+
+# funding 预切时 lo 需往前扩的窗宽——与引擎判定 fr_last 的 merge_asof tolerance 同源，
+# 否则窗前那次结算被切掉、引擎再会用也看不见。
+_FUNDING_BACK_MS = int(FUNDING_STOP_LOOKBACK_H * 3600_000)
 from gridtrade.core.grid_params import calc_grid_params_v1, calc_grid_params_v2
 from gridtrade.exchanges.binance import is_coin_market
 
@@ -241,9 +246,12 @@ def assemble_grid_tasks(cache, grids, strategy_config, *, sim_timeframe=None,
             funding_by_sym[sym] = cache.read_all_days('funding', sym)
         fd = funding_by_sym[sym]
         if fd is not None and not fd.empty:      # 预切到持仓窗（与全量 merge 等价、payload 小）
+            # lo 须往前扩一个回看窗：资金费率止损用「最后已结算费率」，实盘开格瞬间就能读到
+            # **窗前**那次结算并立刻关格；切成 [lo, hi] 会让回测永远看不见它（实测 2.2% 的格
+            # 因此在回测里跑满、实盘却开格即关）。窗宽与引擎 merge_asof 的 tolerance 同源。
             lo = int(bars_df['candle_begin_time'].min().value // 1_000_000)
             hi = int(bars_df['candle_begin_time'].max().value // 1_000_000)
-            fd = fd[(fd['ts'] >= lo) & (fd['ts'] <= hi)]
+            fd = fd[(fd['ts'] >= lo - _FUNDING_BACK_MS) & (fd['ts'] <= hi)]
         pv_df = pv_spike_for_window(series[sym], bars_df, pv_cfg)
         data_tasks.append((rt, int(offset), sym, float(row['close']), gp, bars_df, fd, pv_df))
     return data_tasks
