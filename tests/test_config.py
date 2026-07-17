@@ -128,11 +128,12 @@ def test_strategy_defaults_mirror_legacy():
     assert DEFAULT_STRATEGY_CONFIG['price_limit'] == [0.25, 0.25]
     assert DEFAULT_STRATEGY_CONFIG['stop_limit'] == 0.01
     assert DEFAULT_STRATEGY_CONFIG['grid_v2_config']['grid_count_max'] == 149
-    assert DEFAULT_STRATEGY_CONFIG['grid_v2_config']['grid_count_min'] == 20  # 币安重扫加密(2026-07-15 候选A)
-    # 止盈止损 + 资金费/pv 主动止损参数（2026-07-15 币安三轮坐标下降+留出窗验收更新，候选A）
-    assert DEFAULT_STOP_CFG['stop_loss'] == 0.035   # 固定止损收紧(MDD 单调,0.035→最差窗 MDD −1.4%;详 config)
-    assert DEFAULT_STOP_CFG['trailing_k'] is None    # 连续回撤止盈关闭(三轮 OFF 都在顶部;None=引擎跳过整块)
-    assert DEFAULT_STOP_CFG['trailing_floor'] is None
+    # 2026-07-19 重扫v2 回滚候选A 三值(诚实引擎终审:旧现值唯一 4/6 窗正+零破网;候选A 系
+    # 引擎保真度 bug——首触丢弃/pv前视等——的幻觉产物;详 config 注释与 memory binance-param-resweep)
+    assert DEFAULT_STRATEGY_CONFIG['grid_v2_config']['grid_count_min'] == 10
+    assert DEFAULT_STOP_CFG['stop_loss'] == 0.045    # HL 时代原值;0.035 留出窗现形(HOLD-A 垫底)
+    assert DEFAULT_STOP_CFG['trailing_k'] == 0.3     # 连续回撤止盈恢复——诚实引擎下是真保护(关掉 OOS 多亏 3.5pp)
+    assert DEFAULT_STOP_CFG['trailing_floor'] == 0.00618
     assert DEFAULT_STOP_CFG['fundingRate_stop_loss'] == 0.0015
     assert DEFAULT_STOP_CFG['pv_pnl_thr'] == 0.005    # 尖峰时浮盈<+0.5%即撤(2026-07-07 PV研究)
     assert DEFAULT_STOP_CFG['pv_mult'] == 3

@@ -36,13 +36,15 @@ _STOP = _S['stop_loss_config']
 _V2 = _S['grid_v2_config']
 
 # 断言钉死现值：config 一改本模块立刻炸（spec §6 防口径漂移）。
-# 2026-07-15 已按币安重扫候选A更新——stop 0.045→0.035、trailing 关(None)、cmin 10→20。
-assert abs(_STOP['stop_loss'] - 0.035) < 1e-12, 'stop_loss 现值漂移，扫参网格须同步复核'
-assert _STOP['trailing_k'] is None and _STOP['trailing_floor'] is None, 'trailing 应为关(None)'
+# 2026-07-19 重扫v2 回滚候选A 三值(诚实引擎终审:旧现值唯一 4/6 窗正+零破网)——
+# stop 0.035→0.045、trailing 恢复 0.3/0.00618、cmin 20→10。
+assert abs(_STOP['stop_loss'] - 0.045) < 1e-12, 'stop_loss 现值漂移，扫参网格须同步复核'
+assert abs(_STOP['trailing_k'] - 0.3) < 1e-12 and abs(_STOP['trailing_floor'] - 0.00618) < 1e-12, \
+    'trailing 应为开(0.3/0.00618)'
 assert abs(_STOP['fundingRate_stop_loss'] - 0.0015) < 1e-12
 assert abs(_STOP['pv_pnl_thr'] - 0.005) < 1e-12 and _STOP['pv_mult'] == 3 and _STOP['pv_n'] == 100
 assert _V2['atr_range_multiplier'] == 2 and abs(_V2['grid_spacing_max'] - 0.04) < 1e-12
-assert _V2['grid_count_min'] == 20 and _S['leverage'] == 5
+assert _V2['grid_count_min'] == 10 and _S['leverage'] == 5
 
 FEE_MAKER = 0.0002        # 币安 USDT-M VIP0
 FEE_TAKER = 0.0005
