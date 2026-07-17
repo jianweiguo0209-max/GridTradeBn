@@ -340,6 +340,12 @@ def cal_equity_curve(candle_df, trade_df, fee, cap, c_rate_taker=0.0005, funding
         df['fundingRate'] = df['_fr'].fillna(value=0.0)
         del df['_fr']
         df['fr_fee'] = df['hold_num'] * df['close'] * df['fundingRate']
+        # fr_fee 是**存量**(按仓位)量，却落在**流量**(按笔)的行网格上：同一 tick 跨 N 条线的 N 笔
+        # 成交共用时间戳(get_trade_info 的 time_list)，outer merge 后该时刻有 N 行，逐行各收一次
+        # → 按 hold_num 阶梯多计 (N+1)/2 倍(仅 p1 开盘 tick 能撞上整点资金费，故触发=资金费时刻
+        # 那根 bar 开盘跳空跨 ≥2 线)。每个时刻只收一次，取该时刻**终仓**——与 N=1 时的既有约定
+        # (按成交后仓位收)一致，N=0/1 行为不变。
+        df.loc[df.duplicated(subset=['candle_begin_time'], keep='last'), 'fr_fee'] = 0.0
 
     df['fee'] = df['fee'].expanding().sum()
     df['fr_fee'] = df['fr_fee'].expanding().sum()
