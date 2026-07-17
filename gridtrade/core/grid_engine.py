@@ -214,7 +214,7 @@ def _compute_bb_breakdown(bars_df, period=20, n_std=2.0):
 
 
 def _apply_exit(df, cap, c_rate_taker, stop_cfg=None, margin_rate=0.05, pv_spike_df=None,
-                active_stop_mode='pv', bars_df=None, pv_pnl_thr=-0.015):
+                active_stop_mode='pv', bars_df=None, pv_pnl_thr=-0.015, break_price=None):
     """
     复刻实盘 calc_loss_or_profit 的退出优先级，对 net_value 序列逐 bar 取最早触发：
       1) 固定止损     pnlRatio < -stop_loss
@@ -287,10 +287,22 @@ def _apply_exit(df, cap, c_rate_taker, stop_cfg=None, margin_rate=0.05, pv_spike
 
     first = next((i for i in range(n) if reason_at[i] is not None), None)
     if first is None:
-        # 窗口结束：无退出触发，但持仓也应按最后 close 扣一次平仓 taker 费（诚实持仓成本，
+        # 无止损触发 → 「窗口结束」或「破网」。两者都要按平仓价扣一次 taker 费（诚实持仓成本，
         # 否则持仓越大漏扣越多、系统性高估——尤其宽带/疏格累积大仓的配置）。
+        # break_price 非空 = 破网：实盘灾难保险丝是**终止价触发的 reduce-only 市价单**、在触发价
+        # 附近成交，不会等到那根 bar 收盘。故按**被击穿的终止价**重估浮盈，而非 bar 收盘——破网
+        # bar 的 close 通常已从极值回撤 → 涨破(持净空)按更低价估、跌破(持净多)按更高价估，
+        # **两个方向都美化回测**（实测同一次破网少报 ~24% 的亏损：−31.8% vs 诚实的 −39.5%）。
         row = df.iloc[-1]
-        fee_rate = abs(row['hold_num']) * row['close'] * c_rate_taker / cap
+        px = float(row['close']) if break_price is None else float(break_price)
+        if break_price is not None:
+            unreal = row['hold_num'] * (px - row['avg_price'])
+            df.loc[row.name, 'unreal_profit'] = unreal
+            # real_profit/fr_fee/fee 此时已是 expanding 累计值（cal_equity_curve 末尾所为）
+            df.loc[row.name, 'net_value'] = (row['real_profit'] - row['fr_fee'] - row['fee']
+                                             + unreal + cap) / cap
+            row = df.iloc[-1]
+        fee_rate = abs(row['hold_num']) * px * c_rate_taker / cap
         df.loc[row.name, 'net_value'] = row['net_value'] - fee_rate
         return df, None, False
     reason = reason_at[first]
@@ -459,9 +471,14 @@ def simulate_grid_engine(bars_df, grid_params, cap=10000.0, leverage=5.0, fee=0.
         pv_spike_df = calc_pv_spike(bars, active_period=pv_period, mult=pv_mult, n=pv_n,
                                     body_ratio_min=pv_body_ratio)
 
+    # 破网时的平仓价 = **被击穿的终止价**（实盘丝在此触发成交），按击穿那一跳的方向判上/下。
+    brk_px = None
+    if broke:
+        _last_tick = float(tick_df['tick_price'].iloc[-1])
+        brk_px = gi['终止最高价'] if _last_tick > gi['终止最高价'] else gi['终止最低价']
     eq, stop_reason, blown = _apply_exit(eq, cap, c_rate_taker, stop_cfg, margin_rate, pv_spike_df,
                                          active_stop_mode=active_stop_mode, bars_df=bars,
-                                         pv_pnl_thr=pv_pnl_thr)
+                                         pv_pnl_thr=pv_pnl_thr, break_price=brk_px)
     nv = float(eq['net_value'].iloc[-1])
     exit_reason = stop_reason or ('破网' if broke else '窗口结束')
     # 已实现 vs 未实现拆分（诊断/analytics）：unreal_pnl=最后一根浮盈/cap；real_pnl=其余(已实现净费)
