@@ -41,6 +41,50 @@ def test_summarize_empty():
     assert summarize(pd.DataFrame())['n_grids'] == 0
 
 
+PEPE_TIERS = [{'maxLeverage': 25, 'maxNotional': 5000.0},
+              {'maxLeverage': 20, 'maxNotional': 10000.0},
+              {'maxLeverage': 13, 'maxNotional': 50000.0},
+              {'maxLeverage': 4, 'maxNotional': 1000000.0}]
+KITE_TIERS = [{'maxLeverage': 5, 'maxNotional': 5000.0},
+              {'maxLeverage': 4, 'maxNotional': 10000.0},
+              {'maxLeverage': 1, 'maxNotional': 200000.0}]
+
+
+def test_exclude_low_leverage_drops_low_bracket_keeps_delisted():
+    # 回测同步实盘票池杠杆过滤(2026-07-18,用户定默认=实盘阈值10):pick_L<10 剔除;
+    # 退市币不在当前档位表 → 保留(无幸存者偏差,与 exclude_non_coin 同语义)
+    from gridtrade.backtest.backtest_run import exclude_low_leverage
+    raw = {'PEPE/USDT:USDT': PEPE_TIERS, 'KITE/USDT:USDT': KITE_TIERS}
+    kept, removed = exclude_low_leverage(
+        ['PEPE/USDT:USDT', 'KITE/USDT:USDT', 'DEAD/USDT:USDT'],
+        lambda: raw, notional=3400.0, gearing=3.4, min_lev=10.0)
+    assert kept == ['DEAD/USDT:USDT', 'PEPE/USDT:USDT']   # PEPE pick_L=20 留;退市 DEAD 留
+    assert removed == 1                                    # KITE pick_L=4 剔
+
+
+def test_exclude_low_leverage_disabled_when_zero():
+    from gridtrade.backtest.backtest_run import exclude_low_leverage
+    kept, removed = exclude_low_leverage(['KITE/USDT:USDT'], lambda: {},
+                                         notional=3400.0, gearing=3.4, min_lev=0.0)
+    assert kept == ['KITE/USDT:USDT'] and removed == 0
+
+
+def test_exclude_low_leverage_fail_loud_on_empty_or_error():
+    # 回测无 MarginGate 兜底:档位取不到时静默跳过=静默背离实盘票池 → 宁可整跑失败
+    # (沿 exclude_non_coin fail-loud 先例;BT_MIN_LEVERAGE=0 为显式停用出口)
+    import pytest
+    from gridtrade.backtest.backtest_run import exclude_low_leverage
+    with pytest.raises(RuntimeError):
+        exclude_low_leverage(['X/USDT:USDT'], lambda: {},
+                             notional=3400.0, gearing=3.4, min_lev=10.0)
+
+    def _boom():
+        raise ValueError('auth required')
+    with pytest.raises(RuntimeError):
+        exclude_low_leverage(['X/USDT:USDT'], _boom,
+                             notional=3400.0, gearing=3.4, min_lev=10.0)
+
+
 def test_run_backtest_end_to_end(tmp_path):
     from gridtrade.backtest.backtest_run import run_backtest
     syms = ['AAA/USDT:USDT', 'BBB/USDT:USDT', 'CCC/USDT:USDT', 'DDD/USDT:USDT']

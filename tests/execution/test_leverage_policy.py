@@ -52,6 +52,19 @@ def test_pick_leverage_never_exceeds_symbol_max():
     assert pick_leverage(1.0, PEPE, GEARING) == 20
 
 
+def test_normalize_tiers_map_strips_and_coerces():
+    # ccxt bulk 原始映射 → 标准 {sym: [{'maxLeverage','maxNotional'}]}:去空档/缺键容错,
+    # 实盘缓存(binance.fetch_max_leverages)与回测(exclude_low_leverage)共用(单一事实源)
+    from gridtrade.execution.leverage_policy import normalize_tiers_map
+    raw = {'A/USDT:USDT': [{'maxLeverage': '20', 'maxNotional': '10000', 'tier': 1},
+                           {'maxNotional': 99.0}],          # 缺 maxLeverage 的档丢弃
+           'B/USDT:USDT': [],                               # 空档位 → 整币丢弃
+           'C/USDT:USDT': None}
+    out = normalize_tiers_map(raw)
+    assert out == {'A/USDT:USDT': [{'maxLeverage': 20, 'maxNotional': 10000.0}]}
+    assert normalize_tiers_map(None) == {}
+
+
 def test_eligible_min_leverage_filters_low_bracket_coins():
     # 票池杠杆预过滤(2026-07-18 04:00 MYX 实证)：pick_L<阈值 的币在选币前剔除,
     # 免得 top-1 被 MarginGate 拒 → 整轮空转。与开仓/MarginGate 同源 pick_leverage 预演。

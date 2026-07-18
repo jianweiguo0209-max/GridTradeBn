@@ -140,17 +140,12 @@ class BinanceAdapter(CcxtAdapter):
         调用方退化无分级)。"""
         cache = getattr(self, '_maxlev_cache', None)
         if cache is None:
-            cache = {}
-            tiers_map = {}
             try:
+                from gridtrade.execution.leverage_policy import normalize_tiers_map
                 raw = self.client.fetch_leverage_tiers() or {}   # 无 symbol=全量
-                for sym, brs in raw.items():
-                    norm = [{'maxLeverage': int(t['maxLeverage']),
-                             'maxNotional': float(t.get('maxNotional') or 0.0)}
-                            for t in (brs or []) if t.get('maxLeverage')]
-                    if norm:
-                        cache[sym] = float(max(t['maxLeverage'] for t in norm))
-                        tiers_map[sym] = norm    # 同一次 bulk 顺带缓存完整档位(票池预过滤用)
+                tiers_map = normalize_tiers_map(raw)   # 同一次 bulk 顺带缓存完整档位(票池预过滤用)
+                cache = {sym: float(max(t['maxLeverage'] for t in norm))
+                         for sym, norm in tiers_map.items()}
             except Exception:
                 cache = {}
                 tiers_map = {}

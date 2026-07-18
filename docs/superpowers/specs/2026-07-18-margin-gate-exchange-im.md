@@ -53,6 +53,18 @@ max_concurrent,零行为变更),factory 的 MaxConcurrentGate 改用之——成
 - 旧 `test_gates.py` 全数保留=回退口径回归(其桩无 tiers/price 能力,天然走 fallback)。
 - config/factory:eff_concurrency 跟随启用集、k 透传、零行为变更护栏。
 
+## 追加:票池杠杆过滤两侧同步(2026-07-18 当日)
+
+- **实盘**:`UNIVERSE_MIN_LEVERAGE`(prod=10):scheduler 取数前剔 pick_L<阈值 币(04:00 MYX
+  空转实证;05:00 实测 -44/286);tiers map 共享 fetch_max_leverages bulk 缓存;fail-open
+  (MarginGate 兜底)。
+- **回测**:`BT_MIN_LEVERAGE` **默认 10=实盘一致(用户定)**;`exclude_low_leverage` 复用同源
+  eligible_min_leverage/normalize_tiers_map;**fail-loud**(回测无 MarginGate 兜底,静默跳过=
+  静默背离,沿 exclude_non_coin 先例;tiers 私有端点需 env key;=0 显式停用回旧口径)。
+  近似边界:当前档位快照(无历史档位)+ notional=回测 sizing 常量($3400,与实盘 $2555 同档界)。
+  ⚠ 历史 sweep(候选A 等)均为未过滤票池所得,与新默认口径不可直接比;复现旧结果设
+  BT_MIN_LEVERAGE=0。仅 canonical main 流程接线,scratchpad 自建票池的脚本不自动获得过滤。
+
 ## 非目标 / 后续
 
 - 跨格同时最坏联合建模:靠每批实时 availableBalance 快照 + k 余量,不解析建模。

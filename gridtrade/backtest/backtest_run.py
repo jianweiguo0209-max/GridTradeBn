@@ -467,7 +467,11 @@ def _binance_datasource_1h(cache):
                                start_ms, end_ms)
 
     adapter = _RetryBinance(ccxt.binanceusdm({'enableRateLimit': True,
-                                              'timeout': 30000}))
+                                              'timeout': 30000,
+                                              # 杠杆档位为私有签名端点(票池 min-leverage 过滤用,
+                                              # 2026-07-18);无 key 时公共取数路径不受影响
+                                              'apiKey': os.environ.get('BINANCE_API_KEY', ''),
+                                              'secret': os.environ.get('BINANCE_API_SECRET', '')}))
     return adapter, DataSource(adapter, cache, timeframe='1h')
 
 
@@ -489,6 +493,32 @@ def exclude_non_coin(symbols, adapter):
                 and not is_coin_market(m)}
     kept = sorted(s for s in symbols if s not in non_coin)
     return kept, len(set(symbols) & non_coin)
+
+
+def exclude_low_leverage(symbols, tiers_fetch, *, notional, gearing, min_lev, log=print):
+    """回测同步实盘票池杠杆过滤(2026-07-18,spec margin-gate-exchange-im;用户定默认=实盘阈值)。
+    pick_L<min_lev 的币剔除——低杠杆档币实盘必被 MarginGate 拒,回测保留=选币分布背离实盘
+    (04:00 MYX 实证)。与实盘同源 eligible_min_leverage/pick_leverage/normalize_tiers_map 预演。
+    近似边界(诚实):档位用**当前快照**(币安无历史档位)、notional 用回测 sizing 常量——近窗
+    忠实、远窗档位漂移无法还原。退市币不在当前档位表 → 保留(无幸存者偏差,同 exclude_non_coin)。
+    fail-loud:回测无 MarginGate 兜底,档位取不到时静默跳过=静默背离 → 宁可整跑失败
+    (tiers 为私有签名端点,需 env BINANCE_API_KEY/SECRET;BT_MIN_LEVERAGE=0 显式停用)。
+    返回 (kept: sorted list, removed: int)。"""
+    from gridtrade.execution.leverage_policy import (eligible_min_leverage,
+                                                     normalize_tiers_map)
+    if min_lev is None or min_lev <= 0:
+        return sorted(symbols), 0
+    try:
+        tmap = normalize_tiers_map(tiers_fetch() or {})
+    except Exception as exc:
+        raise RuntimeError('杠杆档位取数失败(%r):私有端点需 env BINANCE_API_KEY/SECRET;'
+                           '拒绝 fail-open 到含低杠杆币的旧票池(BT_MIN_LEVERAGE=0 可显式停用)'
+                           % (exc,))
+    if not tmap:
+        raise RuntimeError('杠杆档位表为空:无法做 min-leverage 过滤;拒绝 fail-open 到'
+                           '含低杠杆币的旧票池(BT_MIN_LEVERAGE=0 可显式停用)')
+    kept, dropped = eligible_min_leverage(sorted(symbols), tmap, notional, gearing, min_lev)
+    return kept, len(dropped)
 
 
 def prewarm_1h(cache, universe, warm_start_ms, end_ms, *, log=print):
@@ -591,8 +621,16 @@ def main(argv=None):
     # 票池=归档全量合约（含退市，无幸存者偏差，spec §6.1）−黑名单 −非 COIN(TradFi,spec 2026-07-15)
     _arch = set(V.list_archive_symbols()) - set(bt_blacklist)
     universe, _n_tradfi = exclude_non_coin(_arch, _adapter)
-    print('[BT] 全市场票池 %d 币(归档含退市,−黑名单 %d,−非COIN %d)'
-          % (len(universe), len(bt_blacklist), _n_tradfi))
+    # 票池杠杆过滤(默认=实盘 prod UNIVERSE_MIN_LEVERAGE=10,用户定 2026-07-18;设 0=停用
+    # 回旧口径,与历史 sweep 可比)。notional/gearing 与回测 sizing 同源:cap=1000(simulate
+    # 硬编)× gearing(旧lev×0.68=3.4)→$3400,与实盘当前 $2555 同档位区间(档界多为 5k/10k+)。
+    _minlev = float(os.environ.get('BT_MIN_LEVERAGE', 10.0))
+    _gear = BT_STRATEGY['leverage'] * 0.68
+    universe, _n_lowlev = exclude_low_leverage(
+        universe, _adapter.client.fetch_leverage_tiers,
+        notional=1000.0 * _gear, gearing=_gear, min_lev=_minlev)
+    print('[BT] 全市场票池 %d 币(归档含退市,−黑名单 %d,−非COIN %d,−低杠杆 %d@min_lev=%g)'
+          % (len(universe), len(bt_blacklist), _n_tradfi, _n_lowlev, _minlev))
     st1h = V.warm_vision(cache, universe, _ms(warm_start), _ms(win_end),
                          timeframes=('1h',))
     print('[BT] 1h 预热@Vision: %s' % st1h)

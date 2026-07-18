@@ -21,6 +21,20 @@ def feasible(worst_notional, tiers, gearing):
     return worst_notional <= cap_at_leverage(tiers, math.ceil(float(gearing)))
 
 
+def normalize_tiers_map(raw):
+    """ccxt bulk fetch_leverage_tiers 原始映射 → {sym: [{'maxLeverage':int,'maxNotional':float}]}。
+    缺 maxLeverage 的档丢弃、空档位币丢弃。实盘缓存(binance.fetch_max_leverages)与回测
+    (exclude_low_leverage)共用(单一事实源)。"""
+    out = {}
+    for sym, brs in (raw or {}).items():
+        norm = [{'maxLeverage': int(t['maxLeverage']),
+                 'maxNotional': float(t.get('maxNotional') or 0.0)}
+                for t in (brs or []) if t.get('maxLeverage')]
+        if norm:
+            out[sym] = norm
+    return out
+
+
 def eligible_min_leverage(symbols, tiers_map, notional, gearing, min_lev):
     """票池杠杆预过滤(2026-07-18)：pick_L<min_lev 的币在选币前剔除——低杠杆档币的 IM
     (整梯名义/L)会吃掉全部余额、必被 MarginGate 拒,top-1 选中它=整轮空转(04:00 MYX 实证:
