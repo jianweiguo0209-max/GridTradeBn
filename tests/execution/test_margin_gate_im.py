@@ -17,7 +17,7 @@ GP = {'low_price': 100.0, 'high_price': 400.0, 'grid_count': 2,
       'stop_low_price': 50.0, 'stop_high_price': 500.0}
 TIERS = [{'maxLeverage': 10, 'maxNotional': 1000.0},
          {'maxLeverage': 5, 'maxNotional': 5000.0}]
-REQ_CLEAN = 1.25 * (70.0 + 400.0 + 700.0 * 0.0005)   # k=1.25, 默认 fee_rate=0.0005 → 588.19
+REQ_CLEAN = 1.25 * (60.0 + 400.0 + 700.0 * 0.0005)   # 币安原生口径:IM=单侧600/L10=60 → 575.44
 
 # —— MET 主网实数（2026-07-18 容器实测）——
 GP_MET = {'low_price': 0.109791, 'high_price': 0.147409, 'grid_count': 10,
