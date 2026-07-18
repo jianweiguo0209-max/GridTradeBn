@@ -197,6 +197,21 @@ fly postgres attach gridtrade-pg-bi-prod --app gridtrade-bi-prod   # 自动设 D
   Fly static egress 可再收紧）。语义对齐 `docs/币安切换runbook.md` 阶段 3。
 - 记下 `BINANCE_API_KEY`=API Key、`BINANCE_API_SECRET`=API Secret（与 testnet 的 key 分开管理，勿复用）。
 
+### 手动步骤 2 — Binance 合约账户偏好（单向持仓 + 关闭联合保证金）
+> 引擎 boot 硬门 `assert_account_mode`（`gridtrade/exchanges/binance.py:155`）：按净仓语义 + 单一
+> `QUOTE_CURRENCY`(USDT) 权益口径工作，两项不符即 `RuntimeError` 拒起（fail-fast，勿带病起跑）。
+> **不改的后果**（2026-07-18 首次 mainnet 上线实测）：scheduler/monitor 每次启动即崩、Fly 重启到
+> max restart count 10 后停机；且 `fly status` 会在两次崩溃重启间的瞬时窗显示 `started`，须查日志才看得出——
+> 但因拦在下单前，**无持仓、无资金风险**。在币安 U 本位合约页右上「设置/偏好 ⚙」改这两项：
+> 1. **持仓模式 → 单向持仓（One-Way）**（非双向/hedge；对应 `dualSidePosition=false`）。
+> 2. **资产模式 → 单一资产（Single-Asset）**，即关闭「联合保证金 Multi-Assets」（对应 `multiAssetsMargin=false`）。
+>    前提：账户仅持 USDT、无持仓/无挂单才允许切到单一资产。
+>
+> 改完两项后（若机器已因崩溃停机）重启：`fly machines restart <scheduler-id> <monitor-id> -a gridtrade-bi-prod`
+> （或 `fly apps restart gridtrade-bi-prod`）；boot 通过后 scheduler 日志打印 `[scheduler] ... open_offsets=...`。
+> 无需手动设保证金模式/杠杆：引擎开格时对每币强制全仓（`set_margin_mode('cross')`，吞 -4046）
+> 并按仓位体系设杠杆（`grid_executor` fail-open），账户默认逐仓/任意杠杆均会被覆盖。
+
 ### 手动步骤 3 — secrets（面板凭证全新生成，勿复用 testnet）
 ```bash
 fly secrets set --app gridtrade-bi-prod BINANCE_API_KEY=... BINANCE_API_SECRET=...
