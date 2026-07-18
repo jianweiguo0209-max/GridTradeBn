@@ -184,6 +184,22 @@ unset TEST_DATABASE_URL                               # 回到默认 SQLite
 > gridtrade-prod 现为 HL 遗留环境，币安生产用本节的全新环境）。
 > **全自动 CD：push `production` 分支即触发真钱部署——手动准备未就位前不要 push。**
 
+### 一键上线脚本（推荐）— `deploy/bringup-mainnet.sh`
+交互式逐步提示，把下面「前置步骤 + 手动步骤 1–5」整套跑完并自动触发 CD；幂等，可安全重跑：
+```bash
+bash deploy/bringup-mainnet.sh
+```
+依次提示并落地：① Fly app 名 + Postgres（幂等创建 + attach）② Binance API key/secret（隐藏输入 →
+`fly secrets --stage`）③ Dashboard 用户/密码（自动转 pbkdf2 hash + 随机 session secret）④ GitHub CD
+部署 token + `FLY_APP_PROD` 变量（自动 `gh secret/variable set`）⑤ 启用 offset 数组（空=全开默认；写进
+`fly.prod.toml [env]`，方案B 按启用数重算 cap frac）；末尾二次确认后 `git commit` + 推 `production` 触发
+`deploy-prod.yml`（test→deploy）。
+> 前置：本机已 `fly auth login` + `gh auth login`；在仓库根目录运行；**已在币安把合约账户切【单向持仓】+
+> 【单一资产 / 关闭联合保证金】**——脚本开头会要求输入 `yes` 确认（引擎 boot 硬门，详见手动步骤 2）。
+> 设计取舍：敏感项走 fly secrets、offset 走版本控制 toml（避免 secret 与 toml 漂移）；保证金模式/杠杆由
+> 引擎开格时自动设，无需手动。下面的「前置步骤 + 手动步骤 1–5」是脚本各步的**逐条参考 / 手动兜底**（读懂
+> 脚本行为、单步重做或排障时看）。
+
 ### 前置步骤 — 新建生产环境（一次性）
 ```bash
 fly apps create gridtrade-bi-prod --org personal
