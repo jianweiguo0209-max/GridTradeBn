@@ -36,11 +36,16 @@ def normalize_tiers_map(raw):
 
 
 def eligible_min_leverage(symbols, tiers_map, notional, gearing, min_lev):
-    """票池杠杆预过滤(2026-07-18)：pick_L<min_lev 的币在选币前剔除——低杠杆档币的 IM
-    (整梯名义/L)会吃掉全部余额、必被 MarginGate 拒,top-1 选中它=整轮空转(04:00 MYX 实证:
-    L=5 → IM $511=全余额)。与开仓/MarginGate 同源 pick_leverage 预演。
-    min_lev<=0=停用;tiers 缺失/pick None → 保留(fail-open,与 maxlev 分级同语义)。
-    返回 (kept, dropped)。"""
+    """票池杠杆预过滤：**第一档(币安最高档)最大杠杆** < min_lev 的币在选币前剔除——低杠杆档
+    是币安对高危币(小市值/薄盘/易插针,维持率高)的风险分级,粗筛掉它们;开仓贴边的精筛由
+    MarginGate 兜底(二者解耦)。
+
+    2026-07-19 修正:此前用 `pick_leverage(notional)` 的**减一档**值判,把第一档=10x(减一档后
+    pick_L<10)甚至第一档=20x 的正常币误剔(实测 169 剔除里 137 个是 10x、8 个是 20x,真正
+    第一档<10 的只有 24)。「减一档留余量」是**开仓选杠杆**的安全逻辑(pick_leverage,不动),
+    拿来做票池过滤会过度筛选。判据改回币安第一档档位。notional/gearing 保留签名(调用处传参)
+    但过滤不再依赖。
+    min_lev<=0=停用;tiers 缺失 → 保留(fail-open,与 maxlev 分级同语义)。返回 (kept, dropped)。"""
     if min_lev is None or min_lev <= 0:
         return list(symbols), []
     kept, dropped = [], []
@@ -49,8 +54,8 @@ def eligible_min_leverage(symbols, tiers_map, notional, gearing, min_lev):
         if not tiers:
             kept.append(s)
             continue
-        L = pick_leverage(notional, tiers, gearing)
-        (kept if (L is None or L >= min_lev) else dropped).append(s)
+        max_lev = max(int(t['maxLeverage']) for t in tiers)   # 第一档=币安给的最高杠杆
+        (kept if max_lev >= min_lev else dropped).append(s)
     return kept, dropped
 
 

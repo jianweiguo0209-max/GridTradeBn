@@ -497,8 +497,9 @@ def exclude_non_coin(symbols, adapter):
 
 def exclude_low_leverage(symbols, tiers_fetch, *, notional, gearing, min_lev, log=print):
     """回测同步实盘票池杠杆过滤(2026-07-18,spec margin-gate-exchange-im;用户定默认=实盘阈值)。
-    pick_L<min_lev 的币剔除——低杠杆档币实盘必被 MarginGate 拒,回测保留=选币分布背离实盘
-    (04:00 MYX 实证)。与实盘同源 eligible_min_leverage/pick_leverage/normalize_tiers_map 预演。
+    **第一档最大杠杆<min_lev 的币剔除**(2026-07-19 修正:此前用 pick_leverage 减一档值判,误剔
+    137 个第一档=10x + 8 个 20x 的正常币;判据改回币安第一档档位,开仓精筛仍由 MarginGate 兜底)。
+    低杠杆档币是币安对高危币的风险分级,回测保留=选币分布背离实盘。与实盘同源 eligible_min_leverage。
     近似边界(诚实):档位用**当前快照**(币安无历史档位)、notional 用回测 sizing 常量——近窗
     忠实、远窗档位漂移无法还原。退市币不在当前档位表 → 保留(无幸存者偏差,同 exclude_non_coin)。
     fail-loud:回测无 MarginGate 兜底,档位取不到时静默跳过=静默背离 → 宁可整跑失败

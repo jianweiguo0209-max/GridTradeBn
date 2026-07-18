@@ -8,6 +8,12 @@ KITE = [{'maxLeverage': 5, 'maxNotional': 5000.0}, {'maxLeverage': 4, 'maxNotion
         {'maxLeverage': 1, 'maxNotional': 200000.0}]
 PEPE = [{'maxLeverage': 25, 'maxNotional': 5000.0}, {'maxLeverage': 20, 'maxNotional': 10000.0},
         {'maxLeverage': 13, 'maxNotional': 50000.0}, {'maxLeverage': 4, 'maxNotional': 1000000.0}]
+# 第一档=10x:$2555 落第一档,pick_leverage 减一档=8<10（旧口径误剔）,第一档 10≥10（新口径保留）
+TEN = [{'maxLeverage': 10, 'maxNotional': 5000.0}, {'maxLeverage': 8, 'maxNotional': 50000.0},
+       {'maxLeverage': 5, 'maxNotional': 500000.0}]
+# 第一档=20x 但 $2555 减一档=8<10（旧口径也误剔——第一档 20x 的正常币!）
+TWENTY = [{'maxLeverage': 20, 'maxNotional': 5000.0}, {'maxLeverage': 8, 'maxNotional': 50000.0},
+          {'maxLeverage': 4, 'maxNotional': 500000.0}]
 
 
 def test_cap_at_leverage():
@@ -66,14 +72,36 @@ def test_normalize_tiers_map_strips_and_coerces():
 
 
 def test_eligible_min_leverage_filters_low_bracket_coins():
-    # 票池杠杆预过滤(2026-07-18 04:00 MYX 实证)：pick_L<阈值 的币在选币前剔除,
-    # 免得 top-1 被 MarginGate 拒 → 整轮空转。与开仓/MarginGate 同源 pick_leverage 预演。
+    # 票池杠杆预过滤：判据=**第一档最大杠杆**(币安风险分级),第一档<min_lev 才剔。
     from gridtrade.execution.leverage_policy import eligible_min_leverage
     tmap = {'PEPE/USDT:USDT': PEPE, 'KITE/USDT:USDT': KITE}
     kept, dropped = eligible_min_leverage(['PEPE/USDT:USDT', 'KITE/USDT:USDT'],
                                           tmap, 2555.0, GEARING, 10.0)
-    assert kept == ['PEPE/USDT:USDT']       # pick_L=20 ≥ 10
-    assert dropped == ['KITE/USDT:USDT']    # pick_L=4 < 10
+    assert kept == ['PEPE/USDT:USDT']       # 第一档 25x ≥ 10
+    assert dropped == ['KITE/USDT:USDT']    # 第一档 5x < 10
+
+
+def test_eligible_min_leverage_keeps_first_tier_ge_min_not_pickL():
+    """判据=第一档最大杠杆,非 pick_leverage($notional) 的「减一档」值(2026-07-19 修正)。
+    第一档=10x/20x 的正常币,pick_L 减一档后 <10,此前被误剔(实测 137 个 10x + 8 个 20x)。
+    「只过滤小于10倍」= 第一档 <10 才剔,10x/20x 全留。"""
+    from gridtrade.execution.leverage_policy import eligible_min_leverage, pick_leverage
+    tmap = {'TEN/USDT:USDT': TEN, 'TWENTY/USDT:USDT': TWENTY, 'KITE/USDT:USDT': KITE}
+    kept, dropped = eligible_min_leverage(
+        ['TEN/USDT:USDT', 'TWENTY/USDT:USDT', 'KITE/USDT:USDT'], tmap, 2555.0, GEARING, 10.0)
+    assert 'TEN/USDT:USDT' in kept and 'TWENTY/USDT:USDT' in kept    # 第一档 10x/20x ≥ 10 → 留
+    assert dropped == ['KITE/USDT:USDT']                            # 第一档 5x < 10 → 剔
+    # 佐证「减一档」bug:这俩的 pick_L 确实 <10（旧口径会误剔）,但开仓仍走 pick_leverage,不受本改动影响
+    assert pick_leverage(2555.0, TEN, GEARING) < 10
+    assert pick_leverage(2555.0, TWENTY, GEARING) < 10
+
+
+def test_eligible_min_leverage_boundary_equals_min_lev_kept():
+    """第一档正好=min_lev 保留(「只过滤小于10倍」=严格 <,10 保留)。"""
+    from gridtrade.execution.leverage_policy import eligible_min_leverage
+    kept, dropped = eligible_min_leverage(['TEN/USDT:USDT'], {'TEN/USDT:USDT': TEN},
+                                          2555.0, GEARING, 10.0)
+    assert kept == ['TEN/USDT:USDT'] and dropped == []
 
 
 def test_eligible_min_leverage_missing_tiers_fail_open():
