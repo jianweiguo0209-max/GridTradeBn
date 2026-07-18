@@ -116,6 +116,9 @@ class DeployConfig:
     eff_concurrency: int = 12
     # MarginGate IM 口径安全余量 k（≥1）：required=k×(整梯名义/L+worst浮亏+fee)。
     margin_gate_k: float = 1.25
+    # 票池杠杆预过滤(2026-07-18)：pick_L<阈值 的币选币前剔除(低杠杆档币 IM 吃满余额、
+    # 必被 MarginGate 拒,top-1 选中它=整轮空转,04:00 MYX 实证)。0=停用(默认,零行为变更)。
+    universe_min_leverage: float = 0.0
 
 
 def compute_cap(equity, frac, cap_min, cap_max):
@@ -197,6 +200,7 @@ def load_deploy_config(env=None) -> DeployConfig:
         live_open_offsets=_live_offsets,
         eff_concurrency=_eff_concurrency,
         margin_gate_k=_mgk,
+        universe_min_leverage=_f(env, 'UNIVERSE_MIN_LEVERAGE', 0.0),
         cap_min=_f(env, 'CAP_MIN', 20.0),
         cap_max=_f(env, 'CAP_MAX', 100000.0),
         min_quote_volume_24h=_f(env, 'MIN_QUOTE_VOLUME_24H', 0.0),

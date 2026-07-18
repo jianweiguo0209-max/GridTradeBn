@@ -102,6 +102,10 @@ class ResilientAdapter(ExchangeAdapter):
         # → open 设杠杆永不生效。内层有实例缓存,零额外请求。
         return self._call('fetch_leverage_tiers', symbol)
 
+    def fetch_leverage_tiers_map(self) -> dict:
+        # 同上:基类默认 {} 会把全量档位表静默吸掉 → 票池杠杆预过滤(2026-07-18)永不生效。
+        return self._call('fetch_leverage_tiers_map')
+
     def max_leverage(self, symbol):
         # 必须显式代理:基类默认 max_leverage=self.fetch_max_leverages().get(sym),漏代理时
         # 虽因该委托碰巧穿透,但会绕过内层未来的 Binance 专属 max_leverage 覆写(同上教训,防御)。

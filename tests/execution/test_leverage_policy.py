@@ -50,3 +50,27 @@ def test_pick_leverage_empty_tiers_returns_none():
 def test_pick_leverage_never_exceeds_symbol_max():
     # worst 极小落 bracket0：减一档=20x，但绝不超最高档 25x
     assert pick_leverage(1.0, PEPE, GEARING) == 20
+
+
+def test_eligible_min_leverage_filters_low_bracket_coins():
+    # 票池杠杆预过滤(2026-07-18 04:00 MYX 实证)：pick_L<阈值 的币在选币前剔除,
+    # 免得 top-1 被 MarginGate 拒 → 整轮空转。与开仓/MarginGate 同源 pick_leverage 预演。
+    from gridtrade.execution.leverage_policy import eligible_min_leverage
+    tmap = {'PEPE/USDT:USDT': PEPE, 'KITE/USDT:USDT': KITE}
+    kept, dropped = eligible_min_leverage(['PEPE/USDT:USDT', 'KITE/USDT:USDT'],
+                                          tmap, 2555.0, GEARING, 10.0)
+    assert kept == ['PEPE/USDT:USDT']       # pick_L=20 ≥ 10
+    assert dropped == ['KITE/USDT:USDT']    # pick_L=4 < 10
+
+
+def test_eligible_min_leverage_missing_tiers_fail_open():
+    from gridtrade.execution.leverage_policy import eligible_min_leverage
+    kept, dropped = eligible_min_leverage(['X/USDT:USDT'], {}, 2555.0, GEARING, 10.0)
+    assert kept == ['X/USDT:USDT'] and dropped == []
+
+
+def test_eligible_min_leverage_disabled_when_zero():
+    from gridtrade.execution.leverage_policy import eligible_min_leverage
+    tmap = {'KITE/USDT:USDT': KITE}
+    kept, dropped = eligible_min_leverage(['KITE/USDT:USDT'], tmap, 2555.0, GEARING, 0.0)
+    assert kept == ['KITE/USDT:USDT'] and dropped == []

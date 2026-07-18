@@ -157,6 +157,18 @@ def test_retry_rate_limit_uses_larger_base():
     assert len(sleeps) == 1 and sleeps[0] >= 1.0
 
 
+def test_resilient_forwards_fetch_leverage_tiers_map():
+    # 基类默认 {} 会静默吸掉全量档位表(同 fetch_leverage_tiers/max_leverage 教训 b55a632)
+    from gridtrade.exchanges.resilient_adapter import ResilientAdapter
+
+    class _Inner:
+        def fetch_leverage_tiers_map(self):
+            return {'X/USDT:USDT': [{'maxLeverage': 10, 'maxNotional': 1.0}]}
+
+    ra = ResilientAdapter(_Inner())
+    assert ra.fetch_leverage_tiers_map()['X/USDT:USDT'][0]['maxLeverage'] == 10
+
+
 def test_retry_open_breaker_raises_circuit_open_without_calling():
     from gridtrade.exchanges.resilience import (call_with_retry, CircuitBreaker,
                                                CircuitOpenError)

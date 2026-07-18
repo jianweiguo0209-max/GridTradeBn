@@ -43,7 +43,11 @@ primary_region = "nrt"
   # frac 分母从 MAX_CONCURRENT(12) 改为**启用数 N**→ frac=AL/(N×gearing/2)、满配仍达目标 AL,
   # 但 N 越小单币杠杆越集中(N=1→frac 2.94 单币吃满 AL,慎用长期);灰度=从少数 offset 起、逐步加。
   # 阶段4 小资金试跑用法见记忆 live-open-offsets-ramp-knob。示例(只跑 offset 0 与 6 两 cohort)：
-  LIVE_OPEN_OFFSETS = "4,10"   # 灰度上量:只在 offset 4/10 开仓(每日 04/16 与 10/22 UTC;方案B N=2→frac≈1.47,单币集中),2026-07-18 用户定(原 2,4)
+  LIVE_OPEN_OFFSETS = "5,10"   # 灰度上量:只在 offset 5/10 开仓(每日 05/17 与 10/22 UTC;方案B N=2→frac≈1.47,单币集中),2026-07-18 用户定(原 2,4→4,10→5,10)
+  # 票池杠杆预过滤(2026-07-18):pick_L<10 的币选币前剔除——低杠杆档币 IM(整梯名义/L)吃满
+  # 余额必被 MarginGate 拒,top-1 选中它=整轮空转(04:00 MYX 实证 L=5→IM $511=全余额)。
+  # 与开仓/MarginGate 同源 pick_leverage 预演,零额外权重(共享 fetch_max_leverages bulk 缓存)。
+  UNIVERSE_MIN_LEVERAGE = "10"
 
   # 币池：全市场动态（2026-07-04 起已去 UNIVERSE_WHITELIST，无该项即走此模式）。
   # resolve_live_universe = 全部 live 永续 swap（list_instruments 只留 swap + canonical

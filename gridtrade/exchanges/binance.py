@@ -141,16 +141,29 @@ class BinanceAdapter(CcxtAdapter):
         cache = getattr(self, '_maxlev_cache', None)
         if cache is None:
             cache = {}
+            tiers_map = {}
             try:
                 raw = self.client.fetch_leverage_tiers() or {}   # 无 symbol=全量
                 for sym, brs in raw.items():
-                    mls = [int(t['maxLeverage']) for t in (brs or []) if t.get('maxLeverage')]
-                    if mls:
-                        cache[sym] = float(max(mls))
+                    norm = [{'maxLeverage': int(t['maxLeverage']),
+                             'maxNotional': float(t.get('maxNotional') or 0.0)}
+                            for t in (brs or []) if t.get('maxLeverage')]
+                    if norm:
+                        cache[sym] = float(max(t['maxLeverage'] for t in norm))
+                        tiers_map[sym] = norm    # 同一次 bulk 顺带缓存完整档位(票池预过滤用)
             except Exception:
                 cache = {}
+                tiers_map = {}
             self._maxlev_cache = cache
+            self._tiers_map_cache = tiers_map
         return cache
+
+    def fetch_leverage_tiers_map(self) -> dict:
+        """{canonical: [{'maxLeverage','maxNotional'},…]} 全量——与 fetch_max_leverages 共享
+        同一次 bulk 调用与缓存(零额外权重)。票池杠杆预过滤(2026-07-18)用:与开仓/MarginGate
+        同源 pick_leverage 预演。失败 → {}(fail-open,调用方跳过过滤)。"""
+        self.fetch_max_leverages()               # 确保缓存已建(幂等)
+        return getattr(self, '_tiers_map_cache', {}) or {}
 
     def assert_account_mode(self) -> None:
         """单向持仓 + 关闭联合保证金（引擎净仓/单币权益假设，spec §3.1）。"""

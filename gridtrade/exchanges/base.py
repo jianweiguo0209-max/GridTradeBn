@@ -192,6 +192,11 @@ class ExchangeAdapter(ABC):
         子类未实现即不设杠杆，退化为交易所默认）。"""
         return []
 
+    def fetch_leverage_tiers_map(self) -> dict:
+        """{canonical: tiers list} 全量（票池杠杆预过滤用，2026-07-18）。默认空 dict
+        （fail-open：调用方跳过过滤）。"""
+        return {}
+
     # ---- 可选：24h 成交额（用于流动性地板；默认空=上层跳过过滤）----
     def fetch_24h_quote_volumes(self) -> dict:
         """{canonical symbol: 24h 计价币成交额}。默认空 dict（无数据 → resolve_live_universe fail-open 跳过）。"""

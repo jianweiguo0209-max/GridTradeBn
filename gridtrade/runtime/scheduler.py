@@ -137,6 +137,25 @@ def run_scheduler_once(runtime, *, now_fn=time.time,
         universe = [s for s in universe if s not in banned]
         print('[scheduler] symbol-lock pre-filter: -%d held %s'
               % (len(banned), sorted(banned)), flush=True)
+    # 票池杠杆预过滤(2026-07-18,UNIVERSE_MIN_LEVERAGE)：pick_L<阈值 的币连 K 线都不拉——
+    # 低杠杆档币 IM(整梯名义/L)吃满余额、必被 MarginGate 拒,top-1 选中它=整轮空转
+    # (04:00 MYX 实证 L=5→IM $511=全余额)。与开仓/MarginGate 同源 pick_leverage 预演;
+    # notional=整梯双侧名义(cap×gearing,与 MarginGate 同口径)。fail-open:档位/余额取不到跳过。
+    _minlev = float(getattr(rt.config, 'universe_min_leverage', 0.0) or 0.0)
+    if _minlev > 0:
+        try:
+            from gridtrade.execution.leverage_policy import eligible_min_leverage
+            _tmap = rt.adapter.fetch_leverage_tiers_map()
+            _notional = float(rt.executor._resolve_cap()) * float(rt.executor.gearing)
+            universe, _lowlev = eligible_min_leverage(universe, _tmap, _notional,
+                                                      rt.executor.gearing, _minlev)
+            if _lowlev:
+                print('[scheduler] min-leverage pre-filter: -%d 币 pick_L<%g '
+                      '(notional≈$%.0f, e.g. %s)'
+                      % (len(_lowlev), _minlev, _notional, sorted(_lowlev)[:5]),
+                      flush=True)
+        except Exception as exc:      # fail-open:预过滤失败绝不禁池(MarginGate 仍兜底)
+            print('[scheduler] min-leverage pre-filter skipped: %r' % (exc,), flush=True)
     candles = fetch_candles(rt.adapter, universe, run_time,
                             max_candle_num=DEFAULT_STRATEGY_CONFIG['max_candle_num'],
                             pace_ms=getattr(rt.config, 'scheduler_fetch_pace_ms', None))

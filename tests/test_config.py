@@ -268,6 +268,13 @@ def test_eff_concurrency_field_follows_enabled_offsets():
     assert load_deploy_config(env={'LIVE_OPEN_OFFSETS': alloff}).eff_concurrency == 12
 
 
+def test_universe_min_leverage_default_off_env_on():
+    # 票池杠杆预过滤阈值(2026-07-18):默认 0=停用(零行为变更);prod toml 设 10
+    from gridtrade.config import load_deploy_config
+    assert load_deploy_config(env={}).universe_min_leverage == 0.0
+    assert load_deploy_config(env={'UNIVERSE_MIN_LEVERAGE': '10'}).universe_min_leverage == 10.0
+
+
 def test_margin_gate_k_default_env_and_fail_fast():
     import pytest
     from gridtrade.config import load_deploy_config
