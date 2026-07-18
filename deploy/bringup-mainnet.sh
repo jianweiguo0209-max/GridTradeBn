@@ -57,7 +57,7 @@ if app_exists "$PG"; then say "Postgres $PG 已存在，跳过创建"; else
   fly postgres create --name "$PG" --org personal --region "$REGION" \
     --vm-size shared-cpu-1x --volume-size 1 --initial-cluster-size 1
 fi
-say "attach $PG → $APP（自动设 DATABASE_URL；已 attach 会报错，可忽略）"
+say "attach $PG → ${APP}（自动设 DATABASE_URL；已 attach 会报错，可忽略）"
 fly postgres attach "$PG" --app "$APP" || warn "attach 返回非零（通常=已 attach），继续"
 
 # ---- ② Binance mainnet API 凭证 ----
@@ -109,7 +109,7 @@ PYEOF
 # ---- 触发 GitHub Actions mainnet CI/CD ----
 say "最后一步 — 提交并推 production 触发 mainnet CI/CD（deploy-prod.yml）"
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
-[ "$BRANCH" = "main" ] || warn "当前分支是 $BRANCH（通常从 main 上线）"
+[ "$BRANCH" = "main" ] || warn "当前分支是 ${BRANCH}（通常从 main 上线）"
 echo; echo "  app         = $APP"
 echo "  postgres    = $PG"
 echo "  offset      = ${OFFSETS:-全开}"
