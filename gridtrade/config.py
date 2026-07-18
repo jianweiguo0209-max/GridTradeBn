@@ -110,6 +110,12 @@ class DeployConfig:
     # 当前 offset ∉ 集 → 本轮只关不开(灰度上量/减仓)；且 cap frac 分母按启用数 N 重算(方案B,
     # 满配仍达目标 AL)。合法值 ∈ [0, period_hours)，越界 boot 报错。
     live_open_offsets: tuple = ()
+    # 实际可达并发 N（spec 2026-07-18-margin-gate-exchange-im）：=min(启用offset数×
+    # choose_symbols, max_concurrent)，空集=max_concurrent。frac 分母与 MaxConcurrentGate
+    # 上限共用此值——frac 按 N 放大 cap 后，并发上限必须同步收紧到 N（12 兜不住 AL）。
+    eff_concurrency: int = 12
+    # MarginGate IM 口径安全余量 k（≥1）：required=k×(整梯名义/L+worst浮亏+fee)。
+    margin_gate_k: float = 1.25
 
 
 def compute_cap(equity, frac, cap_min, cap_max):
@@ -154,6 +160,11 @@ def load_deploy_config(env=None) -> DeployConfig:
     _eff_concurrency = (min(len(_live_offsets) * DEFAULT_STRATEGY_CONFIG['choose_symbols'],
                             _max_conc)
                         if _live_offsets else _max_conc)
+    # MarginGate 余量系数（spec 2026-07-18-margin-gate-exchange-im）：<1 = 余量为负、
+    # 贴边开仓必吃 -2019/逼近强平，配置错了要响亮（沿 FUSE_MIN_COVERAGE 惯例）。
+    _mgk = _f(env, 'MARGIN_GATE_K', 1.25)
+    if _mgk < 1.0:
+        raise RuntimeError('MARGIN_GATE_K=%s 无效：余量系数须 ≥1（=1 即零余量贴边）' % _mgk)
     return DeployConfig(
         exchange=_s(env, 'EXCHANGE', 'binance'),
         api_key=_s(env, 'BINANCE_API_KEY', ''),
@@ -184,6 +195,8 @@ def load_deploy_config(env=None) -> DeployConfig:
                                     _eff_concurrency,
                                     _f(env, 'GRID_GEARING', 3.4)),
         live_open_offsets=_live_offsets,
+        eff_concurrency=_eff_concurrency,
+        margin_gate_k=_mgk,
         cap_min=_f(env, 'CAP_MIN', 20.0),
         cap_max=_f(env, 'CAP_MAX', 100000.0),
         min_quote_volume_24h=_f(env, 'MIN_QUOTE_VOLUME_24H', 0.0),

@@ -223,22 +223,30 @@ class MinNotionalGate(AdmissionGate):
 
 
 class MarginGate(AdmissionGate):
-    """可用保证金门：实时查交易所可用余额(cash) >= 本提议所需(cap)，同轮累计扣减。
+    """可用保证金门（交易所 IM 口径，spec 2026-07-18-margin-gate-exchange-im）：
+    实时查可用余额(cash=availableBalance) ≥ 本提议真实保证金所需，同轮累计扣减。
 
-    口径（用户敲定）：所需=proposal.cap；未给时优先 executor._resolve_cap()（与真实开仓同源的
-    动态 cap，随权益自动跟随——default_cap 是静态值会与动态 cap 脱节、预留虚低），executor
-    未传回退 default_cap（向后兼容）。放行条件 cash - 已预留 >= 所需；
-    fail-closed（余额读不到则全拒）。须置于门链末尾（短路链中过它即准入，预留不虚高）。
+    旧口径「所需=cap」已废：cap 是 sizing 基数而非保证金——frac=AL/(N×gearing/2) 在
+    启用 offset 数 N 小时 >1，cap>equity≥cash 恒真 → 结构性永拒（2026-07-18 mainnet
+    N=2 MET 实证：cap $751 vs cash $511，交易所实际只锁 ~$128）。新口径所需 =
+    margin_policy.ladder_margin_required = k×(整梯名义/L + worst止损浮亏 + fee)，
+    L 与 executor.open 的 pick_leverage 同源预演。
+    fail-closed 分层：①余额读不到 → 本批全拒（原语义不变）；②IM 口径算不出
+    （tiers 空/取数抛错/executor 缺失）→ 回退旧「cash≥cap」保守口径并留痕
+    （fallback 日志）——宁可误拒不误放。须置于门链末尾（短路链中过它即准入，预留不虚高）。
     """
 
-    def __init__(self, adapter, default_cap, *, executor=None, log=None):
+    def __init__(self, adapter, default_cap, *, executor=None, log=None,
+                 k=1.25, fee_rate=0.0005):    # 默认与 margin_policy.DEFAULT_* 一致
         self.adapter = adapter
         self.default_cap = float(default_cap)
-        self.executor = executor    # 可选：动态 cap 来源（_resolve_cap 内部已有失败回退）
+        self.executor = executor    # 动态 cap/gearing/min_amount 来源；缺失→回退 cap 口径
+        self.k = float(k)
+        self.fee_rate = float(fee_rate)
         self._available = None      # 本批可用余额快照；None=未快照
         self._reserved = 0.0        # 本批已放行提议的累计所需
         self._balance_ok = True
-        self.log = log              # 可选：fail-closed 时把被吞的余额异常打出来
+        self.log = log              # 可选：fail-closed/fallback 留痕
 
     def begin_batch(self) -> None:
         self._reserved = 0.0
@@ -252,20 +260,54 @@ class MarginGate(AdmissionGate):
                 self.log('[gate] MarginGate fail-closed: balance fetch failed: %r'
                          % (exc,))
 
+    def _cap_required(self, proposal: GridProposal) -> float:
+        """回退口径的所需 = 定稿 cap（与旧行为逐位一致）。"""
+        if proposal.cap is not None:
+            return float(proposal.cap)
+        if self.executor is not None:
+            return float(self.executor._resolve_cap())   # 与真实开仓同源的动态 cap
+        return self.default_cap
+
     def check(self, proposal: GridProposal) -> GateResult:
         if self._available is None:     # 未经 begin_batch 的独立 evaluate -> 惰性快照一次
             self.begin_batch()
         if not self._balance_ok:
             return GateResult(False, 'MarginGate', 'balance unavailable')
-        if proposal.cap is not None:
-            required = proposal.cap
-        elif self.executor is not None:
-            required = float(self.executor._resolve_cap())   # 与真实开仓同源的动态 cap
-        else:
-            required = self.default_cap
+        cap = self._cap_required(proposal)
+        required, info = cap, None
+        try:
+            if self.executor is None:
+                raise RuntimeError('executor 缺失(gearing/min_amount 未知)')
+            from gridtrade.execution.margin_policy import ladder_margin_required
+            tiers = self.adapter.fetch_leverage_tiers(proposal.symbol)
+            entry = float(self.adapter.fetch_price(proposal.symbol))
+            res = ladder_margin_required(
+                cap, self.executor.gearing, proposal.grid_params, entry, tiers,
+                min_amount=getattr(self.executor, 'min_amount', 0.0),
+                k=self.k, fee_rate=self.fee_rate)
+            if res is None:
+                raise RuntimeError('IM 口径无法计算(tiers 空/建网 None/L None)')
+            required, info = res
+            if self.log is not None:    # 放行/拒绝都留痕：每小时最多数条，观测口径与数值
+                self.log('[gate] MarginGate %s IM口径 required=%.2f '
+                         '(梯名义 %.0f / L=%d → IM %.2f + worst浮亏 %.2f + fee %.2f, '
+                         'k=%.2f) available=%.2f reserved=%.2f'
+                         % (proposal.symbol, required, info['ladder_total'],
+                            info['L'], info['im'], info['worst_loss'], info['fee'],
+                            self.k, self._available, self._reserved))
+        except Exception as exc:        # fail-closed：回退 cap 口径（保守，宁可误拒）
+            if self.log is not None:
+                self.log('[gate] MarginGate fallback→cap口径 %s: %r'
+                         % (proposal.symbol, exc))
         if self._available - self._reserved < required:
-            return GateResult(False, 'MarginGate',
-                              'free cash %.4f - reserved %.4f < required %.4f'
-                              % (self._available, self._reserved, required))
+            if info is not None:
+                reason = ('available %.4f - reserved %.4f < required %.2f '
+                          '(IM %.2f + loss %.2f + fee %.2f, k=%.2f, L=%d)'
+                          % (self._available, self._reserved, required, info['im'],
+                             info['worst_loss'], info['fee'], self.k, info['L']))
+            else:
+                reason = ('free cash %.4f - reserved %.4f < required %.4f'
+                          % (self._available, self._reserved, required))
+            return GateResult(False, 'MarginGate', reason)
         self._reserved += required
         return GateResult(True, 'MarginGate')

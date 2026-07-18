@@ -79,3 +79,22 @@ def test_build_runtime_manager_shares_executor_and_bus_wired():
     assert rt.manager.executor is rt.executor
     assert isinstance(rt.event_bus, EventBus)
     assert rt.manager.bus is rt.event_bus
+
+
+def test_gate_chain_uses_eff_concurrency_and_margin_k():
+    # spec 2026-07-18-margin-gate-exchange-im：offset 启用集收紧并发 N 后，
+    # MaxConcurrentGate 上限须同步 = eff_concurrency（frac 已按 N 放大 cap，12 兜不住）；
+    # MarginGate.k 从 env MARGIN_GATE_K 透传。
+    from gridtrade.runtime.factory import build_runtime
+    rt = build_runtime(_cfg(LIVE_OPEN_OFFSETS='2,4', MARGIN_GATE_K='1.5'))
+    gates = rt.manager.gates.gates
+    assert gates[0].max_concurrent == 2
+    assert gates[4].k == 1.5
+
+
+def test_gate_chain_defaults_unchanged_without_offsets():
+    from gridtrade.runtime.factory import build_runtime
+    rt = build_runtime(_cfg())
+    gates = rt.manager.gates.gates
+    assert gates[0].max_concurrent == 12       # 零行为变更回归护栏
+    assert gates[4].k == 1.25

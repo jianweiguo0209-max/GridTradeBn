@@ -65,14 +65,19 @@ def build_runtime(config) -> Runtime:
                             cap_equity_frac=config.cap_equity_frac,
                             cap_min=config.cap_min, cap_max=config.cap_max)
     gates = GateChain([
-        MaxConcurrentGate(executor.grids, config.max_concurrent),
+        # 并发上限 = eff_concurrency（spec 2026-07-18-margin-gate-exchange-im）：
+        # frac 按启用 offset 数 N 放大单格 cap 后，上限必须同步收紧到 N，否则 >N 格
+        # 同开会冲破 AL。空启用集 = max_concurrent（零行为变更）。
+        MaxConcurrentGate(executor.grids,
+                          getattr(config, 'eff_concurrency', config.max_concurrent)),
         # cap 定稿必须在"吃 cap"的门（RiskBudget/MinNotional/Margin）之前（spec 2026-07-15 §五）
         FuseCoverageGate(executor, config.fuse_min_coverage, adapter=adapter,
                          log=_flush_log),
         RiskBudgetGate(executor.grids, config.total_budget, config.default_cap),
         MinNotionalGate(executor, config.min_order_notional, adapter=adapter,
                         log=_flush_log),
-        MarginGate(adapter, config.default_cap, executor=executor, log=_flush_log),
+        MarginGate(adapter, config.default_cap, executor=executor, log=_flush_log,
+                   k=getattr(config, 'margin_gate_k', 1.25)),
     ], log=_flush_log)
     bus = EventBus()
     # 实盘退出信号：pv_spike（对齐回测 calc_pv_spike）+ funding_rate（HL 真实费率），按 grid 节流

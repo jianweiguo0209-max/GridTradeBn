@@ -256,3 +256,22 @@ def test_live_open_offsets_rescales_cap_frac_by_enabled_count():
     assert abs(load_deploy_config(env={'LIVE_OPEN_OFFSETS': alloff}).cap_equity_frac - 0.24510) < 1e-4
     dup = load_deploy_config(env={'LIVE_OPEN_OFFSETS': '0,0,6'})                  # 去重后 N=2（非 3）
     assert abs(dup.cap_equity_frac - derive_frac(5.0, 2, 3.4)) < 1e-4
+
+
+def test_eff_concurrency_field_follows_enabled_offsets():
+    # spec 2026-07-18-margin-gate-exchange-im：eff_concurrency 持久化到 config，
+    # 供 MaxConcurrentGate 用（frac 按 N 放大 cap 后，并发上限必须同步收紧到 N）
+    from gridtrade.config import load_deploy_config
+    assert load_deploy_config(env={}).eff_concurrency == 12                       # 空=全开 → max_concurrent
+    assert load_deploy_config(env={'LIVE_OPEN_OFFSETS': '2,4'}).eff_concurrency == 2
+    alloff = ','.join(str(i) for i in range(12))
+    assert load_deploy_config(env={'LIVE_OPEN_OFFSETS': alloff}).eff_concurrency == 12
+
+
+def test_margin_gate_k_default_env_and_fail_fast():
+    import pytest
+    from gridtrade.config import load_deploy_config
+    assert load_deploy_config(env={}).margin_gate_k == 1.25
+    assert load_deploy_config(env={'MARGIN_GATE_K': '2'}).margin_gate_k == 2.0
+    with pytest.raises(RuntimeError):        # k<1 = 余量为负,配置错了要响亮
+        load_deploy_config(env={'MARGIN_GATE_K': '0.8'})
