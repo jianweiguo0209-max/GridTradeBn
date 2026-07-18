@@ -98,3 +98,19 @@ def test_gate_chain_defaults_unchanged_without_offsets():
     gates = rt.manager.gates.gates
     assert gates[0].max_concurrent == 12       # 零行为变更回归护栏
     assert gates[4].k == 1.25
+
+
+def test_gate_chain_rejections_persisted_to_store():
+    # 拒绝动作可查（2026-07-18 实证：拒因只打 stdout 会随 fly logs 滚掉）：
+    # factory 装配 on_reject → gate_rejections 落库,psql/面板可查
+    from gridtrade.runtime.factory import build_runtime
+    from gridtrade.execution.gates import GateResult, GridProposal
+    from gridtrade.state.gate_audit import GateRejectionRepository
+    rt = build_runtime(_cfg())
+    assert rt.manager.gates.on_reject is not None
+    p = GridProposal(exchange='fake', symbol='MET/USDT:USDT', tag='gt2',
+                     grid_params={})
+    rt.manager.gates.on_reject(p, GateResult(False, 'MarginGate', 'test reason'))
+    rows = GateRejectionRepository(rt.store).list_recent(limit=5)
+    assert rows and rows[0]['symbol'] == 'MET/USDT:USDT'
+    assert rows[0]['gate'] == 'MarginGate' and rows[0]['reason'] == 'test reason'

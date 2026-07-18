@@ -39,9 +39,11 @@ class AdmissionGate(ABC):
 
 
 class GateChain:
-    def __init__(self, gates: Iterable[AdmissionGate], *, log=None):
+    def __init__(self, gates: Iterable[AdmissionGate], *, log=None, on_reject=None):
         self.gates: List[AdmissionGate] = list(gates)
-        self.log = log      # 可选：被拒提案留痕（None=静默）
+        self.log = log            # 可选：被拒提案留痕（None=静默）
+        self.on_reject = on_reject  # 可选：拒绝结构化外送(p, res)——落库审计可查
+                                    # (2026-07-18:stdout 拒因随 fly logs 滚掉,须持久化)
 
     def evaluate(self, proposal: GridProposal) -> GateResult:
         for gate in self.gates:
@@ -59,9 +61,16 @@ class GateChain:
             res = self.evaluate(p)
             if res.passed:
                 kept.append(p)
-            elif self.log is not None:   # 可观测性：该开未开必须留痕（gate+reason+symbol）
+                continue
+            if self.log is not None:     # 可观测性：该开未开必须留痕（gate+reason+symbol）
                 self.log('[gate] rejected %s tag=%s by %s: %s'
                          % (p.symbol, p.tag, res.gate, res.reason))
+            if self.on_reject is not None:
+                try:                     # 审计失败绝不阻断开仓(fail-soft,链侧兜住)
+                    self.on_reject(p, res)
+                except Exception as exc:
+                    if self.log is not None:
+                        self.log('[gate] reject audit failed %s: %r' % (p.symbol, exc))
         return kept
 
 

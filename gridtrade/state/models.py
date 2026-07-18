@@ -247,6 +247,22 @@ signal_snapshots = Table(
     Index('ix_signal_snapshots_grid', 'grid_id'),
 )
 
+# 门拒绝审计(2026-07-18,spec margin-gate-exchange-im 追加)：该开未开的拒绝动作持久化可查。
+# 动机:拒因只打 stdout 随 fly logs 分钟级滚掉(mainnet 02:00 MET 被 MarginGate 拒的排查
+# 靠容器内重演)。GateChain.on_reject 逐条 append(fail-soft,审计失败绝不阻断开仓)。
+gate_rejections = Table(
+    'gate_rejections', metadata,
+    Column('id', Integer, primary_key=True, autoincrement=True),
+    Column('ts', BigInteger, nullable=False),           # 拒绝时刻 ms(UTC)
+    Column('exchange', String, nullable=False),
+    Column('symbol', String, nullable=False),
+    Column('tag', String, nullable=False, default=''),
+    Column('gate', String, nullable=False),             # 拒绝的门名(MarginGate/...)
+    Column('reason', Text, nullable=False),             # 完整拒因(含 IM breakdown)
+    Column('created_at', BigInteger, nullable=False),
+    Index('ix_gate_rejections_ts', 'ts'),
+)
+
 
 # ---- 数据类（仓储层入参/出参）----
 @dataclass
