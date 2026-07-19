@@ -17,15 +17,25 @@ import sys
 
 import pandas as pd
 
-from gridtrade.backtest.backtest_run import BT_STRATEGY
-from gridtrade.core.grid_engine import (calc_pv_spike, grid_order_info,
-                                        simulate_grid_engine)
+from gridtrade.backtest.backtest_run import (BT_STRATEGY, _FUNDING_BACK_MS,
+                                             pv_spike_for_window, simulate_tasks)
+from gridtrade.backtest.sweep import FEE_MAKER, FEE_TAKER, GEARING, MAX_RATE
+from gridtrade.config import DEFAULT_STOP_CFG
+from gridtrade.core.grid_engine import grid_order_info
 from gridtrade.core.grid_params import calc_grid_params_v2
 from gridtrade.core.selection import proceed_calc_symbol_factor
 
-_STOP = {'stop_loss': 0.045, 'trailing_k': 0.3, 'trailing_floor': 0.00618,
-         'fundingRate_stop_loss': 0.0015, 'pv_pnl_thr': 0.005, 'pv_mult': 3,
-         'pv_period': '15min', 'pv_n': 100}
+# 执行对账**直接复用正规回测入口**(pv_spike_for_window + simulate_tasks,与 sweep.run_arm 同一条路)
+# ——一致性由构造保证,不靠平行实现眼睛比对(2026-07-19 用户指正:"只 recon_live 有效还不如不改")。
+# stop/pv 参数单源=config DEFAULT_STOP_CFG(与 sweep.live_baseline 同源)。
+_STOP = {'stop_loss': DEFAULT_STOP_CFG['stop_loss'],
+         'trailing_k': DEFAULT_STOP_CFG['trailing_k'],
+         'trailing_floor': DEFAULT_STOP_CFG['trailing_floor'],
+         'fundingRate_stop_loss': DEFAULT_STOP_CFG['fundingRate_stop_loss'],
+         'pv_pnl_thr': DEFAULT_STOP_CFG['pv_pnl_thr'], 'pv_mult': DEFAULT_STOP_CFG['pv_mult'],
+         'pv_period': DEFAULT_STOP_CFG['pv_period'], 'pv_n': DEFAULT_STOP_CFG['pv_n']}
+_PV_CFG = {'pnl_thr': _STOP['pv_pnl_thr'], 'mult': _STOP['pv_mult'],
+           'n': _STOP['pv_n'], 'period': _STOP['pv_period']}
 
 
 def _client():
@@ -54,6 +64,19 @@ def _fetch(client, sym, tf, start, end):
     return df.reset_index(drop=True)
 
 
+def _fetch_funding(client, sym, start, end):
+    """拉资金费历史 → 列 ts/fundingRate(与缓存 funding 同形);取不到 → None(引擎按无 funding 跑)。"""
+    try:
+        rows = client.fetch_funding_rate_history(client.market(sym)['symbol'],
+                                                 since=int(start.value // 1_000_000), limit=100)
+        endms = int(end.value // 1_000_000)
+        out = [{'ts': int(x['timestamp']), 'fundingRate': float(x['fundingRate'])}
+               for x in (rows or []) if x.get('timestamp') and int(x['timestamp']) <= endms]
+        return pd.DataFrame(out) if out else None
+    except Exception:
+        return None
+
+
 def _cmp(label, rep, live, rel=5e-3):
     d = abs(rep - live) / abs(live) * 100 if live else (0 if not rep else 100)
     return "%-8s 回测 %.10g  实盘 %.10g  %s" % (label, rep, live, '✓' if d < rel * 100 else '✗ 差%.3f%%' % d)
@@ -79,42 +102,41 @@ def recon_one(client, g):
                          g['stop_low_price'], g['stop_high_price'], min_amount=0.0, max_rate=1.0)
     print("  [sizing] " + _cmp('order_num', gi['每笔数量'], g['order_num']))
 
-    # ── 执行对账（1m 持仓窗 → simulate_grid_engine）──
-    # pv_spike_df 须带 (n+8)×period 前置历史外部预算（与 assemble_grid_tasks/实盘 signals 同口径）；
-    # 只喂窗内 bars 会让引擎回落到「窗口内近似」→ 开窗头几小时基线欠采样、尖峰漏判
-    # （2026-07-19 PTB 对账实测：实盘 02:47 pv 止损、无前置历史的回测判不出）。
+    # ── 执行对账:**走正规回测入口**(与 sweep.run_arm 完全同一条路,一致性构造保证)──
+    # data_task 形状 = assemble_grid_tasks 的 (rt, off, sym, entry, gp, bars, fd, pv_df);
+    # pv 预算 = pv_spike_for_window(正规函数,窗前 (n+8)×15min 前置历史);funding 预切 lo−9h
+    # (=_FUNDING_BACK_MS,与 assemble 同源常量);sizing/lot 截断由 simulate_tasks 内部处理。
     pre = pd.Timedelta(_STOP['pv_period']) * (_STOP['pv_n'] + 8)
     full = _fetch(client, sym, '1m', rt - pre, rt + pd.Timedelta('12H'))
-    pv_df = calc_pv_spike(full, active_period=_STOP['pv_period'], mult=_STOP['pv_mult'],
-                          n=_STOP['pv_n'])
     bars = full[full['candle_begin_time'] >= rt].reset_index(drop=True)
-    pv_df = pv_df[pv_df['candle_begin_time'] >= rt].reset_index(drop=True)
-    r = simulate_grid_engine(bars, {'low_price': g['low_price'], 'high_price': g['high_price'],
-                                    'grid_count': int(g['grid_count']), 'stop_low_price': g['stop_low_price'],
-                                    'stop_high_price': g['stop_high_price']},
-                             cap=1000.0, leverage=3.4, max_rate=1.0, stop_cfg=_STOP,
-                             neutral_init=False, active_stop_mode='pv', pv_spike_df=pv_df,
-                             pv_pnl_thr=_STOP['pv_pnl_thr'],
-                             pv_mult=_STOP['pv_mult'], pv_period=_STOP['pv_period'], pv_n=_STOP['pv_n'])
+    pv_df = pv_spike_for_window(full, bars, _PV_CFG)
+    fd = _fetch_funding(client, sym,
+                        rt - pd.Timedelta(milliseconds=_FUNDING_BACK_MS),
+                        rt + pd.Timedelta('12H'))
+    gp = {'low_price': g['low_price'], 'high_price': g['high_price'],
+          'grid_count': int(g['grid_count']), 'stop_low_price': g['stop_low_price'],
+          'stop_high_price': g['stop_high_price']}
+    task = (rt, off, sym, float(g['entry_price']), gp, bars, fd, pv_df)
+    df = simulate_tasks([task], leverage=GEARING / MAX_RATE, fee_rate=FEE_MAKER,
+                        taker_rate=FEE_TAKER, max_rate=MAX_RATE, stop_cfg=_STOP,
+                        active_stop_mode='pv', pv_cfg=_PV_CFG, workers=1)
+    r = df.iloc[0]
     print("  [执行] 实盘: %s  pnl_ratio=%+.6f" % (g.get('close_reason', '?'), g.get('pnl_ratio', 0)))
-    print("  [执行] 回测: %s  pnl_ratio=%+.6f  n_fills=%d" % (r['exit_reason'], r['pnl_ratio'], r['n_trades']))
+    print("  [执行] 回测: %s  pnl_ratio=%+.6f  n_fills=%d"
+          % (r['exit_reason'], r['pnl_ratio'], int(r['n_fills'])))
 
-    # ── 对齐时点估值（可选，g 带 closed_at 时）──
-    # 回测的引擎自主退出与实盘动作有已知二阶时机差（回测逐 1m 判 vs 实盘 refresh_sec=900s 节流,
-    # 9199503 记录在案）。此处把回测截到**实盘真实平仓分钟**、关引擎退出,按该 bar 估值 →
-    # 隔离出「时机分量」（上行 pnl 差 − 本行 pnl 差）与「价格分量」（本行 pnl 差,≈bar close vs
-    # 市价 taker 点差 + fee 口径）。引擎本身不做此对齐——会重新引入相位敏感（方案C 刚消灭）。
+    # ── 对齐时点估值（可选,g 带 closed_at 时;同样走 simulate_tasks,只是截窗+关退出）──
+    # 隔离「时机分量」(回测逐 1m 判 vs 实盘 900s 节流,9199503 在案二阶残差)与「价格分量」
+    # (bar close vs 市价 taker 点差)。引擎不做此对齐——会重新引入相位敏感(方案C 刚消灭)。
     if g.get('closed_at'):
         cl = pd.Timestamp(int(g['closed_at']), unit='ms').floor('min')   # 截到成交所在 bar
-        clip = full[(full['candle_begin_time'] >= rt) & (full['candle_begin_time'] <= cl)]
-        clip = clip.reset_index(drop=True)
+        clip = bars[bars['candle_begin_time'] <= cl].reset_index(drop=True)
         if len(clip):
-            r2 = simulate_grid_engine(clip, {'low_price': g['low_price'], 'high_price': g['high_price'],
-                                             'grid_count': int(g['grid_count']),
-                                             'stop_low_price': g['stop_low_price'],
-                                             'stop_high_price': g['stop_high_price']},
-                                      cap=1000.0, leverage=3.4, max_rate=1.0, stop_cfg=None,
-                                      neutral_init=False, active_stop_mode='none')
+            t2 = (rt, off, sym, float(g['entry_price']), gp, clip, fd, None)
+            d2 = simulate_tasks([t2], leverage=GEARING / MAX_RATE, fee_rate=FEE_MAKER,
+                                taker_rate=FEE_TAKER, max_rate=MAX_RATE, stop_cfg=None,
+                                active_stop_mode='none', workers=1)
+            r2 = d2.iloc[0]
             print("  [执行·对齐实盘平仓时点 %s] 回测 pnl_ratio=%+.6f (Δ vs 实盘 %+.4fpp)"
                   % (cl.strftime('%H:%M'), r2['pnl_ratio'],
                      (r2['pnl_ratio'] - g.get('pnl_ratio', 0)) * 100))
