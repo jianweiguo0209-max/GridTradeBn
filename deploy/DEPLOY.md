@@ -234,8 +234,14 @@ fly secrets set --app gridtrade-bi-prod BINANCE_API_KEY=... BINANCE_API_SECRET=.
 HASH=$(.venv/bin/python -c "from gridtrade.dashboard.auth import hash_password; print(hash_password('<强密码>'))")
 fly secrets set --app gridtrade-bi-prod DASHBOARD_USER=admin \
   DASHBOARD_PASSWORD_HASH="$HASH" DASHBOARD_SESSION_SECRET="$(openssl rand -hex 32)"
+# 企业微信机器人（可选；空=禁用。URL 是敏感信息，只走 secret）
+fly secrets set --app gridtrade-bi-prod WECHAT_WEBHOOK_URL='https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...'
 ```
 > 全新 app 无旧 HL_* 密钥包袱（退役键守卫仅在复用旧 app 时才需要先 unset）。
+
+> 企微通知时点/格式对齐 `ok_grid/account_0`：整批开网成功后、任意原因关网真正平仓后，
+> 以及北京时间整点的活跃 offset 净损益。可选用 `WECHAT_TIMEZONE` / `STRATEGY_NAME`
+> 覆盖默认的 `Asia/Shanghai` / `gridtrade`。通知失败只记日志，不中断交易主链。
 
 > 注意：
 > - `UNIVERSE_WHITELIST` **`deploy/fly.prod.toml` [env] 未设置该键**——2026-07-04 起票池已改为

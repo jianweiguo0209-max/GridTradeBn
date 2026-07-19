@@ -165,8 +165,12 @@ def run_monitor_cycle(reconciler, manager, log=print, *,
                 continue    # 关格进行中（发起方正在收尾）→ 勿抢；只救超宽限的真卡死
             if not ex.is_loaded(grid.id):
                 reconciler.restore(grid.id)
-            ex.finalize_close(grid.id, grid.symbol, '平仓恢复')
-            resumed.append(grid.id)
+            res = ex.finalize_close(grid.id, grid.symbol, '平仓恢复')
+            if res.get('closed'):
+                manager._publish(GridClosed(
+                    grid_id=grid.id, exchange=grid.exchange, symbol=grid.symbol,
+                    reason=res['reason'], pnl_ratio=res['pnl_ratio']))
+                resumed.append(grid.id)
         except Exception as exc:
             degraded[grid.id] = repr(exc)
     for grid in _opening_grids(ex.grids):     # 死 OPENING（超时+零挂单）-> FAILED（释放 symbol 槽）

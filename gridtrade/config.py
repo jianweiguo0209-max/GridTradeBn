@@ -119,6 +119,10 @@ class DeployConfig:
     # 票池杠杆预过滤(2026-07-18)：pick_L<阈值 的币选币前剔除(低杠杆档币 IM 吃满余额、
     # 必被 MarginGate 拒,top-1 选中它=整轮空转,04:00 MYX 实证)。0=停用(默认,零行为变更)。
     universe_min_leverage: float = 0.0
+    # 企业微信机器人：URL 是敏感项，本地走 .env，Fly 走 secret。空=完全禁用通知。
+    wechat_webhook_url: str = ''
+    wechat_timezone: str = 'Asia/Shanghai'
+    strategy_name: str = 'gridtrade'
 
 
 def compute_cap(equity, frac, cap_min, cap_max):
@@ -201,6 +205,9 @@ def load_deploy_config(env=None) -> DeployConfig:
         eff_concurrency=_eff_concurrency,
         margin_gate_k=_mgk,
         universe_min_leverage=_f(env, 'UNIVERSE_MIN_LEVERAGE', 0.0),
+        wechat_webhook_url=_s(env, 'WECHAT_WEBHOOK_URL', ''),
+        wechat_timezone=_s(env, 'WECHAT_TIMEZONE', 'Asia/Shanghai'),
+        strategy_name=_s(env, 'STRATEGY_NAME', DEFAULT_STRATEGY_CONFIG['strategy_name']),
         cap_min=_f(env, 'CAP_MIN', 20.0),
         cap_max=_f(env, 'CAP_MAX', 100000.0),
         min_quote_volume_24h=_f(env, 'MIN_QUOTE_VOLUME_24H', 0.0),

@@ -39,6 +39,11 @@ def run_monitor(runtime, *, once=False, sleep=time.sleep, log=print,
             rt.heartbeats.beat('monitor')
         except Exception as exc:          # 心跳写失败同样降级，不崩进程
             log('[monitor] heartbeat failed: %r' % exc)
+        try:
+            if getattr(rt, 'notifier', None) is not None:
+                rt.notifier.maybe_send_hourly()
+        except Exception as exc:          # 通知链永不影响监控/交易主链
+            log('[monitor] hourly wechat failed: %r' % exc)
         if once:
             return
         if should_stop is not None and should_stop():
