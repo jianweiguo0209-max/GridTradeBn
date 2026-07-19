@@ -159,7 +159,7 @@ class _StubSignals:
         self.evicted = []
 
     def get(self, grid_id, symbol, open_ms):
-        return 0, 0.0
+        return 0, 0, 0.0    # (pv_spike, pv_dir, funding) 3元组(spec pv-directional)
 
     def evict(self, grid_id):
         self.evicted.append(grid_id)

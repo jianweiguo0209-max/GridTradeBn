@@ -82,13 +82,13 @@ class GridManager:
                   if g.status == ACTIVE]
         for grid in active:
             try:
-                pv_spike, funding_rate = 0, 0.0
+                pv_spike, pv_dir, funding_rate = 0, 0, 0.0
                 if self.signals is not None:   # 算 pv_spike/funding（provider 内部已按 grid 节流+失败降级）
-                    pv_spike, funding_rate = self.signals.get(grid.id, grid.symbol, grid.created_at)
+                    pv_spike, pv_dir, funding_rate = self.signals.get(grid.id, grid.symbol, grid.created_at)
                 res = monitor_grid(self.executor, grid.id, grid.symbol,
                                    self.stop_cfg, margin_rate=self.margin_rate,
                                    skip_replenish=skip_replenish,
-                                   pv_spike=pv_spike, funding_rate=funding_rate)
+                                   pv_spike=pv_spike, pv_dir=pv_dir, funding_rate=funding_rate)
             except Exception as exc:   # 单网格 monitor 故障降级，不阻塞其他网格的止损/记账
                 results.append({'grid_id': grid.id, 'error': repr(exc)})
                 continue

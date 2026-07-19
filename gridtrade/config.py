@@ -283,6 +283,9 @@ DEFAULT_STOP_CFG = {
     # pv 主动止损（量能尖峰 + pnl 门槛）；2026-07-07 PV 研究终配置（干净数据+对齐费率四窗全正，
     # spec 2026-07-07-pv-legacy-semantics-live）：尖峰时浮盈不足 +0.5% 即撤（策略换形，~70% 格首尖峰退出）
     'pv_pnl_thr': 0.005,               # pv 触发门槛：pv_spike && pnlRatio<+0.005（evaluate_exit 读此值）
+    # 方向性 pv(spec 2026-07-19-pv-directional):按净仓×同窗方向门控——净多只听跌尖峰、净空只听涨、
+    # 零仓不触发(funding 同加零仓门控)。默认 False=现状零行为变更;回测 A/B 定案后再翻。
+    'pv_directional': False,
     'pv_mult': 3,                      # 量能尖峰倍数（LiveSignalProvider 算 pv_spike 用）
     'pv_period': '15min',              # 量能重采样周期（'15min' 非 '15m'——后者被 pandas 当月）
     'pv_n': 100,                       # 量能基线滚动窗口（15m×100≈25h 真滚动；signals 取 n+8 根前置历史）

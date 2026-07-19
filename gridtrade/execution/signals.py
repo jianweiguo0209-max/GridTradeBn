@@ -40,16 +40,18 @@ class LiveSignalProvider:
         self._cache = {}   # grid_id -> (fetched_at_sec, pv_spike, funding_rate)
 
     def get(self, grid_id, symbol, open_ms):
-        """返回 (pv_spike:int(0/1), funding_rate:float)。节流：refresh_sec 内复用缓存。"""
+        """返回 (pv_spike:int(0/1), pv_dir:int(+1/-1/0), funding_rate:float)。
+        pv_dir=同窗价格方向(spec 2026-07-19-pv-directional),与 pv_spike 同批 bars 同源。
+        节流：refresh_sec 内复用缓存。"""
         now = self._now()
         c = self._cache.get(grid_id)
         if c is not None and (now - c[0]) < self.refresh_sec:
-            return c[1], c[2]
+            return c[1], c[2], c[3]
         now_ms = int(now * 1000)
-        pv = self._pv_spike(symbol, int(open_ms), now_ms)
+        pv, pv_dir = self._pv_spike(symbol, int(open_ms), now_ms)
         fr = self._funding_rate(symbol, now_ms)
-        self._cache[grid_id] = (now, pv, fr)
-        return pv, fr
+        self._cache[grid_id] = (now, pv, pv_dir, fr)
+        return pv, pv_dir, fr
 
     def evict(self, grid_id):
         """网格平仓后清掉其缓存条目，避免已平网格在缓存里无限累积。缺失也安全。"""
@@ -66,14 +68,15 @@ class LiveSignalProvider:
             since_ms = now_ms - (self.n + 8) * _period_ms(self.period)
             bars = self.adapter.fetch_ohlcv(symbol, '1m', since_ms, now_ms)
             if bars is None or len(bars) == 0 or 'quote_volume' not in bars.columns:
-                return 0
+                return 0, 0
             sp = calc_pv_spike(bars, active_period=self.period, mult=self.mult, n=self.n)
             if sp is None or sp.empty:
-                return 0
-            return int(sp['pv_spike'].iloc[-1])
+                return 0, 0
+            # (spike, dir) 同批 bars 同源(spec 2026-07-19-pv-directional)
+            return int(sp['pv_spike'].iloc[-1]), int(sp['pv_dir'].iloc[-1])
         except Exception as exc:     # 取数失败降级为「无尖峰」，不误触发也不阻塞
             self.log('[signals] pv_spike %s 失败降级: %r' % (symbol, exc))
-            return 0
+            return 0, 0
 
     def _funding_rate(self, symbol, now_ms):
         try:
