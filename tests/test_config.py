@@ -282,3 +282,15 @@ def test_margin_gate_k_default_env_and_fail_fast():
     assert load_deploy_config(env={'MARGIN_GATE_K': '2'}).margin_gate_k == 2.0
     with pytest.raises(RuntimeError):        # k<1 = 余量为负,配置错了要响亮
         load_deploy_config(env={'MARGIN_GATE_K': '0.8'})
+
+
+def test_wechat_config_defaults_and_env_override():
+    cfg = load_deploy_config(env={})
+    assert cfg.wechat_webhook_url == ''
+    assert cfg.wechat_timezone == 'Asia/Shanghai'
+    assert cfg.strategy_name == 'gridtrade'
+    cfg = load_deploy_config(env={
+        'WECHAT_WEBHOOK_URL': 'https://example.invalid/hook',
+        'WECHAT_TIMEZONE': 'UTC', 'STRATEGY_NAME': 'prod'})
+    assert cfg.wechat_webhook_url.endswith('/hook')
+    assert cfg.wechat_timezone == 'UTC' and cfg.strategy_name == 'prod'
