@@ -21,10 +21,11 @@ def _gx(store, tiers=None, cap=1000.0, gearing=3.4):
 
 
 def test_open_sets_leverage_from_tiers(store):
-    # cap=1000 gearing=3.4 → worst 名义小,落 KITE bracket0($5k) → 减一档=4x
+    # 币安原生(spec 2026-07-19):单侧≈$1870×1.2≈$2244 落 KITE 首档($5k)→ 最高档 5x
+    # (旧机制双侧+减一档给 4x;全仓 L 不影响强平,取最高档=押金最少)
     ex, gx = _gx(store, tiers=KITE)
     gx.open(ex.name, SYM, GP, tag='t')
-    assert ex._leverage_calls == [(SYM, 4)]        # 设了 4x(减一档+floor)
+    assert ex._leverage_calls == [(SYM, 5)]        # 首档最高杠杆,不再减档
 
 
 def test_open_no_tiers_skips_set_leverage(store):

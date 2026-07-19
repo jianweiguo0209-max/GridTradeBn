@@ -22,13 +22,15 @@ TIERS = [{'maxLeverage': 10, 'maxNotional': 1000.0},
 
 
 def test_breakdown_hand_computed():
+    # 币安原生口径(spec 2026-07-19):L=单侧600×1.2=720 能容的最高档(10x@1000);
+    # IM=单侧/L=60(轨迹恒等式,非整梯 70)
     required, info = ladder_margin_required(70.0, 10.0, GP, 150.0, TIERS,
                                             k=1.25, fee_rate=0.001)
     assert info['L'] == 10
     assert info['ladder_total'] == pytest.approx(700.0)
-    assert info['im'] == pytest.approx(70.0)
+    assert info['im'] == pytest.approx(60.0)
     assert info['worst_loss'] == pytest.approx(400.0)
-    assert required == pytest.approx(1.25 * (70.0 + 400.0 + 0.7))
+    assert required == pytest.approx(1.25 * (60.0 + 400.0 + 0.7))
 
 
 def test_k_scales_required():
@@ -55,10 +57,10 @@ def test_unbuildable_grid_returns_none():
 
 
 def test_min_amount_truncation_reflected():
-    # min_amount=0.3 → order_num 1.0→0.9 → 整梯名义 630、IM 63、loss_up=0.9×400=360
+    # min_amount=0.3 → order_num 1.0→0.9 → 整梯 630、单侧 540、IM=540/10=54、loss_up=360
     required, info = ladder_margin_required(70.0, 10.0, GP, 150.0, TIERS,
                                             min_amount=0.3, k=1.25, fee_rate=0.001)
     assert info['ladder_total'] == pytest.approx(630.0)
-    assert info['im'] == pytest.approx(63.0)
+    assert info['im'] == pytest.approx(54.0)
     assert info['worst_loss'] == pytest.approx(360.0)
-    assert required == pytest.approx(1.25 * (63.0 + 360.0 + 0.63))
+    assert required == pytest.approx(1.25 * (54.0 + 360.0 + 0.63))

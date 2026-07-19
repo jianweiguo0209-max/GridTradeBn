@@ -86,4 +86,6 @@ def main(argv=None):
 
 
 if __name__ == '__main__':
+    from gridtrade.backtest.envfile import load_env_file
+    load_env_file()     # .env 兜底注入(不覆盖显式 export;杠杆过滤私有端点凭证用)
     sys.exit(main())
