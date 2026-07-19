@@ -116,23 +116,27 @@ class GridExecutor:
 
         # 真中性：开网不建底仓，净仓从 0 开始（价涨→挂单成交转净空，价跌→转净多）。
 
-        # 设仓位杠杆(spec 2026-07-15-open-set-leverage):HL 从不设、币安默认档位可能撑不住 worst
-        # 名义 → -2027。减一档 L 留余量;fail-open:tiers/set_leverage 异常退化为不设(现状,-2027 由
-        # open_proposals f4d053b 逐提议隔离兜底)。
-        worst_notional = order_num * int(grid_params['grid_count']) * entry
+        # 设仓位杠杆(币安原生,spec 2026-07-19-binance-native-leverage):基准=单侧名义×1.2
+        # (同向敞口全程恒≤单侧,恒等式),取能容的**最高档**(全仓 L 不影响强平,押金最少)。
+        # fail-open:tiers/set_leverage 异常退化为不设(-2027 由 open_proposals f4d053b 隔离兜底)。
         try:
-            from gridtrade.execution.leverage_policy import pick_leverage, feasible
+            from gridtrade.execution.leverage_policy import (BRACKET_HEADROOM,
+                                                             cap_at_leverage,
+                                                             pick_leverage_max,
+                                                             worst_side_notional)
+            _side = worst_side_notional(price_array, order_num, entry)
+            _need = _side * BRACKET_HEADROOM
             _tiers = self.adapter.fetch_leverage_tiers(symbol)
-            _L = pick_leverage(worst_notional, _tiers, self.gearing)
+            _L = pick_leverage_max(_need, _tiers)
             if _L is not None:
                 self.adapter.set_leverage(symbol, _L)
-                if feasible(worst_notional, _tiers, self.gearing):
-                    print('[leverage] %s set %dx (worst名义 $%.0f)' % (symbol, _L, worst_notional),
-                          flush=True)
+                if cap_at_leverage(_tiers, _L) >= _need:
+                    print('[leverage] %s set %dx (单侧名义 $%.0f ×%.1f)'
+                          % (symbol, _L, _side, BRACKET_HEADROOM), flush=True)
                 else:
-                    print('[leverage] WARN %s worst名义 $%.0f 超 ceil(gearing) 档上限——设 %dx 尽力,'
+                    print('[leverage] WARN %s 单侧×%.1f 名义 $%.0f 超最大档上限——设 %dx 尽力,'
                           '可能 -2027(极罕见,open_proposals 隔离兜底)'
-                          % (symbol, worst_notional, _L), flush=True)
+                          % (symbol, BRACKET_HEADROOM, _need, _L), flush=True)
         except Exception as exc:            # fail-open:绝不因设杠杆失败而阻断开格
             print('[leverage] WARN %s set_leverage 跳过(fail-open): %r' % (symbol, exc), flush=True)
 

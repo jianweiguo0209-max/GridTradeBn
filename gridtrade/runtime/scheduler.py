@@ -140,7 +140,8 @@ def run_scheduler_once(runtime, *, now_fn=time.time,
     # 票池杠杆预过滤(2026-07-18,UNIVERSE_MIN_LEVERAGE)：pick_L<阈值 的币连 K 线都不拉——
     # 低杠杆档币 IM(整梯名义/L)吃满余额、必被 MarginGate 拒,top-1 选中它=整轮空转
     # (04:00 MYX 实证 L=5→IM $511=全余额)。与开仓/MarginGate 同源 pick_leverage 预演;
-    # notional=整梯双侧名义(cap×gearing,与 MarginGate 同口径)。fail-open:档位/余额取不到跳过。
+    # 判据=第一档最大杠杆<min_lev 剔(2026-07-19 修正,见 eligible_min_leverage);notional 保留
+    # 传参兼容但过滤不再用。fail-open:档位/余额取不到跳过。
     _minlev = float(getattr(rt.config, 'universe_min_leverage', 0.0) or 0.0)
     if _minlev > 0:
         try:
