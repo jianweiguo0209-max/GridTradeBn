@@ -82,7 +82,7 @@ def test_assemble_grid_tasks_carries_prehistory_pv(monkeypatch, tmp_path):
     assert len(tasks) == 1
     pv_df = tasks[0][BR.TASK_PV_IDX]
     assert pv_df is not None, 'data_task 必须携带预算的 pv_spike_df'
-    assert list(pv_df.columns) == ['candle_begin_time', 'pv_spike', 'pv_dir']  # +方向列(spec pv-directional)
+    assert list(pv_df.columns) == ['candle_begin_time', 'pv_spike']
     # 关键：用了前置历史 → 窗内零尖峰（若退化成窗口内近似，这里会 >0）
     assert int(pv_df['pv_spike'].sum()) == 0, 'pv 尖峰须按 27h 前置历史算（实盘同源）'
     bars = tasks[0][5]

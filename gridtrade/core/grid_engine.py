@@ -164,20 +164,13 @@ def calc_pv_spike(bars_df, active_period='15min', mult=3, n=233, body_ratio_min=
     base = v.rolling(win * n, min_periods=1).mean() * win           # 同口径均量基线（过去 n 个窗）
     out = b[['candle_begin_time']].copy()
     out['pv_spike'] = (cur > mult * base).astype(int).values
-    # pv_dir = 同窗价格方向 sign(close_t − close_{t−win})（spec 2026-07-19-pv-directional）：
-    # 与量能滚动窗同窗同源；窗口不足/平价/缺 close 列 → 0（fail-soft，方向门控保守不触发）。
-    if 'close' in bars_df.columns:
-        c = bars_df.sort_values('candle_begin_time')['close'].astype(float)
-        out['pv_dir'] = np.sign(c.diff(win)).fillna(0).astype(int).values
-    else:
-        out['pv_dir'] = 0
     if body_ratio_min and body_ratio_min > 0:      # con2：1m 实体占比过滤（默认关=金标不变）
         src = bars_df[['candle_begin_time', 'open', 'high', 'low', 'close']].copy()
         src['con2'] = ((src['close'] - src['open']).abs()
                        / (src['high'] - src['low'] + 1e-8) > body_ratio_min).astype(int)
         out = out.merge(src[['candle_begin_time', 'con2']], on='candle_begin_time', how='left')
         out['pv_spike'] = (out['pv_spike'] * out['con2'].fillna(0)).astype(int)
-    return out[['candle_begin_time', 'pv_spike', 'pv_dir']]
+    return out[['candle_begin_time', 'pv_spike']]
 
 
 # ==================== 新型主动止损信号函数 ====================
@@ -251,29 +244,17 @@ def _apply_exit(df, cap, c_rate_taker, stop_cfg=None, margin_rate=0.05, pv_spike
         if k is not None and floor is not None:
             allowed = np.maximum(floor, k * pr_max)
             mark((pr_max - pr >= allowed) & (pr_max > floor), '连续回撤止盈')
-        # 方向性门控(spec 2026-07-19-pv-directional):flag 开时 pv 按净仓×同窗方向门控
-        # (净多只听跌尖峰/净空只听涨/零仓不触发),funding 加零仓门控。hold_num=逐 bar 净仓。
-        _directional = bool(stop_cfg.get('pv_directional'))
-        _hold = df['hold_num'].values if 'hold_num' in df.columns else np.zeros(n)
         fr_thr = stop_cfg.get('fundingRate_stop_loss')
         # 用 fr_last（最后已结算费率）而非 fundingRate（只在结算时刻非 0）——实盘每 tick 拿
         # 最后已结算费率判，开格瞬间即可命中窗前那次结算。见 cal_equity_curve 两列分工。
         if fr_thr is not None and 'fr_last' in df.columns:
-            _fr_mask = np.abs(df['fr_last'].values) > fr_thr
-            if _directional:
-                _fr_mask = _fr_mask & (_hold != 0)
-            mark(_fr_mask, '资金费率止损')
+            mark(np.abs(df['fr_last'].values) > fr_thr, '资金费率止损')
 
         # ---- 主动止损（按 mode 分派）----
         pnl_thr = -0.01  # 新型主动止损的统一亏损门槛（1%）
         if active_stop_mode == 'pv' and pv_spike_df is not None:
             m = pd.merge(df[['candle_begin_time']], pv_spike_df, on='candle_begin_time', how='left')
-            _pv_mask = (m['pv_spike'].fillna(0).values == 1) & (pr < pv_pnl_thr)
-            if _directional:
-                _dir = (m['pv_dir'].fillna(0).values if 'pv_dir' in m.columns
-                        else np.zeros(len(m)))
-                _pv_mask = _pv_mask & (((_hold > 0) & (_dir < 0)) | ((_hold < 0) & (_dir > 0)))
-            mark(_pv_mask, 'pv主动止损')
+            mark((m['pv_spike'].fillna(0).values == 1) & (pr < pv_pnl_thr), 'pv主动止损')
         elif active_stop_mode == 'atr' and bars_df is not None:
             sig = _compute_atr_breakdown(bars_df)
             m = pd.merge(df[['candle_begin_time']], sig, on='candle_begin_time', how='left')

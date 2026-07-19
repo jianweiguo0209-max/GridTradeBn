@@ -79,7 +79,6 @@ def live_baseline():
         'pv_mult': _STOP['pv_mult'],
         'pv_n': _STOP['pv_n'],
         'pv_period': _STOP['pv_period'],
-        'pv_directional': _STOP.get('pv_directional', False),
         'active_stop_mode': _S.get('active_stop_mode', 'pv'),
         'band': _V2['atr_range_multiplier'],
         'count_min': _V2['grid_count_min'],
@@ -208,8 +207,7 @@ def run_arm(wd, arm, pv_cache, *, workers=1):
                 'trailing_floor': p['trailing_floor'],
                 'fundingRate_stop_loss': p['funding_stop'],
                 'pv_pnl_thr': p['pv_thr'], 'pv_mult': p['pv_mult'],
-                'pv_period': p['pv_period'], 'pv_n': p['pv_n'],
-                'pv_directional': p.get('pv_directional', False)}
+                'pv_period': p['pv_period'], 'pv_n': p['pv_n']}
     pv_cfg = {'pnl_thr': p['pv_thr'], 'mult': p['pv_mult'],
               'n': p['pv_n'], 'period': p['pv_period']}
     # gearing = leverage × max_rate；扫 gearing 时固定 max_rate、改 leverage（等价、少一个自由度）

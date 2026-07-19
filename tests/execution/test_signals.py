@@ -49,7 +49,7 @@ def test_pv_spike_matches_calc_pv_spike_and_latest_funding():
     assert expect_pv == 1                       # 构造的尖峰确实触发（否则测试无意义）
     adp = FakeAdapter(bars=bars, funding=_funding([0.0001, 0.0005, 0.0012]))
     prov = LiveSignalProvider(adp, mult=3, period='15min', n=233, now_fn=lambda: 1000.0)
-    pv, pv_dir, fr = prov.get('g1', 'X/USDC:USDC', open_ms=0)   # 3元组(spec pv-directional)
+    pv, fr = prov.get('g1', 'X/USDC:USDC', open_ms=0)
     assert pv == expect_pv
     assert abs(fr - 0.0012) < 1e-12             # 取最新一条 fundingRate
 
@@ -71,14 +71,14 @@ def test_throttle_reuses_cache_within_refresh():
 def test_failure_degrades_to_safe_defaults():
     adp = FakeAdapter(raise_ohlcv=True, raise_funding=True)
     prov = LiveSignalProvider(adp, now_fn=lambda: 1.0, log=lambda *a: None)
-    pv, _dir, fr = prov.get('g1', 'X', 0)
+    pv, fr = prov.get('g1', 'X', 0)
     assert pv == 0 and fr == 0.0                 # 取数异常→安全默认，不抛
 
 
 def test_empty_data_returns_zero():
     adp = FakeAdapter(bars=pd.DataFrame(), funding=pd.DataFrame())
     prov = LiveSignalProvider(adp, now_fn=lambda: 1.0)
-    assert prov.get('g1', 'X', 0) == (0, 0, 0.0)
+    assert prov.get('g1', 'X', 0) == (0, 0.0)
 
 
 def test_evict_removes_cache_entry():
@@ -128,7 +128,7 @@ def test_full_window_baseline_detects_spike_vs_long_history():
     bars = _bars_1m(n=1620, base_qv=1e5, spike_qv=5e5)   # 5×基线 > mult=3
     adp = FakeAdapter(bars=bars, funding=_funding([0.001]))
     prov = LiveSignalProvider(adp, mult=3, period='15min', n=100, now_fn=lambda: 1_000_000.0)
-    pv, _dir, _ = prov.get('g1', 'X', open_ms=999_940_000)    # 开格才 1 分钟
+    pv, _ = prov.get('g1', 'X', open_ms=999_940_000)    # 开格才 1 分钟
     assert pv == 1
 
 
@@ -142,7 +142,7 @@ def test_funding_rate_lookback_matches_settlement_interval_plus_1h():
                            'fundingRate': [0.00042], 'realizedRate': [0.00042]})
     adp = FakeAdapter(bars=_bars_with_spike(), funding=funding)
     prov = LiveSignalProvider(adp, now_fn=lambda: now_ms / 1000.0)
-    _, _dir, fr = prov.get('g1', 'X', open_ms=0)
+    _, fr = prov.get('g1', 'X', open_ms=0)
     start_ms, end_ms = adp.last_funding
     assert end_ms - start_ms == 9 * 3600_000         # 8h 结算 + 1h,非旧固定 3h
     assert start_ms <= row_ts <= end_ms               # 7h 前的行落在 9h 窗内

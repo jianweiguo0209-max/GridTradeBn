@@ -94,14 +94,14 @@ def _grid_unit(reconciler, manager, grid, *, skip_replenish=False, snapshot=None
             out['elapsed'] = time.monotonic() - t0
             return out
         out['stage'] = 'monitor'
-        pv_spike, pv_dir, funding_rate = 0, 0, 0.0
+        pv_spike, funding_rate = 0, 0.0
         if manager.signals is not None:   # provider 内部已按 grid 节流+失败降级
-            pv_spike, pv_dir, funding_rate = manager.signals.get(grid.id, grid.symbol,
-                                                                 grid.created_at)
+            pv_spike, funding_rate = manager.signals.get(grid.id, grid.symbol,
+                                                         grid.created_at)
         res = monitor_grid(ex, grid.id, grid.symbol, manager.stop_cfg,
                            margin_rate=manager.margin_rate,
                            skip_replenish=skip_replenish,
-                           pv_spike=pv_spike, pv_dir=pv_dir, funding_rate=funding_rate,
+                           pv_spike=pv_spike, funding_rate=funding_rate,
                            snapshot=snapshot, defer_close=True)
         out.update(res)
         # 两阶段(spec 2026-07-11-symbol-desk):触发关格的单元只出意向不执行(阶段 B
