@@ -482,6 +482,29 @@ def Atr_signal(*args):
 
     return df
 
+
+def S_shape_signal(*args):
+    df = args[0]
+    n = args[1]
+    diff_num = args[2]
+    factor_name = args[3]
+
+    """
+    S_shape 波动形状因子(spike-dominance)：mean(TR,N)/median(TR,N)。
+    ≈1=窗内波动均匀(常规震荡币)；≫1=被 1-2 根大 bar 主导(事件币：上所/新闻/清算后状态)。
+    与 Atr(波动量级)正交，度量的是波动的"形状"。2026-07-20 选币层战役引入：sbuck 四格归因
+    (memory binance-param-resweep)显示 OOS 逆风窗全部亏损由事件币段贡献、均匀震荡段四窗全正。
+    入栈用 ascending=True(小=均匀=优)。config factors 不列出时本列惰性(仅多一列，live 零影响)。
+    """
+    tr = np.maximum(df['high'] - df['low'],
+                    np.maximum((df['high'] - df['close'].shift(1)).abs(),
+                               (df['low'] - df['close'].shift(1)).abs()))
+    mtr = tr.rolling(n, min_periods=1).mean()
+    dtr = tr.rolling(n, min_periods=1).median()
+    df[factor_name] = mtr / (dtr + eps)
+
+    return df
+
 def Sgcz_signal(*args):
     # 收高差值 指标
     df = args[0]
@@ -542,6 +565,7 @@ def cal_factor(df):
     db_volume_v1_signal(df, 2, 0, 'db_volume_v1_2')
 
     Atr_signal(df, 5, 0, 'Atr_5')
+    S_shape_signal(df, 5, 0, 'S_shape_5')   # 波动形状(事件币标记);config 不列则惰性
     df['middle_5'] = df['close'].rolling(5, min_periods=1).mean()
 
     # # 根据指定的参数计算一些技术指标
