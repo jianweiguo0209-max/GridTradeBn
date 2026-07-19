@@ -457,10 +457,11 @@ def Atr_signal(*args):
     factor_name = args[3]
 
     """
-    N=20
     TR=MAX(HIGH-LOW,ABS(HIGH-REF(CLOSE,1)),ABS(LOW-REF(CLOSE,1)))
-    ATR=MA(TR,N)
-    MIDDLE=MA(CLOSE,N)
+    ATR=MA(TR,N)；MIDDLE=MA(CLOSE,N)；因子=ATR/MIDDLE(去量纲)。
+    注(2026-07-19 atr_n 扫描定案):生产 n=5(12H bar,≈2.5天),经 n∈{1..20}×四窗验证为单峰甜点——
+    小 n 插针定网(n=1 四窗3破网)、大 n 平滑滞后(n=10 W1 7.3→0.2);且选币 PIT 窗 max_candle_num=160
+    (≈13根12H bar)使 n>13 退化为全窗均值、物理不可达(经典 N=20 在此预算下无意义)。勿改。
     """
     df['c1'] = df['high'] - df['low']  # HIGH-LOW
     df['c2'] = abs(df['high'] - df['close'].shift(1))  # ABS(HIGH-REF(CLOSE,1)
