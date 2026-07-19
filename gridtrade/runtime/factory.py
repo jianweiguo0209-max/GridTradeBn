@@ -54,6 +54,7 @@ class Runtime:
     commands: object = None
     audit: object = None
     equity: object = None
+    notifier: object = None
 
 
 def build_runtime(config) -> Runtime:
@@ -105,6 +106,12 @@ def build_runtime(config) -> Runtime:
 
     from gridtrade.state.control import (ControlFlagRepository, CommandRepository,
                                         AuditRepository)
+    from gridtrade.runtime.wechat import WeChatNotifier
+    notifier = WeChatNotifier(
+        config.wechat_webhook_url, store, executor, adapter,
+        strategy_name=config.strategy_name, timezone_name=config.wechat_timezone,
+        log=_flush_log)
+    bus.subscribe(notifier)
     return Runtime(
         config=config, adapter=adapter, store=store, executor=executor,
         manager=manager, trigger_engine=trigger_engine,
@@ -113,4 +120,5 @@ def build_runtime(config) -> Runtime:
         flags=ControlFlagRepository(store), commands=CommandRepository(store),
         audit=AuditRepository(store),
         equity=EquitySnapshotRepository(store),
+        notifier=notifier,
     )
