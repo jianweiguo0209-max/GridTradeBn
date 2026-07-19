@@ -17,9 +17,10 @@ out = []
 with create_engine(url).connect() as c:
     for g in c.execute(text('SELECT %s FROM grids %s ORDER BY created_at' % (cols, where))).mappings():
         d = dict(g)
-        rec = c.execute(text('SELECT pnl_ratio, exit_reason FROM order_records WHERE grid_id=:g'),
+        rec = c.execute(text('SELECT pnl_ratio, exit_reason, closed_at FROM order_records WHERE grid_id=:g'),
                         {'g': d['id']}).mappings().first()
         d['pnl_ratio'] = float(rec['pnl_ratio']) if rec else 0.0
+        d['closed_at'] = int(rec['closed_at']) if rec and rec['closed_at'] else None
         out.append({k: (float(v) if isinstance(v, (int, float)) and k != 'created_at' else v)
                     for k, v in d.items()})
 print(json.dumps(out, default=str))
