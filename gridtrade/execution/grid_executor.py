@@ -27,7 +27,7 @@ class GridExecutor:
                  c_rate_taker=0.0005, max_rate=None, min_amount=0.0,
                  stop_orders_enabled=False, stop_slippage=0.15,
                  cap_equity_frac=0.0, cap_min=0.0, cap_max=float('inf'),
-                 maker_close_rebalance=False):
+                 maker_close_rebalance=True):
         self.adapter = adapter
         self.grids = GridRepository(store)
         self.orders = OrderRepository(store)
