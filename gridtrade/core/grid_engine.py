@@ -317,6 +317,26 @@ def _apply_exit(df, cap, c_rate_taker, stop_cfg=None, margin_rate=0.05, pv_spike
     return df, reason, False
 
 
+def _attach_fr_last(df, funding_df):
+    """给 df 加 fr_last 列 = 该 bar 时点的**最后已结算**费率(供资金费率止损判定,非收费)。
+    df 须已按 candle_begin_time 升序。实盘 signals._funding_rate 在 9h 回看窗取最后已结算费率、
+    core/stop_rules.py 每 tick 判 → 开格瞬间即读到窗前那次结算;tolerance 复刻该回看上限
+    (超 9h 实盘取不到、退化 0.0)。cal_equity_curve 与零成交分支共用(单一事实源)。"""
+    if funding_df is None or funding_df.empty:
+        df['fr_last'] = 0.0
+        return df
+    _last = (funding_df.copy()
+             .assign(candle_begin_time=lambda d: pd.to_datetime(d['ts'], unit='ms'))
+             [['candle_begin_time', 'fundingRate']]
+             .rename(columns={'fundingRate': '_fr_last'})
+             .sort_values('candle_begin_time'))
+    df = pd.merge_asof(df, _last, on='candle_begin_time', direction='backward',
+                       tolerance=pd.Timedelta(hours=FUNDING_STOP_LOOKBACK_H))
+    df['fr_last'] = df['_fr_last'].fillna(value=0.0)
+    del df['_fr_last']
+    return df
+
+
 def cal_equity_curve(candle_df, trade_df, fee, cap, c_rate_taker=0.0005, funding_df=None):
     """计算资金曲线（不套退出，退出由 _apply_exit 负责）。funding_df(可选): 列 ts(ms,UTC)/fundingRate。"""
     trade_data = trade_df.copy()
@@ -382,23 +402,9 @@ def cal_equity_curve(candle_df, trade_df, fee, cap, c_rate_taker=0.0005, funding
         # (按成交后仓位收)一致，N=0/1 行为不变。
         df.loc[df.duplicated(subset=['candle_begin_time'], keep='last'), 'fr_fee'] = 0.0
 
-        # fr_last = 该 bar 时点的**最后已结算**费率，供资金费率止损判定（收费不用它）。
-        # 实盘 signals._funding_rate 在 9h 回看窗（结算周期 8h + 1h）里取最后已结算费率、
-        # core/stop_rules.py 每 tick 判 → **开格瞬间**就能读到开格**之前**那次结算；而精确
-        # 时间戳 merge 只在结算那根 bar 非 0，窗前结算完全看不见（实测 2.2% 的格因此在回测里
-        # 跑满、实盘却开格即关）。tolerance 复刻实盘回看上限：超 9h 无结算时实盘取不到、
-        # 退化为 0.0，回测同样不得看见陈旧费率。
-        # 注：df 已由上面的 outer merge(sort=True) 按时间排好；此处不可再 sort_values——
-        # 默认 quicksort 不稳定，会打乱同时刻多笔成交的 hold_num 阶梯顺序。
-        _last = (funding_df.copy()
-                 .assign(candle_begin_time=lambda d: pd.to_datetime(d['ts'], unit='ms'))
-                 [['candle_begin_time', 'fundingRate']]
-                 .rename(columns={'fundingRate': '_fr_last'})
-                 .sort_values('candle_begin_time'))
-        df = pd.merge_asof(df, _last, on='candle_begin_time', direction='backward',
-                           tolerance=pd.Timedelta(hours=FUNDING_STOP_LOOKBACK_H))
-        df['fr_last'] = df['_fr_last'].fillna(value=0.0)
-        del df['_fr_last']
+        # fr_last(最后已结算费率,供资金费率止损)——抽到 _attach_fr_last 与零成交分支共用。
+        # 注:df 已由上面 outer merge(sort=True) 排好,helper 内 merge_asof 不改行序。
+        df = _attach_fr_last(df, funding_df)
 
     df['fee'] = df['fee'].expanding().sum()
     df['fr_fee'] = df['fr_fee'].expanding().sum()
@@ -460,8 +466,30 @@ def simulate_grid_engine(bars_df, grid_params, cap=10000.0, leverage=5.0, fee=0.
                                       for _ in range(grids_above)])
             trade_df = init_rows if trade_df.empty else pd.concat([init_rows, trade_df], ignore_index=True)
     if trade_df.empty:
-        return {'pnl_ratio': 0.0, 'net_value_final': 1.0, 'terminated': broke,
-                'exit_reason': '破网' if broke else '未触网', 'blown_up': False, 'n_trades': 0, 'broke': broke}
+        if broke:
+            return {'pnl_ratio': 0.0, 'net_value_final': 1.0, 'terminated': True,
+                    'exit_reason': '破网', 'blown_up': False, 'n_trades': 0, 'broke': True,
+                    'unreal_pnl': 0.0, 'real_pnl': 0.0}
+        # 零成交(非破网):实盘 monitor 对活跃格仍每轮评估 pv/funding —— pv 尖峰 + pnl(0)<pv_thr 恒真
+        # → pv主动止损关格(mainnet 0G 07-19 实证:零成交、pv 止损、回测 pv 尖峰时刻对齐)。构造零仓
+        # 净值序列(net_value≡1、pnl≡0)走 _apply_exit,退出归因对齐实盘;无信号仍'未触网'。pnl 恒 0。
+        z = bars[bars['candle_begin_time'] <= tick_df['candle_begin_time'].iloc[-1]].copy()
+        if active_stop_mode == 'pv' and pv_spike_df is None and stop_cfg is not None \
+                and 'quote_volume' in z.columns:
+            pv_spike_df = calc_pv_spike(z, active_period=pv_period, mult=pv_mult, n=pv_n,
+                                        body_ratio_min=pv_body_ratio)
+        eq0 = z[['candle_begin_time', 'close']].copy()
+        for col in ('net_value',):
+            eq0[col] = 1.0
+        for col in ('hold_num', 'avg_price', 'unreal_profit', 'real_profit', 'fee', 'fr_fee'):
+            eq0[col] = 0.0
+        eq0 = _attach_fr_last(eq0, funding_df)
+        eq0, stop_reason, _ = _apply_exit(eq0, cap, c_rate_taker, stop_cfg, margin_rate, pv_spike_df,
+                                          active_stop_mode=active_stop_mode, bars_df=z,
+                                          pv_pnl_thr=pv_pnl_thr, break_price=None)
+        return {'pnl_ratio': 0.0, 'net_value_final': 1.0, 'terminated': bool(stop_reason),
+                'exit_reason': stop_reason or '未触网', 'blown_up': False, 'n_trades': 0,
+                'broke': False, 'unreal_pnl': 0.0, 'real_pnl': 0.0}
     bars = bars[bars['candle_begin_time'] <= tick_df['candle_begin_time'].iloc[-1]]
     eq = cal_equity_curve(bars, trade_df, fee, cap, c_rate_taker, funding_df)
 

@@ -382,3 +382,153 @@ def test_scheduler_audit_failure_never_breaks_round(capsys):
     txt = capsys.readouterr().out
     assert '保险丝覆盖审计跳过' in txt            # 降级留痕
     assert out.get('opened') == [] and out.get('closed') == []   # 选币轮照常完成（未抛出）
+
+
+# ---- 熔断感知补捞(2026-07-20 66币票池塌陷根因修复) ----
+
+def _cascade_spy(fail_syms, *, persistent=False):
+    """spy:fail_syms 首次调用抛错(persistent=True 则永远抛),其余返回好数据;记调用次数。"""
+    import pandas as pd
+    from collections import Counter
+    from gridtrade.exchanges.base import CANDLE_COLS
+    good_df = pd.DataFrame([[0] * len(CANDLE_COLS)], columns=CANDLE_COLS)
+
+    class _Spy:
+        def __init__(self):
+            self.calls = Counter()
+
+        def fetch_ohlcv(self, sym, timeframe, start_ms, end_ms):
+            self.calls[sym] += 1
+            if sym in fail_syms and (persistent or self.calls[sym] == 1):
+                raise RuntimeError('circuit open')
+            return good_df
+
+    return _Spy()
+
+
+def test_fetch_universe_candles_salvage_retries_cascade():
+    # 跳过 ≥ SALVAGE_MIN_SKIPPED → 判定熔断级联:冷却一次后对跳过名单补捞,全池自愈
+    import pandas as pd
+    from gridtrade.runtime.scheduler import (fetch_universe_candles,
+                                             SALVAGE_MIN_SKIPPED, SALVAGE_COOLDOWN_S)
+    assert SALVAGE_MIN_SKIPPED == 10 and SALVAGE_COOLDOWN_S == 60.0
+    syms = ['S%02d/USDC:USDC' % i for i in range(15)]
+    bad = set(syms[3:])                            # 12 个瞬时失败(≥阈值)
+    spy = _cascade_spy(bad)
+    sleeps = []
+    out = fetch_universe_candles(spy, syms, pd.Timestamp('2025-06-24 14:00:00'),
+                                 sleep=sleeps.append)
+    assert len(out) == 15                          # 补捞后全池
+    assert sleeps.count(SALVAGE_COOLDOWN_S) == 1   # 恰一次冷却
+    for s in syms[:3]:
+        assert spy.calls[s] == 1                   # 首轮成功的币不重拉
+
+
+def test_fetch_universe_candles_no_salvage_below_threshold():
+    # 零星坏币(<阈值)不触发冷却补捞——保持原语义:跳过继续
+    import pandas as pd
+    from gridtrade.runtime.scheduler import fetch_universe_candles, SALVAGE_COOLDOWN_S
+    syms = ['S%02d/USDC:USDC' % i for i in range(10)]
+    spy = _cascade_spy(set(syms[:3]), persistent=True)
+    sleeps = []
+    out = fetch_universe_candles(spy, syms, pd.Timestamp('2025-06-24 14:00:00'),
+                                 sleep=sleeps.append)
+    assert len(out) == 7
+    assert SALVAGE_COOLDOWN_S not in sleeps
+    for s in syms[:3]:
+        assert spy.calls[s] == 1                   # 不重试
+
+
+def test_fetch_universe_candles_salvage_single_pass_on_persistent_outage():
+    # 故障持续:补捞仍败 → 诚实保留残池,只补捞一轮(每币最多 2 次调用,无死循环)
+    import pandas as pd
+    from gridtrade.runtime.scheduler import fetch_universe_candles, SALVAGE_COOLDOWN_S
+    syms = ['S%02d/USDC:USDC' % i for i in range(15)]
+    bad = set(syms[3:])
+    spy = _cascade_spy(bad, persistent=True)
+    sleeps = []
+    out = fetch_universe_candles(spy, syms, pd.Timestamp('2025-06-24 14:00:00'),
+                                 sleep=sleeps.append)
+    assert len(out) == 3
+    assert sleeps.count(SALVAGE_COOLDOWN_S) == 1
+    for s in bad:
+        assert spy.calls[s] == 2                   # 首轮+补捞各一次,不再多
+
+
+# ---- 池尺寸守卫(方案A) ----
+
+def _one_row_candles(syms):
+    import pandas as pd
+    from gridtrade.exchanges.base import CANDLE_COLS
+    good_df = pd.DataFrame([[0] * len(CANDLE_COLS)], columns=CANDLE_COLS)
+    return {s: good_df for s in syms}
+
+
+def test_pool_guard_blocks_open_on_thin_pool(monkeypatch, capsys):
+    # 幸存 5/10 < 80% → 残池:本轮只关不开(pool_guarded 旗标),留痕日志
+    from gridtrade.runtime import scheduler as S
+    assert S.POOL_GUARD_FRAC == 0.8
+    syms = ['S%02d/USDC:USDC' % i for i in range(10)]
+    monkeypatch.setattr(S, 'resolve_live_universe', lambda *a, **k: list(syms))
+    rt = _rt()
+    out = S.run_scheduler_once(rt, now_fn=lambda: 1_750_000_000.0,
+                               fetch_candles=lambda *a, **k: _one_row_candles(syms[:5]))
+    assert out.get('pool_guarded') is True
+    assert out['opened'] == []
+    assert '[pool-guard]' in capsys.readouterr().out
+
+
+def test_pool_guard_passes_healthy_pool(monkeypatch, capsys):
+    # 幸存 9/10 ≥ 80% → 不触发(正常轮零行为变化)
+    from gridtrade.runtime import scheduler as S
+    syms = ['S%02d/USDC:USDC' % i for i in range(10)]
+    monkeypatch.setattr(S, 'resolve_live_universe', lambda *a, **k: list(syms))
+    rt = _rt()
+    out = S.run_scheduler_once(rt, now_fn=lambda: 1_750_000_000.0,
+                               fetch_candles=lambda *a, **k: _one_row_candles(syms[:9]))
+    assert 'pool_guarded' not in out
+    assert '[pool-guard]' not in capsys.readouterr().out
+
+
+def test_pool_guard_vacuous_on_empty_universe(monkeypatch):
+    # 空票池(0≥0.8×0)不误触发——保持既有空池语义
+    from gridtrade.runtime import scheduler as S
+    rt = _rt()
+    out = S.run_scheduler_once(rt, now_fn=lambda: 1_750_000_000.0,
+                               fetch_candles=lambda *a, **k: {})
+    assert 'pool_guarded' not in out and out['opened'] == []
+
+
+# ---- 方案B:每轮取数成功率落库 ----
+
+def test_universe_snapshot_records_fetch_stats_every_round(monkeypatch):
+    # 健康轮(9/10,不触发守卫)也要落 fetch{expected,ok}——常态成功率史
+    import pandas as pd
+    from gridtrade.runtime import scheduler as S
+    from gridtrade.state.universe_snapshots import UniverseSnapshotRepository
+    syms = ['S%02d/USDC:USDC' % i for i in range(10)]
+    monkeypatch.setattr(S, 'resolve_live_universe', lambda *a, **k: list(syms))
+    rt = _rt()
+    S.run_scheduler_once(rt, now_fn=lambda: 1_750_000_000.0,
+                         fetch_candles=lambda *a, **k: _one_row_candles(syms[:9]))
+    rt_ms = int(pd.Timestamp(1_750_000_000.0, unit='s').floor('H').value // 1_000_000)
+    snap = UniverseSnapshotRepository(rt.store).get(rt.config.exchange, rt_ms)
+    assert snap is not None
+    assert snap['excluded']['fetch'] == {'expected': 10, 'ok': 9}
+    assert 'pool_guard' not in snap['excluded']
+
+
+def test_universe_snapshot_guard_round_has_both_breadcrumbs(monkeypatch):
+    # 守卫轮:fetch 统计 + pool_guard 面包屑同存
+    import pandas as pd
+    from gridtrade.runtime import scheduler as S
+    from gridtrade.state.universe_snapshots import UniverseSnapshotRepository
+    syms = ['S%02d/USDC:USDC' % i for i in range(10)]
+    monkeypatch.setattr(S, 'resolve_live_universe', lambda *a, **k: list(syms))
+    rt = _rt()
+    S.run_scheduler_once(rt, now_fn=lambda: 1_750_000_000.0,
+                         fetch_candles=lambda *a, **k: _one_row_candles(syms[:5]))
+    rt_ms = int(pd.Timestamp(1_750_000_000.0, unit='s').floor('H').value // 1_000_000)
+    snap = UniverseSnapshotRepository(rt.store).get(rt.config.exchange, rt_ms)
+    assert snap['excluded']['fetch'] == {'expected': 10, 'ok': 5}
+    assert snap['excluded']['pool_guard'] == {'survivors': 5, 'universe': 10}

@@ -284,3 +284,22 @@ def test_monitor_cycle_fails_stuck_opening_grid_with_no_orders(store):
     assert gx.grids.get(fresh.id).status == 'OPENING'     # 未超时 → 不动
     assert gx.grids.get(partial.id).status == 'OPENING'   # 有挂单 → 不动（不误杀部分开仓）
     assert any('stuck OPENING' in line for line in logs)  # 结构化日志（否则线上隐形）
+
+
+def test_monitor_cycle_fails_stuck_pending_grid_with_no_orders(store):
+    # 死在 PENDING（进程在 create→OPENING 转换的微秒窗口内硬崩溃留下的撕裂格，永零挂单；
+    # ELSA/gt09 mainnet 2026-07-19 09:01 实证）：与死 OPENING 同构自动判 FAILED（释放 symbol 槽）
+    # + 结构化日志。护栏：未超时（正在开仓）的 PENDING 不动。
+    from gridtrade.runtime.cycles import run_monitor_cycle, STUCK_OPENING_TIMEOUT_SEC
+    from gridtrade.state.models import Grid, PENDING, now_ms
+    ex, store, gx, mgr = _setup(store, 100.0)
+    old_ms = now_ms() - (STUCK_OPENING_TIMEOUT_SEC + 60) * 1000
+    stuck = gx.grids.create(Grid(id='', exchange='fake', symbol=ETH, status=PENDING,
+                                 tag='tS', created_at=old_ms, updated_at=old_ms))
+    fresh = gx.grids.create(Grid(id='', exchange='fake', symbol=BTC, status=PENDING,
+                                 tag='tF'))
+    logs = []
+    run_monitor_cycle(Reconciler(gx), mgr, log=logs.append)
+    assert gx.grids.get(stuck.id).status == 'FAILED'      # 超时+零挂单 → 自动 FAILED
+    assert gx.grids.get(fresh.id).status == 'PENDING'     # 未超时 → 不动
+    assert any('stuck PENDING' in line for line in logs)  # 结构化日志（PENDING 亦须可见）

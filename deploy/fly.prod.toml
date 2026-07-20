@@ -43,7 +43,11 @@ primary_region = "nrt"
   # frac 分母从 MAX_CONCURRENT(12) 改为**启用数 N**→ frac=AL/(N×gearing/2)、满配仍达目标 AL,
   # 但 N 越小单币杠杆越集中(N=1→frac 2.94 单币吃满 AL,慎用长期);灰度=从少数 offset 起、逐步加。
   # 阶段4 小资金试跑用法见记忆 live-open-offsets-ramp-knob。示例(只跑 offset 0 与 6 两 cohort)：
-  LIVE_OPEN_OFFSETS = "0,1,2,3,4,5,6,7,8,9,10,11"
+  
+  # LIVE_OPEN_OFFSETS 未设 = 全 12 offset 开(2026-07-19 用户定,结束灰度:2,4→4,10→5,10→全开)。
+  # N=12 → frac=0.245、单格 cap≈E/4×AL/12…=0.245E;币安原生杠杆机制(spec 2026-07-19)下
+  # 选档基准≈单侧×1.2 极小,全池几乎恒首档,12 格并行 IM 占用极低。灰度需重启用时设回 CSV。
+
   # 票池杠杆预过滤(2026-07-18):pick_L<10 的币选币前剔除——低杠杆档币 IM(整梯名义/L)吃满
   # 余额必被 MarginGate 拒,top-1 选中它=整轮空转(04:00 MYX 实证 L=5→IM $511=全余额)。
   # 与开仓/MarginGate 同源 pick_leverage 预演,零额外权重(共享 fetch_max_leverages bulk 缓存)。

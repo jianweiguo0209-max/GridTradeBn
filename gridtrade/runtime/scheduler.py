@@ -31,6 +31,33 @@ from gridtrade.runtime.universe import resolve_live_universe
 # 会打爆 scheduler 自身那个 IP）。
 FETCH_PACE_MS_DEFAULT = 250.0
 
+# 熔断感知补捞(2026-07-19 12:00 UTC 66/284 币票池塌陷根因,memory binance-migration):
+# 瞬时故障连败 ≥5 → 行情 CircuitBreaker open(cooldown 30s)→ 取数循环里剩余币即时失败、
+# 逐币 try/except 静默跳过 → 残池选币。坏币基线 0-4 个/轮,跳过量级达两位数=级联而非坏币。
+SALVAGE_MIN_SKIPPED = 10       # 跳过 ≥ 此数 → 判定级联,触发补捞
+SALVAGE_COOLDOWN_S = 60.0      # 补捞前冷却:≥ breaker cooldown(30s),给瞬时故障退场时间
+POOL_GUARD_FRAC = 0.8          # 方案A 池尺寸守卫:取数幸存 < 此比例×应取 → 残池,本轮只关不开。
+                               # 补捞治瞬时级联;此守卫兜持续型故障——残池冠军选错代价上不封顶,
+                               # 空转一轮机会成本仅 ~1 格(2026-07-19 66/284 事故:残池 FIL 顶替 UAI)。
+
+
+def _fetch_pass(adapter, symbols, timeframe, start_ms, end_ms, pace_ms, sleep):
+    """单轮逐币拉取:返回 (成功dict, 跳过名单, 首个错误样本)。空 df 不算跳过(合法无数据)。"""
+    out, skipped, first_err = {}, [], None
+    for i, sym in enumerate(symbols):
+        if i and pace_ms > 0:
+            sleep(pace_ms / 1000.0)   # 币间节流（默认开；env SCHEDULER_FETCH_PACE_MS 可调，0=关）
+        try:
+            df = adapter.fetch_ohlcv(sym, timeframe, start_ms, end_ms)
+        except Exception as exc:
+            skipped.append(sym)     # 坏币（BadSymbol/无数据/拉取失败）跳过，不阻塞整池
+            if first_err is None:
+                first_err = '%s -> %r' % (sym, exc)
+            continue
+        if df is not None and not df.empty:
+            out[sym] = df
+    return out, skipped, first_err
+
 
 def fetch_universe_candles(adapter, symbols, run_time, *, timeframe='1h',
                            max_candle_num=160, pace_ms=None, sleep=time.sleep) -> dict:
@@ -38,23 +65,21 @@ def fetch_universe_candles(adapter, symbols, run_time, *, timeframe='1h',
     start_ms = end_ms - max_candle_num * 3600 * 1000   # 1h 根
     if pace_ms is None:
         pace_ms = FETCH_PACE_MS_DEFAULT
-    out = {}
-    skipped = 0
-    first_err = None
-    for i, sym in enumerate(symbols):
-        if i and pace_ms > 0:
-            sleep(pace_ms / 1000.0)   # 币间节流（默认开；env SCHEDULER_FETCH_PACE_MS 可调，0=关）
-        try:
-            df = adapter.fetch_ohlcv(sym, timeframe, start_ms, end_ms)
-        except Exception as exc:
-            skipped += 1            # 坏币（BadSymbol/无数据/拉取失败）跳过，不阻塞整池
-            if first_err is None:
-                first_err = '%s -> %r' % (sym, exc)
-            continue
-        if df is not None and not df.empty:
-            out[sym] = df
+    out, skipped, first_err = _fetch_pass(adapter, symbols, timeframe,
+                                          start_ms, end_ms, pace_ms, sleep)
+    if len(skipped) >= SALVAGE_MIN_SKIPPED:
+        # 仅一轮补捞:故障若仍持续,诚实保留残池(不无限重试;12H 周期晚 ~2 分钟无影响)。
+        print('[scheduler] 取数跳过 %d/%d 币,疑似熔断级联 → 冷却 %.0fs 后补捞'
+              % (len(skipped), len(symbols), SALVAGE_COOLDOWN_S), flush=True)
+        sleep(SALVAGE_COOLDOWN_S)
+        out2, skipped2, err2 = _fetch_pass(adapter, skipped, timeframe,
+                                           start_ms, end_ms, pace_ms, sleep)
+        out.update(out2)
+        print('[scheduler] 补捞成功 %d/%d,仍失败 %d'
+              % (len(out2), len(skipped), len(skipped2)), flush=True)
+        skipped, first_err = skipped2, (err2 or first_err)
     if skipped:
-        print('[scheduler] skipped %d symbols (e.g. %s)' % (skipped, first_err),
+        print('[scheduler] skipped %d symbols (e.g. %s)' % (len(skipped), first_err),
               flush=True)
     return out
 
@@ -160,21 +185,32 @@ def run_scheduler_once(runtime, *, now_fn=time.time,
     candles = fetch_candles(rt.adapter, universe, run_time,
                             max_candle_num=DEFAULT_STRATEGY_CONFIG['max_candle_num'],
                             pace_ms=getattr(rt.config, 'scheduler_fetch_pace_ms', None))
+    # 池尺寸守卫(方案A,2026-07-19 66/284 塌陷事故):幸存/应取 低于 POOL_GUARD_FRAC →
+    # 本轮只关不开(复用 open_enabled 通道,与 shock/offset-gate 同语义)。
+    pool_ok = len(candles) >= POOL_GUARD_FRAC * len(universe)
+    if not pool_ok:
+        print('[pool-guard] 取数幸存 %d/%d < %.0f%% → 残池,本轮只关不开'
+              % (len(candles), len(universe), POOL_GUARD_FRAC * 100), flush=True)
     # 票池快照(2026-07-12,选币可复现性):落"实际进入排名的集合"(post 地板/黑名单/
     # held 预过滤/braked/取数跳过)——因子名次是组内相对名次,没有它历史选币不可精确
     # 复现(实证:TRUMP 在 168 币集合无影、57 币线上集合进 #4)。fail-soft:快照失败
     # 绝不阻塞选币开格。
     try:
         from gridtrade.state.universe_snapshots import UniverseSnapshotRepository
+        # 方案B(每轮取数成功率落库):expected=应取(post 预过滤票池)、ok=幸存(含空df剔除)。
+        # 常态成功率史从此可查(66/284 事故前只有易逝的容器日志);守卫面包屑仅触发轮才有。
+        _exc = {'held_banned': sorted(banned), 'braked': sorted(braked),
+                'fetch': {'expected': len(universe), 'ok': len(candles)}}
+        if not pool_ok:
+            _exc['pool_guard'] = {'survivors': len(candles), 'universe': len(universe)}
         UniverseSnapshotRepository(rt.store).add(
             rt.config.exchange, int(run_time.value // 1_000_000),
-            list(candles.keys()),
-            excluded={'held_banned': sorted(banned), 'braked': sorted(braked)})
+            list(candles.keys()), excluded=_exc)
     except Exception as exc:
         print('[scheduler] universe snapshot skipped: %r' % exc, flush=True)
     # MarketShockBrake(spec 2026-07-08):|票池中位数 k 小时收益|≥thr → 本轮只关不开,
     # 并暂停 pause 小时;状态进程内(信号自持 ~k 小时,重启自愈,约束 pause<=k)。
-    open_enabled = True
+    open_enabled = pool_ok
     thr = float(getattr(rt.config, 'shock_thr', 0.0) or 0.0)
     if thr > 0:
         k = int(getattr(rt.config, 'shock_k_hours', 4))
@@ -198,6 +234,8 @@ def run_scheduler_once(runtime, *, now_fn=time.time,
     result = run_scheduler_cycle(rt.manager, rt.trigger_engine, rt.reconciler,
                                  ctx, close_tag=tag, open_enabled=open_enabled,
                                  braked_symbols=frozenset(braked))
+    if not pool_ok:
+        result['pool_guarded'] = True
     # 选币名次快照(record-and-replay,2026-07-17 实盘对账):记本 tick 排名 picks+因子值,
     # 供离线复放精确对齐名次(universe 记了票池集合、此表补因子/名次)。fail-soft:绝不阻塞。
     try:
