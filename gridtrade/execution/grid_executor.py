@@ -449,6 +449,11 @@ class GridExecutor:
                     pass                             # 已成交/已撤 → 目标态已达
             orders.append(lo)
             _px, _fee, maker_filled = self._reduce_fill_px_fee(symbol, lo)
+            # 结果日志(巡查计成交率用;demo 费率伪影使 fee 指纹不可靠,此行是 testnet 唯一无歧义证据)
+            print('[maker-close] %s maker成交 %.6g/%.6g @%.6g%s' %
+                  (symbol, maker_filled, qty, px,
+                   '' if qty - maker_filled <= max(self.min_amount, 0.0) else ' → 市价补余'),
+                  flush=True)
         except Exception as exc:                     # 含 GTX 拒单(价位会立即成交) → 市价回退
             print('[maker-close] %s 限价段失败(%r)→ 市价回退' % (symbol, exc), flush=True)
         rem = qty - maker_filled
