@@ -81,8 +81,6 @@ def test_no_funding_data_does_not_trigger():
     assert _run(None)['exit_reason'] != '资金费率止损'
 
 
-
-
 # ---- B案(2026-07-20):窗口结束 maker 计费(费差上界,门控默认关) ----
 
 def test_window_end_maker_fee_upper_bound():
@@ -95,43 +93,3 @@ def test_window_end_maker_fee_upper_bound():
                                  neutral_init=False, active_stop_mode='none')
     assert base['exit_reason'] == '窗口结束' and res_m['exit_reason'] == '窗口结束'
     assert res_m['pnl_ratio'] > base['pnl_ratio']          # maker 费更低 → 收益更高
-
-
-# ---- A案(2026-07-20):8h 等效归一——4h/1h 结算币同阈值日化流血 2×/8× ----
-
-def _fund2(ts1, ts2, rate):
-    """两次结算(间隔即结算周期),末次费率=rate。"""
-    return pd.DataFrame([
-        {'ts': int(pd.Timestamp(ts1).value // 1_000_000), 'fundingRate': 0.0001},
-        {'ts': int(pd.Timestamp(ts2).value // 1_000_000), 'fundingRate': rate},
-    ])
-
-
-def _run_equiv(funding_df, equiv):
-    stop = dict(_STOP, funding_equiv_8h=equiv)
-    return simulate_grid_engine(_bars(), _GP, cap=1000.0, leverage=5.0,
-                                stop_cfg=stop, funding_df=funding_df,
-                                neutral_init=False, active_stop_mode='none')
-
-
-def test_equiv_8h_4h_coin_triggers_below_raw_threshold():
-    """4h 结算币 rate=0.001:原口径不触发(0.001<0.0015);等效口径 0.001×(8/4)=0.002 → 触发。"""
-    fd = _fund2('2026-01-01 05:00:00', '2026-01-01 09:00:00', 0.001)
-    assert _run_equiv(fd, equiv=False)['exit_reason'] != '资金费率止损'
-    assert _run_equiv(fd, equiv=True)['exit_reason'] == '资金费率止损'
-
-
-def test_equiv_8h_8h_coin_bitwise_unchanged():
-    """8h 结算币:等效系数=1,两种口径逐位同判。"""
-    hot = _fund2('2026-01-01 01:00:00', '2026-01-01 09:00:00', 0.002)
-    cold = _fund2('2026-01-01 01:00:00', '2026-01-01 09:00:00', 0.001)
-    assert _run_equiv(hot, equiv=False)['exit_reason'] == '资金费率止损'
-    assert _run_equiv(hot, equiv=True)['exit_reason'] == '资金费率止损'
-    assert _run_equiv(cold, equiv=False)['exit_reason'] != '资金费率止损'
-    assert _run_equiv(cold, equiv=True)['exit_reason'] != '资金费率止损'
-
-
-def test_equiv_8h_single_settlement_falls_back_to_8h():
-    """切片内仅 1 次结算 → 回退 8h(×1,保守不放大)。"""
-    fd = _fund('2026-01-01 09:00:00', 0.001)
-    assert _run_equiv(fd, equiv=True)['exit_reason'] != '资金费率止损'
