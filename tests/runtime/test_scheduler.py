@@ -497,3 +497,38 @@ def test_pool_guard_vacuous_on_empty_universe(monkeypatch):
     out = S.run_scheduler_once(rt, now_fn=lambda: 1_750_000_000.0,
                                fetch_candles=lambda *a, **k: {})
     assert 'pool_guarded' not in out and out['opened'] == []
+
+
+# ---- 方案B:每轮取数成功率落库 ----
+
+def test_universe_snapshot_records_fetch_stats_every_round(monkeypatch):
+    # 健康轮(9/10,不触发守卫)也要落 fetch{expected,ok}——常态成功率史
+    import pandas as pd
+    from gridtrade.runtime import scheduler as S
+    from gridtrade.state.universe_snapshots import UniverseSnapshotRepository
+    syms = ['S%02d/USDC:USDC' % i for i in range(10)]
+    monkeypatch.setattr(S, 'resolve_live_universe', lambda *a, **k: list(syms))
+    rt = _rt()
+    S.run_scheduler_once(rt, now_fn=lambda: 1_750_000_000.0,
+                         fetch_candles=lambda *a, **k: _one_row_candles(syms[:9]))
+    rt_ms = int(pd.Timestamp(1_750_000_000.0, unit='s').floor('H').value // 1_000_000)
+    snap = UniverseSnapshotRepository(rt.store).get(rt.config.exchange, rt_ms)
+    assert snap is not None
+    assert snap['excluded']['fetch'] == {'expected': 10, 'ok': 9}
+    assert 'pool_guard' not in snap['excluded']
+
+
+def test_universe_snapshot_guard_round_has_both_breadcrumbs(monkeypatch):
+    # 守卫轮:fetch 统计 + pool_guard 面包屑同存
+    import pandas as pd
+    from gridtrade.runtime import scheduler as S
+    from gridtrade.state.universe_snapshots import UniverseSnapshotRepository
+    syms = ['S%02d/USDC:USDC' % i for i in range(10)]
+    monkeypatch.setattr(S, 'resolve_live_universe', lambda *a, **k: list(syms))
+    rt = _rt()
+    S.run_scheduler_once(rt, now_fn=lambda: 1_750_000_000.0,
+                         fetch_candles=lambda *a, **k: _one_row_candles(syms[:5]))
+    rt_ms = int(pd.Timestamp(1_750_000_000.0, unit='s').floor('H').value // 1_000_000)
+    snap = UniverseSnapshotRepository(rt.store).get(rt.config.exchange, rt_ms)
+    assert snap['excluded']['fetch'] == {'expected': 10, 'ok': 5}
+    assert snap['excluded']['pool_guard'] == {'survivors': 5, 'universe': 10}

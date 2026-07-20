@@ -197,7 +197,10 @@ def run_scheduler_once(runtime, *, now_fn=time.time,
     # 绝不阻塞选币开格。
     try:
         from gridtrade.state.universe_snapshots import UniverseSnapshotRepository
-        _exc = {'held_banned': sorted(banned), 'braked': sorted(braked)}
+        # 方案B(每轮取数成功率落库):expected=应取(post 预过滤票池)、ok=幸存(含空df剔除)。
+        # 常态成功率史从此可查(66/284 事故前只有易逝的容器日志);守卫面包屑仅触发轮才有。
+        _exc = {'held_banned': sorted(banned), 'braked': sorted(braked),
+                'fetch': {'expected': len(universe), 'ok': len(candles)}}
         if not pool_ok:
             _exc['pool_guard'] = {'survivors': len(candles), 'universe': len(universe)}
         UniverseSnapshotRepository(rt.store).add(
