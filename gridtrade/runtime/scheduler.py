@@ -31,6 +31,30 @@ from gridtrade.runtime.universe import resolve_live_universe
 # 会打爆 scheduler 自身那个 IP）。
 FETCH_PACE_MS_DEFAULT = 250.0
 
+# 熔断感知补捞(2026-07-19 12:00 UTC 66/284 币票池塌陷根因,memory binance-migration):
+# 瞬时故障连败 ≥5 → 行情 CircuitBreaker open(cooldown 30s)→ 取数循环里剩余币即时失败、
+# 逐币 try/except 静默跳过 → 残池选币。坏币基线 0-4 个/轮,跳过量级达两位数=级联而非坏币。
+SALVAGE_MIN_SKIPPED = 10       # 跳过 ≥ 此数 → 判定级联,触发补捞
+SALVAGE_COOLDOWN_S = 60.0      # 补捞前冷却:≥ breaker cooldown(30s),给瞬时故障退场时间
+
+
+def _fetch_pass(adapter, symbols, timeframe, start_ms, end_ms, pace_ms, sleep):
+    """单轮逐币拉取:返回 (成功dict, 跳过名单, 首个错误样本)。空 df 不算跳过(合法无数据)。"""
+    out, skipped, first_err = {}, [], None
+    for i, sym in enumerate(symbols):
+        if i and pace_ms > 0:
+            sleep(pace_ms / 1000.0)   # 币间节流（默认开；env SCHEDULER_FETCH_PACE_MS 可调，0=关）
+        try:
+            df = adapter.fetch_ohlcv(sym, timeframe, start_ms, end_ms)
+        except Exception as exc:
+            skipped.append(sym)     # 坏币（BadSymbol/无数据/拉取失败）跳过，不阻塞整池
+            if first_err is None:
+                first_err = '%s -> %r' % (sym, exc)
+            continue
+        if df is not None and not df.empty:
+            out[sym] = df
+    return out, skipped, first_err
+
 
 def fetch_universe_candles(adapter, symbols, run_time, *, timeframe='1h',
                            max_candle_num=160, pace_ms=None, sleep=time.sleep) -> dict:
@@ -38,23 +62,21 @@ def fetch_universe_candles(adapter, symbols, run_time, *, timeframe='1h',
     start_ms = end_ms - max_candle_num * 3600 * 1000   # 1h 根
     if pace_ms is None:
         pace_ms = FETCH_PACE_MS_DEFAULT
-    out = {}
-    skipped = 0
-    first_err = None
-    for i, sym in enumerate(symbols):
-        if i and pace_ms > 0:
-            sleep(pace_ms / 1000.0)   # 币间节流（默认开；env SCHEDULER_FETCH_PACE_MS 可调，0=关）
-        try:
-            df = adapter.fetch_ohlcv(sym, timeframe, start_ms, end_ms)
-        except Exception as exc:
-            skipped += 1            # 坏币（BadSymbol/无数据/拉取失败）跳过，不阻塞整池
-            if first_err is None:
-                first_err = '%s -> %r' % (sym, exc)
-            continue
-        if df is not None and not df.empty:
-            out[sym] = df
+    out, skipped, first_err = _fetch_pass(adapter, symbols, timeframe,
+                                          start_ms, end_ms, pace_ms, sleep)
+    if len(skipped) >= SALVAGE_MIN_SKIPPED:
+        # 仅一轮补捞:故障若仍持续,诚实保留残池(不无限重试;12H 周期晚 ~2 分钟无影响)。
+        print('[scheduler] 取数跳过 %d/%d 币,疑似熔断级联 → 冷却 %.0fs 后补捞'
+              % (len(skipped), len(symbols), SALVAGE_COOLDOWN_S), flush=True)
+        sleep(SALVAGE_COOLDOWN_S)
+        out2, skipped2, err2 = _fetch_pass(adapter, skipped, timeframe,
+                                           start_ms, end_ms, pace_ms, sleep)
+        out.update(out2)
+        print('[scheduler] 补捞成功 %d/%d,仍失败 %d'
+              % (len(out2), len(skipped), len(skipped2)), flush=True)
+        skipped, first_err = skipped2, (err2 or first_err)
     if skipped:
-        print('[scheduler] skipped %d symbols (e.g. %s)' % (skipped, first_err),
+        print('[scheduler] skipped %d symbols (e.g. %s)' % (len(skipped), first_err),
               flush=True)
     return out
 
