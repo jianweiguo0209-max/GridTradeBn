@@ -453,3 +453,47 @@ def test_fetch_universe_candles_salvage_single_pass_on_persistent_outage():
     assert sleeps.count(SALVAGE_COOLDOWN_S) == 1
     for s in bad:
         assert spy.calls[s] == 2                   # 首轮+补捞各一次,不再多
+
+
+# ---- 池尺寸守卫(方案A) ----
+
+def _one_row_candles(syms):
+    import pandas as pd
+    from gridtrade.exchanges.base import CANDLE_COLS
+    good_df = pd.DataFrame([[0] * len(CANDLE_COLS)], columns=CANDLE_COLS)
+    return {s: good_df for s in syms}
+
+
+def test_pool_guard_blocks_open_on_thin_pool(monkeypatch, capsys):
+    # 幸存 5/10 < 80% → 残池:本轮只关不开(pool_guarded 旗标),留痕日志
+    from gridtrade.runtime import scheduler as S
+    assert S.POOL_GUARD_FRAC == 0.8
+    syms = ['S%02d/USDC:USDC' % i for i in range(10)]
+    monkeypatch.setattr(S, 'resolve_live_universe', lambda *a, **k: list(syms))
+    rt = _rt()
+    out = S.run_scheduler_once(rt, now_fn=lambda: 1_750_000_000.0,
+                               fetch_candles=lambda *a, **k: _one_row_candles(syms[:5]))
+    assert out.get('pool_guarded') is True
+    assert out['opened'] == []
+    assert '[pool-guard]' in capsys.readouterr().out
+
+
+def test_pool_guard_passes_healthy_pool(monkeypatch, capsys):
+    # 幸存 9/10 ≥ 80% → 不触发(正常轮零行为变化)
+    from gridtrade.runtime import scheduler as S
+    syms = ['S%02d/USDC:USDC' % i for i in range(10)]
+    monkeypatch.setattr(S, 'resolve_live_universe', lambda *a, **k: list(syms))
+    rt = _rt()
+    out = S.run_scheduler_once(rt, now_fn=lambda: 1_750_000_000.0,
+                               fetch_candles=lambda *a, **k: _one_row_candles(syms[:9]))
+    assert 'pool_guarded' not in out
+    assert '[pool-guard]' not in capsys.readouterr().out
+
+
+def test_pool_guard_vacuous_on_empty_universe(monkeypatch):
+    # 空票池(0≥0.8×0)不误触发——保持既有空池语义
+    from gridtrade.runtime import scheduler as S
+    rt = _rt()
+    out = S.run_scheduler_once(rt, now_fn=lambda: 1_750_000_000.0,
+                               fetch_candles=lambda *a, **k: {})
+    assert 'pool_guarded' not in out and out['opened'] == []
