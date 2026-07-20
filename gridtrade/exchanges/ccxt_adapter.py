@@ -134,6 +134,14 @@ class CcxtAdapter(ExchangeAdapter):
     def fetch_price(self, symbol) -> float:
         return float(self.client.fetch_ticker(self.to_native(symbol))['last'])
 
+    def fetch_bid_ask(self, symbol):
+        """(best_bid, best_ask) 取自 ticker;缺失(薄簿/抖动)回退 last(fail-open)。"""
+        t = self.client.fetch_ticker(self.to_native(symbol))
+        last = t.get('last')
+        bid = t.get('bid') or last
+        ask = t.get('ask') or last
+        return (float(bid), float(ask))
+
     def fetch_max_leverages(self) -> dict:
         """{canonical: maxLeverage} 自 ccxt markets(limits.leverage.max),实例缓存;
         经 _include_market 守卫(子类按需剔除特殊市场,防同名币低杠杆覆写主市场)。"""

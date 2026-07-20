@@ -92,6 +92,9 @@ class ResilientAdapter(ExchangeAdapter):
     def fetch_price(self, symbol: str) -> float:
         return self._call('fetch_price', symbol)
 
+    def fetch_bid_ask(self, symbol: str):
+        return self._call('fetch_bid_ask', symbol)
+
     def fetch_max_leverages(self) -> dict:
         # 必须显式代理:基类默认 {} 会把 lev_caps 静默吸掉(fail-open 掩盖,
         # 2026-07-12 mainnet 实证 VVV maxlev=3 开出双格)。内层有实例缓存,零额外请求。

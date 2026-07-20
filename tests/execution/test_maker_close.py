@@ -108,6 +108,48 @@ def test_maker_reject_falls_back_to_market(store):
     assert gx.grids.get(gid).status == 'CLOSED'
 
 
+def _run_close_timeout(gx, gid):
+    """resting + 快进时钟，跑完 maker 超时→市价回退，不真等。"""
+    clock = {'t': 0.0}
+    gx._now = lambda: clock['t']
+    gx._sleep = lambda s: clock.__setitem__('t', clock['t'] + float(s))
+    gx.close(gid, SYM, '周期再平衡')
+
+
+def test_maker_sell_close_places_at_best_ask_not_last(store):
+    # 平多头(sell)的 maker post-only 必须挂 best ask(被动侧),不能挂 last——挂 last 会跨点差
+    # 被币安 GTX 拒、立即回退市价、maker 拿不到返佣(ARIA/prod 2026-07-20 实证回退 taker)。
+    fake, _, gx = build_stack(store, maker=True)   # 默认价 100 开仓
+    gid = _seed_position(fake, gx)                 # 价跌到 98.5→net long → 平仓=sell
+    fake.set_bid_ask(SYM, 98.4, 98.6)              # last=98.5, bid=98.4, ask=98.6
+    placed = []
+    orig = fake.create_limit_order
+    fake.create_limit_order = lambda symbol, side, price, size, **k: (
+        placed.append((side, price, k.get('client_oid'))) or orig(symbol, side, price, size, **k))
+    fake._match = lambda *a, **k: None             # resting(不即时成交)
+    _run_close_timeout(gx, gid)
+    maker = [(s, p) for s, p, c in placed if c and str(c).endswith('m')]
+    assert maker, 'maker post-only 限价单未下出'
+    assert maker[0][0] == 'sell' and maker[0][1] == 98.6   # 挂 best ask,非 last 98.5
+
+
+def test_maker_buy_close_places_at_best_bid_not_last(store):
+    # 平空头(buy)的 maker post-only 挂 best bid(被动侧)。
+    fake, _, gx = build_stack(store, maker=True)     # 默认价 100 开仓
+    gid = gx.open('fake', SYM, GP)
+    fake.set_price(SYM, 101.5); gx.sync(gid, SYM)    # 价涨→sell 线成交→net short → 平仓=buy
+    assert fake.fetch_positions(SYM).net_size < 0
+    fake.set_bid_ask(SYM, 101.4, 101.6)             # last=101.5, bid=101.4, ask=101.6
+    placed = []
+    orig = fake.create_limit_order
+    fake.create_limit_order = lambda symbol, side, price, size, **k: (
+        placed.append((side, price, k.get('client_oid'))) or orig(symbol, side, price, size, **k))
+    fake._match = lambda *a, **k: None
+    _run_close_timeout(gx, gid)
+    maker = [(s, p) for s, p, c in placed if c and str(c).endswith('m')]
+    assert maker and maker[0][0] == 'buy' and maker[0][1] == 101.4   # 挂 best bid,非 last 101.5
+
+
 def test_urgent_reason_never_uses_maker(store):
     fake, _, gx = build_stack(store, maker=True)
     gid = _seed_position(fake, gx)

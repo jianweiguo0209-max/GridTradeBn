@@ -433,7 +433,17 @@ class GridExecutor:
         orders = []
         maker_filled = 0.0
         try:
-            px = self.adapter.quantize_price(symbol, float(self.adapter.fetch_price(symbol)))
+            # 挂被动侧盘口(卖挂 best ask/买挂 best bid),post-only 保证 rest 不跨点差被 GTX 拒;
+            # 挂 last 价约半数(尤其窄点差币)会跨点差瞬拒→立即回退市价、maker 拿不到返佣
+            # (ARIA/prod 2026-07-20 实证)。取盘口失败 fail-open 退回 last 价(原行为)。
+            try:
+                bid, ask = self.adapter.fetch_bid_ask(symbol)
+                raw = float(ask if side == 'sell' else bid)
+                if raw <= 0:
+                    raw = float(self.adapter.fetch_price(symbol))
+            except Exception:
+                raw = float(self.adapter.fetch_price(symbol))
+            px = self.adapter.quantize_price(symbol, raw)
             lo = self.adapter.create_limit_order(symbol, side, px, qty, post_only=True,
                                                  reduce_only=True, client_oid=client_oid + 'm')
             deadline = self._now() + self.MAKER_CLOSE_TIMEOUT_S
