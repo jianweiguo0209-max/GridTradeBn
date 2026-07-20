@@ -76,6 +76,7 @@ def live_baseline():
         'trailing_floor': _STOP['trailing_floor'],
         'funding_stop': _STOP['fundingRate_stop_loss'],
         'funding_equiv_8h': False,   # A案:8h等效归一(默认关=现状锚)
+        'stop_buffer': _V2['stop_buffer_ratio'],   # C案:丝距(终止价缓冲)
         'pv_thr': _STOP['pv_pnl_thr'],
         'pv_mult': _STOP['pv_mult'],
         'pv_n': _STOP['pv_n'],
@@ -182,7 +183,8 @@ def _pv_key(p):
 def tasks_for(wd, params, pv_cache):
     """按臂参数组装 data_tasks（几何重算 + pv 尖峰按 key 复用）。"""
     v2 = dict(_V2, atr_range_multiplier=params['band'],
-              grid_count_min=params['count_min'], grid_spacing_max=params['spacing_max'])
+              grid_count_min=params['count_min'], grid_spacing_max=params['spacing_max'],
+              stop_buffer_ratio=params.get('stop_buffer', _V2['stop_buffer_ratio']))
     key = _pv_key(params)
     if key not in pv_cache:
         pv_cfg = {'mult': params['pv_mult'], 'n': params['pv_n'], 'period': params['pv_period']}
