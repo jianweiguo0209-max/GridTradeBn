@@ -96,8 +96,7 @@ def build_runtime(config) -> Runtime:
     # 实盘退出信号：pv_spike（对齐回测 calc_pv_spike）+ funding_rate（HL 真实费率），按 grid 节流
     signals = LiveSignalProvider(adapter, mult=DEFAULT_STOP_CFG['pv_mult'],
                                  period=DEFAULT_STOP_CFG['pv_period'], n=DEFAULT_STOP_CFG['pv_n'],
-                                 log=_flush_log,
-                                 funding_equiv_8h=getattr(config, 'funding_equiv_8h', False))
+                                 log=_flush_log)
     manager = GridManager(executor, gates, stop_cfg=DEFAULT_STOP_CFG,
                           event_bus=bus, signal_provider=signals)
 

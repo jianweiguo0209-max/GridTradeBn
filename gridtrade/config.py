@@ -122,7 +122,6 @@ class DeployConfig:
     # 企业微信机器人：URL 是敏感项，本地走 .env，Fly 走 secret。空=完全禁用通知。
     wechat_webhook_url: str = ''
     wechat_timezone: str = 'Asia/Shanghai'
-    funding_equiv_8h: bool = False   # A案:资金费率止损8h等效归一(四窗判决前默认关)
     strategy_name: str = 'gridtrade'
 
 
@@ -208,7 +207,6 @@ def load_deploy_config(env=None) -> DeployConfig:
         universe_min_leverage=_f(env, 'UNIVERSE_MIN_LEVERAGE', 0.0),
         wechat_webhook_url=_s(env, 'WECHAT_WEBHOOK_URL', ''),
         wechat_timezone=_s(env, 'WECHAT_TIMEZONE', 'Asia/Shanghai'),
-        funding_equiv_8h=_b(env, 'FUNDING_EQUIV_8H', False),
         strategy_name=_s(env, 'STRATEGY_NAME', DEFAULT_STRATEGY_CONFIG['strategy_name']),
         cap_min=_f(env, 'CAP_MIN', 20.0),
         cap_max=_f(env, 'CAP_MAX', 100000.0),
