@@ -17,10 +17,11 @@ from gridtrade.execution.grid_executor import _TRADE_REFETCH_OVERLAP_MS
 from gridtrade.execution.monitor import monitor_grid
 from gridtrade.execution.snapshot import build_account_snapshot
 from gridtrade.runtime.commands import INTERVENTION_PREFIX, consume_one
-from gridtrade.state.models import ACTIVE, CLOSING, FAILED, OPENING, now_ms
+from gridtrade.state.models import ACTIVE, CLOSING, FAILED, OPENING, PENDING, now_ms
 
-# OPENING 正常在秒级完成（建行后立即批量挂单）；超过该时长仍零挂单 = 开仓首步即失败的
-# 死网格（线上实证：testnet NEAR/gt06 卡 6h+，SymbolLockGate 因它锁死该币）。
+# PENDING/OPENING 正常在秒级完成（create→转 OPENING→批量挂单）；超过该时长仍零挂单 =
+# 开仓首步即失败的死网格（线上实证：testnet NEAR/gt06 OPENING 卡 6h+ 锁死该币；
+# ELSA/gt09 mainnet 2026-07-19 09:01 死在 PENDING 卡 18h+）。
 STUCK_OPENING_TIMEOUT_SEC = 900
 
 # CLOSING 续平宽限：健康关格（撤 ~40 挂单+平残仓）由发起方 1-2 分钟内完成；monitor
@@ -39,9 +40,11 @@ def _closing_grids(grids_repo):
     return [g for g in grids_repo.list_active() if g.status == CLOSING]
 
 
-def _opening_grids(grids_repo):
-    # open() 首步失败留下的 OPENING 网格：建行后挂单全军覆没/进程死在挂单前，永不转 ACTIVE。
-    return [g for g in grids_repo.list_active() if g.status == OPENING]
+def _torn_open_grids(grids_repo):
+    # open() 撕裂格，永不转 ACTIVE：OPENING（建行后挂单全军覆没/进程死在挂单前）+ PENDING
+    # （进程死在 create→OPENING 转换的微秒窗口内，零挂单；ELSA/gt09 mainnet 2026-07-19 09:01
+    # 实证）。两者同构：超时+零挂单 → FAILED（释放 symbol 槽）。
+    return [g for g in grids_repo.list_active() if g.status in (PENDING, OPENING)]
 
 
 def restore_all(reconciler) -> List[str]:
@@ -131,7 +134,7 @@ def run_monitor_cycle(reconciler, manager, log=print, *,
     """monitor 机循环体：逐网格隔离——单网格故障降级记录，不阻塞其他网格的对账/止损。
 
     顺序：① 续平卡死的 CLOSING 网格（超 closing_grace_sec 宽限才动手，幂等自愈；
-    宽限内视为发起方仍在收尾，避免双进程抢关格竞态）①' 清死 OPENING（超时+零挂单→FAILED，
+    宽限内视为发起方仍在收尾，避免双进程抢关格竞态）①' 清死 PENDING/OPENING（超时+零挂单→FAILED，
     释放 symbol 槽；有挂单/未超时不动）② 每个 ACTIVE 网格一个单元 _grid_unit
     （restore→sync→止损→reconcile），parallel>1 时线程池并发、=1 时原地串行（保底）。
 
@@ -173,14 +176,14 @@ def run_monitor_cycle(reconciler, manager, log=print, *,
                 resumed.append(grid.id)
         except Exception as exc:
             degraded[grid.id] = repr(exc)
-    for grid in _opening_grids(ex.grids):     # 死 OPENING（超时+零挂单）-> FAILED（释放 symbol 槽）
+    for grid in _torn_open_grids(ex.grids):   # 撕裂的死 PENDING/OPENING（超时+零挂单）-> FAILED（释放 symbol 槽）
         try:
             age_s = (now_ms() - int(grid.created_at)) / 1000.0
             if age_s < STUCK_OPENING_TIMEOUT_SEC or ex.orders.list_by_grid(grid.id):
                 continue                      # 正在开仓 / 已有挂单（部分开仓有清理负担）→ 不动
             ex.grids.transition_status(grid.id, FAILED, expected_version=grid.version)
-            log('[monitor] grid %s stuck OPENING -> FAILED (age=%ds, orders=0, %s tag=%s)'
-                % (grid.id, age_s, grid.symbol, grid.tag))
+            log('[monitor] grid %s stuck %s -> FAILED (age=%ds, orders=0, %s tag=%s)'
+                % (grid.id, grid.status, age_s, grid.symbol, grid.tag))
         except Exception as exc:
             degraded[grid.id] = repr(exc)
     _maybe_beat()
