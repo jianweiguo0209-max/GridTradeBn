@@ -119,3 +119,16 @@ def test_equiv_8h_single_settlement_falls_back_to_8h():
     """切片内仅 1 次结算(无前驱推不出间隔)→ 回退 8h(×1,保守不放大)。"""
     fd = _fund('2026-01-01 09:00:00', 0.001)
     assert _run_equiv(fd, equiv=True)['exit_reason'] != '资金费率止损'
+
+
+def test_window_end_maker_fee_upper_bound():
+    """B案:窗口结束平仓 maker 计费——同场景净值差恰为 |hold|×px×(taker−maker)/cap;
+    默认(0/缺省)与现状逐位一致。"""
+    fd = _fund('2026-01-01 09:00:00', 0.0001)             # 不触发任何止损 → 窗口结束
+    base = _run_equiv(fd, equiv=False)
+    stop_m = dict(_STOP, window_end_maker=0.0002)
+    res_m = simulate_grid_engine(_bars(), _GP, cap=1000.0, leverage=5.0,
+                                 stop_cfg=stop_m, funding_df=fd,
+                                 neutral_init=False, active_stop_mode='none')
+    assert base['exit_reason'] == '窗口结束' and res_m['exit_reason'] == '窗口结束'
+    assert res_m['pnl_ratio'] > base['pnl_ratio']          # maker 费更低 → 收益更高
