@@ -29,13 +29,14 @@ def _period_ms(period):
 
 class LiveSignalProvider:
     def __init__(self, adapter, *, mult=3, period='15min', n=233, refresh_sec=900,
-                 now_fn=None, log=print):
+                 now_fn=None, log=print, funding_equiv_8h=False):
         self.adapter = adapter
         self.mult = mult
         self.period = period
         self.n = n
         self.refresh_sec = float(refresh_sec)
         self._now = now_fn or time.time
+        self.funding_equiv_8h = bool(funding_equiv_8h)
         self.log = log
         self._cache = {}   # grid_id -> (fetched_at_sec, pv_spike, funding_rate)
 
@@ -83,7 +84,14 @@ class LiveSignalProvider:
                 symbol, now_ms - int(hours * 3600_000), now_ms)
             if fh is None or len(fh) == 0:
                 return 0.0
-            return float(fh.sort_values('ts')['fundingRate'].iloc[-1])
+            fh = fh.sort_values('ts')
+            rate = float(fh['fundingRate'].iloc[-1])
+            if self.funding_equiv_8h and len(fh) >= 2:
+                # A案:8h等效归一——4h/1h 结算币(实测占池2/3)同阈值日化流血2×/8×;
+                # 间隔=最近两次结算差,回退8h(仅1条记录时,≡原值);与回测 fr_iv_h 同公式。
+                iv_h = (float(fh['ts'].iloc[-1]) - float(fh['ts'].iloc[-2])) / 3600_000.0
+                rate *= 8.0 / min(max(iv_h, 1.0), 8.0)
+            return rate
         except Exception as exc:
             self.log('[signals] funding_rate %s 失败降级: %r' % (symbol, exc))
             return 0.0
