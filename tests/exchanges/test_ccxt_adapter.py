@@ -301,3 +301,35 @@ def test_ccxt_fetch_leverage_tiers_returns_defensive_copy():
     assert a.fetch_leverage_tiers('BTC/USDT:USDT') == [    # 二次 fetch 不受污染
         {'maxLeverage': 20, 'maxNotional': 10000.0},
         {'maxLeverage': 10, 'maxNotional': 50000.0}]
+
+
+def _raw_trade(fee_cost, fee_ccy):
+    return {'id': 't1', 'order': 'o1', 'symbol': 'ELSA/USDT:USDT', 'side': 'sell',
+            'price': 1.0, 'amount': 2.0, 'timestamp': 1704067200000,
+            'fee': {'cost': fee_cost, 'currency': fee_ccy}, 'info': {'clOrdId': 'g:0'}}
+
+
+def test_to_trade_converts_bnb_fee_to_quote_usdt():
+    # 开「BNB 抵扣手续费」时 commissionAsset=BNB，原样把 BNB 数值当 USDT 记 → 少记约币价倍。
+    # 修：按 BNB/USDT 价换算成 USDT 入账。FakeCcxtClient.fetch_ticker last=2.0 → 汇率=2.0。
+    from gridtrade.exchanges.ccxt_adapter import CcxtAdapter
+    a = CcxtAdapter(FakeCcxtClient(), name='ccxt')
+    assert a._to_trade(_raw_trade(0.1, 'BNB')).fee == 0.2   # 0.1 BNB × 2.0 = 0.2 USDT
+
+
+def test_to_trade_usdt_fee_passthrough():
+    # quote 币种(USDT)计价的费直接入账，不换算。
+    from gridtrade.exchanges.ccxt_adapter import CcxtAdapter
+    a = CcxtAdapter(FakeCcxtClient(), name='ccxt')
+    assert a._to_trade(_raw_trade(0.1, 'USDT')).fee == 0.1
+
+
+def test_to_trade_fee_conversion_fail_open_to_raw():
+    # 换算汇率取不到 → fail-open 退回原值（绝不因费换算阻断交易/记账）。
+    from gridtrade.exchanges.ccxt_adapter import CcxtAdapter
+    c = FakeCcxtClient()
+    def boom(*a, **k):
+        raise RuntimeError('no ticker')
+    c.fetch_ticker = boom
+    a = CcxtAdapter(c, name='ccxt')
+    assert a._to_trade(_raw_trade(0.1, 'BNB')).fee == 0.1

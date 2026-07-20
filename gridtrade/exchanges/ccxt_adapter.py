@@ -199,13 +199,46 @@ class CcxtAdapter(ExchangeAdapter):
         return Position(symbol, 0.0, 0.0)
 
     def _to_trade(self, r) -> Trade:
+        feeobj = r.get('fee') or {}
+        fee = self._fee_to_quote(float(feeobj.get('cost') or 0.0), feeobj.get('currency'))
         return Trade(
             id=str(r['id']),
             client_oid=str((r.get('info', {}) or {}).get('clOrdId') or r.get('order') or r['id']),
             symbol=self.to_canonical(r['symbol']), side=r['side'],
             price=float(r['price']), size=float(r['amount']),
-            fee=float((r.get('fee') or {}).get('cost') or 0.0), ts=int(r['timestamp']),
+            fee=fee, ts=int(r['timestamp']),
             order_id=(str(r['order']) if r.get('order') is not None else None))
+
+    _FEE_RATE_TTL_S = 300.0
+
+    def _fee_to_quote(self, cost, currency):
+        """手续费换算到 quote(USDT)。开「BNB 抵扣手续费」时 commissionAsset=BNB，原样把 BNB
+        数值当 USDT 记 → 少记约币价倍(mainnet 实测 ~600×，PnL 系统性虚高)；按币价换算成 USDT
+        入账。quote 计价/零费直接返回；换算失败 fail-open 退回原值(留痕)——绝不因费换算阻断记账。"""
+        cost = float(cost or 0.0)
+        if cost == 0.0 or not currency or currency == self.quote_currency:
+            return cost
+        rate = self._fee_ccy_rate(currency)
+        return cost * rate if rate else cost
+
+    def _fee_ccy_rate(self, currency):
+        """currency→quote 现价，按币缓存 _FEE_RATE_TTL_S 秒(费换算容忍近似现价，避免逐笔取价)。
+        取价失败：有陈价用陈价，否则留痕返回 None(调用方退回原值)。"""
+        cache = self.__dict__.setdefault('_fee_rate_cache', {})
+        now = time.time()
+        hit = cache.get(currency)
+        if hit and now - hit[1] < self._FEE_RATE_TTL_S:
+            return hit[0]
+        try:
+            px = float(self.fetch_price('%s/%s:%s' % (currency, self.quote_currency, self.quote_currency)))
+        except Exception as exc:
+            if hit:
+                return hit[0]
+            print('[fee] %s→%s 费率获取失败,本次费暂记原值: %r'
+                  % (currency, self.quote_currency, exc), flush=True)
+            return None
+        cache[currency] = (px, now)
+        return px
 
     def _to_order(self, r) -> Order:
         return Order(
