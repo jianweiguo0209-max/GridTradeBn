@@ -248,7 +248,12 @@ def _apply_exit(df, cap, c_rate_taker, stop_cfg=None, margin_rate=0.05, pv_spike
         # 用 fr_last（最后已结算费率）而非 fundingRate（只在结算时刻非 0）——实盘每 tick 拿
         # 最后已结算费率判，开格瞬间即可命中窗前那次结算。见 cal_equity_curve 两列分工。
         if fr_thr is not None and 'fr_last' in df.columns:
-            mark(np.abs(df['fr_last'].values) > fr_thr, '资金费率止损')
+            fr_v = np.abs(df['fr_last'].values)
+            if stop_cfg.get('funding_equiv_8h') and 'fr_iv_h' in df.columns:
+                # A案:8h 等效归一 rate×(8/interval)——4h/1h 结算币同阈值下日化流血 2×/8×;
+                # 8h 币逐位不变(×1)。阈值语义冻结:0.0015 恒为"8h 等效"。
+                fr_v = fr_v * (8.0 / df['fr_iv_h'].values)
+            mark(fr_v > fr_thr, '资金费率止损')
 
         # ---- 主动止损（按 mode 分派）----
         pnl_thr = -0.01  # 新型主动止损的统一亏损门槛（1%）
@@ -335,10 +340,14 @@ def _attach_fr_last(df, funding_df):
              [['candle_begin_time', 'fundingRate']]
              .rename(columns={'fundingRate': '_fr_last'})
              .sort_values('candle_begin_time'))
+    # 结算间隔(h)=与上一次结算的时间差——8h 等效归一用(A案 2026-07-20:币安 4h 结算 425 币
+    # +1h 5 币≈池 2/3,同阈值日化流血 2×/8×)。切片首行无前驱 → 回退 8h(保守:不放大)。
+    _last['_fr_iv'] = (_last['candle_begin_time'].diff().dt.total_seconds() / 3600.0)
     df = pd.merge_asof(df, _last, on='candle_begin_time', direction='backward',
                        tolerance=pd.Timedelta(hours=FUNDING_STOP_LOOKBACK_H))
     df['fr_last'] = df['_fr_last'].fillna(value=0.0)
-    del df['_fr_last']
+    df['fr_iv_h'] = df['_fr_iv'].fillna(value=8.0).clip(lower=1.0, upper=8.0)
+    del df['_fr_last'], df['_fr_iv']
     return df
 
 

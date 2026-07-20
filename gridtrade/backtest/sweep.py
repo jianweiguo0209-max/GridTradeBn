@@ -75,6 +75,7 @@ def live_baseline():
         'trailing_k': _STOP['trailing_k'],
         'trailing_floor': _STOP['trailing_floor'],
         'funding_stop': _STOP['fundingRate_stop_loss'],
+        'funding_equiv_8h': False,   # A案:8h等效归一(默认关=现状锚)
         'stop_buffer': _V2['stop_buffer_ratio'],   # C案:丝距(终止价缓冲)
         'window_end_maker': 0.0,     # B案:窗口结束按maker计费(0=关=现状taker)
         'pv_thr': _STOP['pv_pnl_thr'],
@@ -209,6 +210,7 @@ def run_arm(wd, arm, pv_cache, *, workers=1):
     stop_cfg = {'stop_loss': p['stop_loss'], 'trailing_k': p['trailing_k'],
                 'trailing_floor': p['trailing_floor'],
                 'fundingRate_stop_loss': p['funding_stop'],
+                'funding_equiv_8h': p['funding_equiv_8h'],
                 'window_end_maker': p['window_end_maker'],
                 'pv_pnl_thr': p['pv_thr'], 'pv_mult': p['pv_mult'],
                 'pv_period': p['pv_period'], 'pv_n': p['pv_n']}

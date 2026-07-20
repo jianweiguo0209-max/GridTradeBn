@@ -148,3 +148,30 @@ def test_funding_rate_lookback_matches_settlement_interval_plus_1h():
     assert start_ms <= row_ts <= end_ms               # 7h 前的行落在 9h 窗内
     assert row_ts < now_ms - 3 * 3600_000             # 旧固定 3h 窗会早于该行,漏判
     assert abs(fr - 0.00042) < 1e-12                  # 确实取到该行,而非默认 0.0
+
+
+def test_funding_rate_equiv_8h_normalizes_4h_coin():
+    """A案:funding_equiv_8h=True 时,4h 结算币 rate×(8/4);默认 False 原值不动。"""
+    t0 = 1_700_000_000_000
+    funding = pd.DataFrame({'ts': [t0, t0 + 4 * 3600_000], 'symbol': 'X',
+                            'fundingRate': [0.0004, 0.001],
+                            'realizedRate': [0.0004, 0.001]})
+    now = (t0 + 5 * 3600_000) / 1000.0
+    adp = FakeAdapter(bars=_bars_with_spike(), funding=funding)
+    _, fr_raw = LiveSignalProvider(adp, now_fn=lambda: now).get('g1', 'X', open_ms=0)
+    assert abs(fr_raw - 0.001) < 1e-12
+    adp2 = FakeAdapter(bars=_bars_with_spike(), funding=funding)
+    _, fr_eq = LiveSignalProvider(adp2, now_fn=lambda: now,
+                                  funding_equiv_8h=True).get('g2', 'X', open_ms=0)
+    assert abs(fr_eq - 0.002) < 1e-12
+
+
+def test_funding_rate_equiv_8h_single_row_keeps_raw():
+    """仅 1 条结算记录推不出间隔 → 原值(≡8h),不放大。"""
+    t0 = 1_700_000_000_000
+    funding = pd.DataFrame({'ts': [t0], 'symbol': 'X',
+                            'fundingRate': [0.001], 'realizedRate': [0.001]})
+    adp = FakeAdapter(bars=_bars_with_spike(), funding=funding)
+    _, fr = LiveSignalProvider(adp, now_fn=lambda: (t0 + 3600_000) / 1000.0,
+                               funding_equiv_8h=True).get('g1', 'X', open_ms=0)
+    assert abs(fr - 0.001) < 1e-12
