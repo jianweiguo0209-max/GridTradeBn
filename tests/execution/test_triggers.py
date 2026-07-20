@@ -156,3 +156,32 @@ def test_scheduled_trigger_sorts_by_rank():
                                      select_fn=lambda scd, rt, off: rows)
     out = trig.propose(TriggerContext(exchange='okx', run_time=run_time))
     assert [p.symbol for p in out] == ['A/USDT:USDT', 'B/USDT:USDT', 'C/USDT:USDT']
+
+
+def test_scheduled_trigger_records_s_shape_when_present():
+    """s 仪表(2026-07-21):S_shape_5 只记录不排名——列存在时落进 factors,缺列不炸。"""
+    from gridtrade.execution.triggers import ScheduledSelectionTrigger
+    run_time = pd.Timestamp('2025-06-24 14:00:00')
+
+    def _row(sym, rank, s_shape=None):
+        r = _factor_row(sym, rank, run_time)
+        r.update({'Reg_v2_2': 0.1, 'rank_sum': float(rank)})
+        if s_shape is not None:
+            r['S_shape_5'] = s_shape
+        return r
+
+    rows = pd.DataFrame([_row('BTC/USDT:USDT', 1, s_shape=1.42)])
+    trig = ScheduledSelectionTrigger(_strategy_config(), {'Reg_v2_2': True}, [1],
+                                     select_fn=lambda scd, rt, off: rows)
+    ctx = TriggerContext(exchange='okx', run_time=run_time,
+                         symbol_candle_data={'BTC/USDT:USDT': None})
+    trig.propose(ctx)
+    assert ctx.selection_ranked[0]['factors']['S_shape_5'] == 1.42
+    # 缺列(旧数据/异常路径)→ 不记不炸
+    rows2 = pd.DataFrame([_row('BTC/USDT:USDT', 1)])
+    trig2 = ScheduledSelectionTrigger(_strategy_config(), {'Reg_v2_2': True}, [1],
+                                      select_fn=lambda scd, rt, off: rows2)
+    ctx2 = TriggerContext(exchange='okx', run_time=run_time,
+                          symbol_candle_data={'BTC/USDT:USDT': None})
+    trig2.propose(ctx2)
+    assert 'S_shape_5' not in ctx2.selection_ranked[0]['factors']
