@@ -335,17 +335,17 @@ def test_to_trade_fee_conversion_fail_open_to_raw():
     assert a._to_trade(_raw_trade(0.1, 'BNB')).fee == 0.1
 
 
-def test_fetch_bid_ask_from_ticker():
-    # maker-close 挂被动侧需真实 best bid/ask（挂 last 价会跨点差被 GTX 拒）。
+def test_fetch_bid_ask_from_order_book():
+    # 币安 futures fetch_ticker 不返 bid/ask(prod 实测 None),必须走 order_book 盘口。
     from gridtrade.exchanges.ccxt_adapter import CcxtAdapter
     c = FakeCcxtClient()
-    c.fetch_ticker = lambda sym: {'bid': 1.9, 'ask': 2.1, 'last': 2.0}
+    c.fetch_order_book = lambda sym, limit=5: {'bids': [[1.9, 10]], 'asks': [[2.1, 8]]}
     assert CcxtAdapter(c, name='x').fetch_bid_ask('BTC/USDT:USDT') == (1.9, 2.1)
 
 
-def test_fetch_bid_ask_falls_back_to_last_when_missing():
-    # ticker 缺 bid/ask（薄簿/接口抖动）→ 回退 last（fail-open，不阻断平仓）。
+def test_fetch_bid_ask_falls_back_to_last_when_book_empty():
+    # 盘口空(薄簿/抖动)→ 回退 last（fail-open，不阻断平仓）。FakeCcxtClient.fetch_ticker last=2.0。
     from gridtrade.exchanges.ccxt_adapter import CcxtAdapter
     c = FakeCcxtClient()
-    c.fetch_ticker = lambda sym: {'last': 2.0}
+    c.fetch_order_book = lambda sym, limit=5: {'bids': [], 'asks': []}
     assert CcxtAdapter(c, name='x').fetch_bid_ask('BTC/USDT:USDT') == (2.0, 2.0)

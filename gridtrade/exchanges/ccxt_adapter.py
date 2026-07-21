@@ -135,12 +135,22 @@ class CcxtAdapter(ExchangeAdapter):
         return float(self.client.fetch_ticker(self.to_native(symbol))['last'])
 
     def fetch_bid_ask(self, symbol):
-        """(best_bid, best_ask) 取自 ticker;缺失(薄簿/抖动)回退 last(fail-open)。"""
-        t = self.client.fetch_ticker(self.to_native(symbol))
-        last = t.get('last')
-        bid = t.get('bid') or last
-        ask = t.get('ask') or last
-        return (float(bid), float(ask))
+        """(best_bid, best_ask) 取自 order_book 盘口顶档;缺失回退 last(fail-open)。
+        注:币安 futures fetch_ticker **不返** bid/ask(prod 实测恒 None),必须走 order_book。"""
+        native = self.to_native(symbol)
+        bid = ask = None
+        try:
+            ob = self.client.fetch_order_book(native, limit=5)
+            if ob.get('bids'):
+                bid = ob['bids'][0][0]
+            if ob.get('asks'):
+                ask = ob['asks'][0][0]
+        except Exception:
+            pass
+        if bid and ask:
+            return (float(bid), float(ask))
+        last = float(self.client.fetch_ticker(native)['last'])
+        return (float(bid) if bid else last, float(ask) if ask else last)
 
     def fetch_max_leverages(self) -> dict:
         """{canonical: maxLeverage} 自 ccxt markets(limits.leverage.max),实例缓存;
