@@ -128,14 +128,15 @@ def test_strategy_defaults_mirror_legacy():
     assert DEFAULT_STRATEGY_CONFIG['price_limit'] == [0.25, 0.25]
     assert DEFAULT_STRATEGY_CONFIG['stop_limit'] == 0.01
     assert DEFAULT_STRATEGY_CONFIG['grid_v2_config']['grid_count_max'] == 149
-    # 2026-07-19 重扫v2 回滚候选A 三值(诚实引擎终审:旧现值唯一 4/6 窗正+零破网;候选A 系
-    # 引擎保真度 bug——首触丢弃/pv前视等——的幻觉产物;详 config 注释与 memory binance-param-resweep)
-    assert DEFAULT_STRATEGY_CONFIG['grid_v2_config']['grid_count_min'] == 10
-    assert DEFAULT_STOP_CFG['stop_loss'] == 0.045    # HL 时代原值;0.035 留出窗现形(HOLD-A 垫底)
-    assert DEFAULT_STOP_CFG['trailing_k'] == 0.3     # 连续回撤止盈恢复——诚实引擎下是真保护(关掉 OOS 多亏 3.5pp)
-    assert DEFAULT_STOP_CFG['trailing_floor'] == 0.00618
+    # 2026-07-22 s030 冠军配置(geo_final 战役:诚实引擎六窗对锚Σ+7.1pp、双留出全过;
+    # 详 config 注释与 memory grid-fitness-score-research)。联动五值,非单改。
+    assert DEFAULT_STRATEGY_CONFIG['grid_v2_config']['atr_range_multiplier'] == 3
+    assert DEFAULT_STRATEGY_CONFIG['grid_v2_config']['grid_count_min'] == 16
+    assert DEFAULT_STOP_CFG['stop_loss'] == 0.03      # pv 让位后固损任亏损主挡板,SWEEP4 内点
+    assert DEFAULT_STOP_CFG['trailing_k'] == 0.3      # 连续回撤止盈保留(全关每窗非最优)
+    assert DEFAULT_STOP_CFG['trailing_floor'] == 0.02  # 锁盈门槛 2%,治锁小利没收燃料溢价
     assert DEFAULT_STOP_CFG['fundingRate_stop_loss'] == 0.0015
-    assert DEFAULT_STOP_CFG['pv_pnl_thr'] == 0.005    # 尖峰时浮盈<+0.5%即撤(2026-07-07 PV研究)
+    assert DEFAULT_STOP_CFG['pv_pnl_thr'] == -0.01    # 亏≥1%才认尖峰(+0.005 磨涨窗系统性自伤)
     assert DEFAULT_STOP_CFG['pv_mult'] == 3
     assert DEFAULT_STOP_CFG['pv_n'] == 100            # 量能基线 25h 真滚动窗(n 扫描甜点档)
     assert DEFAULT_STOP_CFG['pv_period'] == '15min'   # 非 '15m'（pandas 会当成月）
