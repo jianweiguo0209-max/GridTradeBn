@@ -418,7 +418,9 @@ class GridExecutor:
 
 
     # B案:maker-first 参数(仅周期再平衡链;紧急止损链不走此路径)
-    MAKER_CLOSE_TIMEOUT_S = 20.0      # 限价等待成交上限(12H 换仓无时间压力,晚 20s 无影响)
+    MAKER_CLOSE_TIMEOUT_S = 120.0     # 限价等待成交上限(12H 换仓无时间压力)。20s 太短:薄币
+    # post-only rest 后常等不到 taker→超时回退市价、maker≈0(IN/prod 2026-07-21 实证 0/5779
+    # 超时补余)。加到 120s 给挂单更多时间被吃、提 maker 成交率,代价=平仓多敞口≤2min(可接受)
     MAKER_CLOSE_POLL_S = 2.0
 
     def _place_reduce(self, symbol, side, qty, client_oid, maker_first=False):
