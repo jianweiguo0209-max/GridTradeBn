@@ -230,6 +230,12 @@ class ExchangeAdapter(ABC):
         """{canonical: 最新价 float}。"""
         return {s: float(self.fetch_price(s)) for s in symbols}
 
+    def fetch_bid_ask(self, symbol: str):
+        """(best_bid, best_ask)。默认无簿口径回退到 (last, last)；具体子类(ccxt)覆写取真实盘口。
+        maker-first 平仓挂被动侧(卖挂 ask/买挂 bid)用,避免 post-only 挂 last 跨点差被 GTX 拒。"""
+        p = float(self.fetch_price(symbol))
+        return (p, p)
+
     def fetch_funding_payments_all(self, symbols, since_ms: Optional[int] = None) -> dict:
         """{canonical: [FundingPayment]}，各列表 ts 升序，支付为正。"""
         return {s: self.fetch_funding_payments(s, since_ms=since_ms) for s in symbols}

@@ -31,12 +31,16 @@ class FakeExchange(ExchangeAdapter):
         self._quote_volumes = {}
         self._leverage_tiers = {}       # symbol -> [{'maxLeverage','maxNotional'}]（测试钩子）
         self._leverage_calls = []       # [(symbol, leverage)]（open 设杠杆断言用）
+        self._bidask = {}               # symbol -> (bid, ask)（盘口钩子；未设=无 spread）
 
     # ---- 测试钩子 ----
     def set_price(self, symbol: str, price: float) -> None:
         self._price[symbol] = price
         self._match(symbol, price)
         self._check_stops(symbol, price)
+
+    def set_bid_ask(self, symbol: str, bid: float, ask: float) -> None:
+        self._bidask[symbol] = (float(bid), float(ask))
 
     def seed_ohlcv(self, symbol: str, df: pd.DataFrame) -> None:
         self._ohlcv[symbol] = df.copy()
@@ -143,6 +147,12 @@ class FakeExchange(ExchangeAdapter):
 
     def fetch_price(self, symbol) -> float:
         return self._price_of(symbol)
+
+    def fetch_bid_ask(self, symbol):
+        if symbol in self._bidask:
+            return self._bidask[symbol]
+        p = self._price_of(symbol)      # 未设盘口 = 无 spread（挂被动侧≡挂 last，向后兼容）
+        return (p, p)
 
     def fetch_24h_quote_volumes(self) -> dict:
         return dict(self._quote_volumes)

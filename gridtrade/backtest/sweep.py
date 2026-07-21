@@ -75,6 +75,8 @@ def live_baseline():
         'trailing_k': _STOP['trailing_k'],
         'trailing_floor': _STOP['trailing_floor'],
         'funding_stop': _STOP['fundingRate_stop_loss'],
+        'stop_buffer': _V2['stop_buffer_ratio'],   # C案:丝距(终止价缓冲)
+        'window_end_maker': 0.0,     # B案:窗口结束按maker计费(0=关=现状taker)
         'pv_thr': _STOP['pv_pnl_thr'],
         'pv_mult': _STOP['pv_mult'],
         'pv_n': _STOP['pv_n'],
@@ -181,7 +183,8 @@ def _pv_key(p):
 def tasks_for(wd, params, pv_cache):
     """按臂参数组装 data_tasks（几何重算 + pv 尖峰按 key 复用）。"""
     v2 = dict(_V2, atr_range_multiplier=params['band'],
-              grid_count_min=params['count_min'], grid_spacing_max=params['spacing_max'])
+              grid_count_min=params['count_min'], grid_spacing_max=params['spacing_max'],
+              stop_buffer_ratio=params.get('stop_buffer', _V2['stop_buffer_ratio']))
     key = _pv_key(params)
     if key not in pv_cache:
         pv_cfg = {'mult': params['pv_mult'], 'n': params['pv_n'], 'period': params['pv_period']}
@@ -206,6 +209,7 @@ def run_arm(wd, arm, pv_cache, *, workers=1):
     stop_cfg = {'stop_loss': p['stop_loss'], 'trailing_k': p['trailing_k'],
                 'trailing_floor': p['trailing_floor'],
                 'fundingRate_stop_loss': p['funding_stop'],
+                'window_end_maker': p['window_end_maker'],
                 'pv_pnl_thr': p['pv_thr'], 'pv_mult': p['pv_mult'],
                 'pv_period': p['pv_period'], 'pv_n': p['pv_n']}
     pv_cfg = {'pnl_thr': p['pv_thr'], 'mult': p['pv_mult'],

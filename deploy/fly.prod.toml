@@ -52,6 +52,8 @@ primary_region = "nrt"
   # 余额必被 MarginGate 拒,top-1 选中它=整轮空转(04:00 MYX 实证 L=5→IM $511=全余额)。
   # 与开仓/MarginGate 同源 pick_leverage 预演,零额外权重(共享 fetch_max_leverages bulk 缓存)。
   UNIVERSE_MIN_LEVERAGE = "10"
+  # B案(2026-07-21 用户定):周期再平衡平仓 maker-first;紧急止损链恒市价,超时20s市价兜底
+  MAKER_CLOSE_REBALANCE = "true"
 
   # 币池：全市场动态（2026-07-04 起已去 UNIVERSE_WHITELIST，无该项即走此模式）。
   # resolve_live_universe = 全部 live 永续 swap（list_instruments 只留 swap + canonical

@@ -122,6 +122,7 @@ class DeployConfig:
     # 企业微信机器人：URL 是敏感项，本地走 .env，Fly 走 secret。空=完全禁用通知。
     wechat_webhook_url: str = ''
     wechat_timezone: str = 'Asia/Shanghai'
+    maker_close_rebalance: bool = True    # B案:周期再平衡平仓 maker-first(2026-07-21 用户定默认开)
     strategy_name: str = 'gridtrade'
 
 
@@ -207,6 +208,7 @@ def load_deploy_config(env=None) -> DeployConfig:
         universe_min_leverage=_f(env, 'UNIVERSE_MIN_LEVERAGE', 0.0),
         wechat_webhook_url=_s(env, 'WECHAT_WEBHOOK_URL', ''),
         wechat_timezone=_s(env, 'WECHAT_TIMEZONE', 'Asia/Shanghai'),
+        maker_close_rebalance=_b(env, 'MAKER_CLOSE_REBALANCE', True),
         strategy_name=_s(env, 'STRATEGY_NAME', DEFAULT_STRATEGY_CONFIG['strategy_name']),
         cap_min=_f(env, 'CAP_MIN', 20.0),
         cap_max=_f(env, 'CAP_MAX', 100000.0),

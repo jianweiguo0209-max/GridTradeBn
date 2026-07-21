@@ -4,6 +4,8 @@ client_oid='{grid_id}:{line}:{seq}' 确定性映射网格线，供对账。
 """
 import itertools
 
+import time
+
 from gridtrade.config import compute_cap
 from gridtrade.core.grid_engine import grid_order_info
 from gridtrade.execution.live_equity import LiveEquity
@@ -24,7 +26,8 @@ class GridExecutor:
     def __init__(self, adapter, store, *, cap, gearing=None, leverage=None, fee=0.0002,
                  c_rate_taker=0.0005, max_rate=None, min_amount=0.0,
                  stop_orders_enabled=False, stop_slippage=0.15,
-                 cap_equity_frac=0.0, cap_min=0.0, cap_max=float('inf')):
+                 cap_equity_frac=0.0, cap_min=0.0, cap_max=float('inf'),
+                 maker_close_rebalance=True):
         self.adapter = adapter
         self.grids = GridRepository(store)
         self.orders = OrderRepository(store)
@@ -43,6 +46,10 @@ class GridExecutor:
         self.min_amount = float(min_amount)
         self.stop_orders_enabled = bool(stop_orders_enabled)
         self.stop_slippage = float(stop_slippage)
+        # B案(2026-07-21):周期再平衡平仓 maker-first(默认关=市价现状;紧急链恒不受影响)。
+        self.maker_close_rebalance = bool(maker_close_rebalance)
+        self._now = time.monotonic          # 测试可注入
+        self._sleep = time.sleep
         self.cap_equity_frac = float(cap_equity_frac)
         self.cap_min = float(cap_min)
         self.cap_max = float(cap_max)
@@ -409,7 +416,65 @@ class GridExecutor:
         vwap = sum(float(t.price) * float(t.size) for t in trades) / tot
         return float(vwap), float(sum(float(t.fee) for t in trades)), float(tot)
 
-    def _flatten_symbol(self, grid_id, symbol):
+
+    # B案:maker-first 参数(仅周期再平衡链;紧急止损链不走此路径)
+    MAKER_CLOSE_TIMEOUT_S = 120.0     # 限价等待成交上限(12H 换仓无时间压力)。20s 太短:薄币
+    # post-only rest 后常等不到 taker→超时回退市价、maker≈0(IN/prod 2026-07-21 实证 0/5779
+    # 超时补余)。加到 120s 给挂单更多时间被吃、提 maker 成交率,代价=平仓多敞口≤2min(可接受)
+    MAKER_CLOSE_POLL_S = 2.0
+
+    def _place_reduce(self, symbol, side, qty, client_oid, maker_first=False):
+        """减仓单统一出口。maker_first=False:原市价路径,行为逐位不变。
+        True(仅周期再平衡):先挂 post-only reduce-only 限价@最新价(GTX 保证不吃单;
+        会立即成交的价位被交易所拒 → 异常回退市价),轮询至离簿或超时;超时撤单
+        (撤单窗口部分成交由调用方按 oid 回捞,不丢);余量市价补平。
+        返回本次实际下出的订单列表,调用方逐单回捞真实费入账。"""
+        if not maker_first:
+            return [self.adapter.create_market_order(symbol, side, qty, reduce_only=True,
+                                                     client_oid=client_oid)]
+        orders = []
+        maker_filled = 0.0
+        try:
+            # 挂被动侧盘口(卖挂 best ask/买挂 best bid),post-only 保证 rest 不跨点差被 GTX 拒;
+            # 挂 last 价约半数(尤其窄点差币)会跨点差瞬拒→立即回退市价、maker 拿不到返佣
+            # (ARIA/prod 2026-07-20 实证)。取盘口失败 fail-open 退回 last 价(原行为)。
+            try:
+                bid, ask = self.adapter.fetch_bid_ask(symbol)
+                raw = float(ask if side == 'sell' else bid)
+                if raw <= 0:
+                    raw = float(self.adapter.fetch_price(symbol))
+            except Exception:
+                raw = float(self.adapter.fetch_price(symbol))
+            px = self.adapter.quantize_price(symbol, raw)
+            lo = self.adapter.create_limit_order(symbol, side, px, qty, post_only=True,
+                                                 reduce_only=True, client_oid=client_oid + 'm')
+            deadline = self._now() + self.MAKER_CLOSE_TIMEOUT_S
+            while self._now() < deadline:
+                if not any(str(o.id) == str(lo.id)
+                           for o in self.adapter.fetch_open_orders(symbol)):
+                    break                            # 离簿=已成交/已撤,终态
+                self._sleep(self.MAKER_CLOSE_POLL_S)
+            if any(str(o.id) == str(lo.id) for o in self.adapter.fetch_open_orders(symbol)):
+                try:
+                    self.adapter.cancel_order(symbol, lo.id)
+                except Exception:
+                    pass                             # 已成交/已撤 → 目标态已达
+            orders.append(lo)
+            _px, _fee, maker_filled = self._reduce_fill_px_fee(symbol, lo)
+            # 结果日志(巡查计成交率用;demo 费率伪影使 fee 指纹不可靠,此行是 testnet 唯一无歧义证据)
+            print('[maker-close] %s maker成交 %.6g/%.6g @%.6g%s' %
+                  (symbol, maker_filled, qty, px,
+                   '' if qty - maker_filled <= max(self.min_amount, 0.0) else ' → 市价补余'),
+                  flush=True)
+        except Exception as exc:                     # 含 GTX 拒单(价位会立即成交) → 市价回退
+            print('[maker-close] %s 限价段失败(%r)→ 市价回退' % (symbol, exc), flush=True)
+        rem = qty - maker_filled
+        if rem > max(self.min_amount, 0.0):
+            orders.append(self.adapter.create_market_order(symbol, side, rem, reduce_only=True,
+                                                           client_oid=client_oid))
+        return orders
+
+    def _flatten_symbol(self, grid_id, symbol, maker_first=False):
         """无兄弟收尾段:symbol 级扫平(孤儿仓卫生,旧行为);reduce 市价单可能部分成交,
         重拉持仓补 reduce 直至 <= min_amount。每步落 ledger:reduce 合成行(spec
         2026-07-12 补):此前扫平退出不入 grid_fills → 账本重放 net≠0,record 只能靠
@@ -421,11 +486,11 @@ class GridExecutor:
         while abs(pos.net_size) > self.min_amount and attempt < 3:
             side = 'sell' if pos.net_size > 0 else 'buy'
             qty = abs(pos.net_size)
-            o = self.adapter.create_market_order(symbol, side, qty, reduce_only=True,
-                                                 client_oid='%s:close:%d' % (grid_id, attempt))
-            r_px, r_fee, r_filled = self._reduce_fill_px_fee(symbol, o)
-            if r_filled > 0:                      # 按实际成交量记(非请求量 qty):部分成交防过量记
-                self.ledger._record_synthetic(grid_id, side, r_filled, r_px, 'reduce', fee=r_fee)
+            for o in self._place_reduce(symbol, side, qty,
+                                        '%s:close:%d' % (grid_id, attempt), maker_first):
+                r_px, r_fee, r_filled = self._reduce_fill_px_fee(symbol, o)
+                if r_filled > 0:                  # 按实际成交量记(非请求量 qty):部分成交防过量记
+                    self.ledger._record_synthetic(grid_id, side, r_filled, r_px, 'reduce', fee=r_fee)
             attempt += 1
             pos = self.adapter.fetch_positions(symbol)   # 循环由交易所净仓驱动,续平剩余量
 

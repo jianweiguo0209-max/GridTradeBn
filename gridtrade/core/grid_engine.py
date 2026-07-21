@@ -302,7 +302,12 @@ def _apply_exit(df, cap, c_rate_taker, stop_cfg=None, margin_rate=0.05, pv_spike
             df.loc[row.name, 'net_value'] = (row['real_profit'] - row['fr_fee'] - row['fee']
                                              + unreal + cap) / cap
             row = df.iloc[-1]
-        fee_rate = abs(row['hold_num']) * px * c_rate_taker / cap
+        # B案(2026-07-20 审计):窗口结束换仓毫无时间压力,可 maker-first 平仓——
+        # stop_cfg['window_end_maker']=maker费率(>0 即启用)时按 maker 计费(费差上界:
+        # 假设 100% maker 成交,成交概率实盘另验);破网(break_price 非空)保持 taker(保险丝=市价)。
+        _wem = (stop_cfg or {}).get('window_end_maker')
+        _rate = _wem if (_wem and break_price is None) else c_rate_taker
+        fee_rate = abs(row['hold_num']) * px * _rate / cap
         df.loc[row.name, 'net_value'] = row['net_value'] - fee_rate
         return df, None, False
     reason = reason_at[first]

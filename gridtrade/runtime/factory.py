@@ -76,7 +76,8 @@ def build_runtime(config) -> Runtime:
                             stop_orders_enabled=config.stop_orders_enabled,
                             stop_slippage=config.stop_slippage,
                             cap_equity_frac=config.cap_equity_frac,
-                            cap_min=config.cap_min, cap_max=config.cap_max)
+                            cap_min=config.cap_min, cap_max=config.cap_max,
+                            maker_close_rebalance=getattr(config, 'maker_close_rebalance', False))
     gates = GateChain([
         # 并发上限 = eff_concurrency（spec 2026-07-18-margin-gate-exchange-im）：
         # frac 按启用 offset 数 N 放大单格 cap 后，上限必须同步收紧到 N，否则 >N 格

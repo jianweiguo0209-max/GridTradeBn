@@ -122,7 +122,7 @@ class PositionLedger:
 
     # ── 关格净额化 ──
 
-    def close_share(self, grid_id, symbol, exclude=frozenset()):
+    def close_share(self, grid_id, symbol, exclude=frozenset(), maker_first=False):
         """关格净额化(finalize_close 兄弟分支收编;spec 2026-07-11-symbol-desk 组件一):
         ① clamp reduce 自己份额(v23 语义:只平交易所净仓同号部分,≤3 次);每次 reduce
            写 ledger:reduce 合成行入本格账本——账本始终反映"还剩多少没平",崩溃续平时
@@ -142,9 +142,15 @@ class PositionLedger:
                and attempt < 3):
             qty = min(abs(remaining), abs(pos.net_size))
             side = 'sell' if remaining > 0 else 'buy'
-            o = ex.adapter.create_market_order(symbol, side, qty, reduce_only=True,
-                                               client_oid='%s:close:%d' % (grid_id, attempt))
-            r_px, r_fee, r_filled = ex._reduce_fill_px_fee(symbol, o)   # 真实成交均价+真实费+真实成交量
+            _orders = ex._place_reduce(symbol, side, qty,
+                                       '%s:close:%d' % (grid_id, attempt), maker_first)
+            r_px, r_fee, r_filled = 0.0, 0.0, 0.0
+            for o in _orders:
+                _p, _f, _q = ex._reduce_fill_px_fee(symbol, o)   # 真实成交均价+真实费+真实成交量
+                if _q > 0:
+                    r_px = (r_px * r_filled + _p * _q) / (r_filled + _q)
+                    r_fee += _f
+                    r_filled += _q
             # 按**实际成交量**记账+扣 remaining(非请求量 qty):reduce-only 市价单可部分成交,
             # 按 qty 记会过度减仓、remaining 提前归 0 → 循环误退出、交易所留孤儿仓 → 账本背离/熔断
             # (GP 系统实战坑;循环已每轮重读净仓,续减剩余量即可,≤3 次内收敛,超则走残余分摊)。
@@ -218,10 +224,13 @@ class PositionLedger:
                 for gid, c in claims:
                     if gid != exec_gid and abs(c) > eps:
                         self.settle_transfer(gid, exec_gid, symbol, c, px, 'closeset')
+            # B案:周期再平衡(含续平变体)且旗标开 → maker-first;紧急原因恒市价
+            _mk = (getattr(ex, 'maker_close_rebalance', False)
+                   and str(reason).startswith('周期再平衡'))
             if others:                            # ④执行格收尾
-                self.close_share(exec_gid, symbol, exclude=frozenset(ids))
+                self.close_share(exec_gid, symbol, exclude=frozenset(ids), maker_first=_mk)
             else:
-                ex._flatten_symbol(exec_gid, symbol)
+                ex._flatten_symbol(exec_gid, symbol, maker_first=_mk)
             for g in todo:                        # ⑤逐格落库(pnl 已按 mark 实现)
                 out.append(ex._finalize_record(g.id, symbol, reason))
             return out

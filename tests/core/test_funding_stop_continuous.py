@@ -79,3 +79,17 @@ def test_in_window_settlement_still_triggers():
 def test_no_funding_data_does_not_trigger():
     """无资金费数据 → 不触发(契约不变)。"""
     assert _run(None)['exit_reason'] != '资金费率止损'
+
+
+# ---- B案(2026-07-20):窗口结束 maker 计费(费差上界,门控默认关) ----
+
+def test_window_end_maker_fee_upper_bound():
+    """B案:窗口结束平仓 maker 计费——同场景收益差=费率差;默认(0/缺省)与现状逐位一致。"""
+    fd = _fund('2026-01-01 09:00:00', 0.0001)             # 不触发任何止损 → 窗口结束
+    base = _run(fd)
+    stop_m = dict(_STOP, window_end_maker=0.0002)
+    res_m = simulate_grid_engine(_bars(), _GP, cap=1000.0, leverage=5.0,
+                                 stop_cfg=stop_m, funding_df=fd,
+                                 neutral_init=False, active_stop_mode='none')
+    assert base['exit_reason'] == '窗口结束' and res_m['exit_reason'] == '窗口结束'
+    assert res_m['pnl_ratio'] > base['pnl_ratio']          # maker 费更低 → 收益更高

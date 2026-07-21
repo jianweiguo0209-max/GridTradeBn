@@ -93,7 +93,11 @@ class ScheduledSelectionTrigger(TriggerCondition):
         # record-and-replay(2026-07-17):把排名 picks(选中币+因子值+名次)写回 ctx,供
         # scheduler 落 selection_snapshots。fail-soft:序列化失败绝不阻断开格。
         try:
+            # s 仪表(2026-07-21 用户定):S_shape_5(刺币值)只记录不排名——实盘 pnl×s
+            # 分桶取证通道(A族战役唯一幸存资产,cal_factor 已算,此处仅落库)。
             _fcols = [c for c in self.factors if c in factor_data.columns]
+            _fcols += [c for c in ('S_shape_5',)
+                       if c in factor_data.columns and c not in _fcols]
             ctx.selection_offset = int(offset)
             ctx.selection_ranked = [
                 {'symbol': r['symbol'],
