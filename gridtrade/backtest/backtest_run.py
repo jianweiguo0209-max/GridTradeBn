@@ -131,7 +131,8 @@ def _simulate_grid_task(payload):
     payload=(data_task, cfg)：data_task 是选币/数据（可跨参数组合复用），cfg 是仿真配置。
     funding_df 已在父进程按持仓窗预切片（等价、payload 小）；pv_spike_df 已在父进程按
     27h 前置历史预算（实盘同源语义，见 assemble_grid_tasks）。"""
-    (rt, offset, sym, entry, gp, bars_df, funding_df, pv_spike_df), cfg = payload
+    (rt, offset, sym, entry, gp, bars_df, funding_df, pv_spike_df, *_tail), cfg = payload
+    pv_idio_df = _tail[0] if _tail else None      # 尾部追加字段(pv_idio 截面条件化,可缺省)
     pv_cfg = cfg['pv_cfg']
     # 下单量按该币真实 stepSize **向下截断**，对齐实盘（quantize_amount → ccxt
     # amount_to_precision 是 TRUNCATE，wire_qty <= order_num 恒成立）。此前硬传 0.0 把引擎自带的
@@ -147,7 +148,9 @@ def _simulate_grid_task(payload):
                                pv_pnl_thr=pv_cfg.get('pnl_thr', -0.015),
                                pv_mult=pv_cfg.get('mult', 3), pv_n=pv_cfg.get('n', 233),
                                pv_period=pv_cfg.get('period', '15min'),
-                               pv_body_ratio=pv_cfg.get('con2', 0.0))
+                               pv_body_ratio=pv_cfg.get('con2', 0.0),
+                               pv_idio_df=pv_idio_df,
+                               pv_idio_thr=cfg.get('pv_idio_thr'))
     return {
         'run_time': rt, 'offset': int(offset), 'symbol': sym,
         'entry': entry, 'grid_num': int(gp['grid_count']),
@@ -276,7 +279,8 @@ def build_grid_tasks(cache, universe, window_start, window_end, strategy_config,
 
 def simulate_tasks(data_tasks, *, leverage, fee_rate=0.0002, taker_rate=0.0005,
                    max_rate=0.68, stop_cfg=None,
-                   active_stop_mode='pv', pv_cfg=None, workers=1, lot_by_sym=None):
+                   active_stop_mode='pv', pv_cfg=None, workers=1, lot_by_sym=None,
+                   pv_idio_thr=None):
     """对已组装的 data_tasks 跑仿真（可并行）→ 明细 DataFrame。仿真配置在此传入，故同一批
     data_tasks 可反复用不同 (active_stop_mode/pv_cfg/stop_cfg) 仿真——扫参提速的关键。
     fee_rate=maker（网格挂单成交，默认 2bps）、taker_rate=taker（平仓/止损/破网，默认
@@ -287,7 +291,8 @@ def simulate_tasks(data_tasks, *, leverage, fee_rate=0.0002, taker_rate=0.0005,
         lot_by_sym = _LS.load(_V.default_cache_root())
     cfg = {'lev': leverage, 'fee_rate': fee_rate, 'taker_rate': taker_rate,
            'max_rate': max_rate, 'stop_cfg': stop_cfg, 'lot_by_sym': lot_by_sym,
-           'active_stop_mode': active_stop_mode, 'pv_cfg': pv_cfg or {}}
+           'active_stop_mode': active_stop_mode, 'pv_cfg': pv_cfg or {},
+           'pv_idio_thr': pv_idio_thr}
     payloads = [(dt, cfg) for dt in data_tasks]
     if workers and workers > 1 and len(payloads) > 1:
         from concurrent.futures import ProcessPoolExecutor
