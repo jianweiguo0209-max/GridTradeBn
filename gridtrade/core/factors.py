@@ -566,6 +566,16 @@ def cal_factor(df):
 
     Atr_signal(df, 5, 0, 'Atr_5')
     S_shape_signal(df, 5, 0, 'S_shape_5')   # 波动形状(事件币标记);config 不列则惰性
+
+    # 因子窗扫描备选列(2026-07-21 用户令,惰性:config factors 不引用则零影响)。
+    # 约束:PIT 预算 max_candle_num=160(1h)≈13 根 12H bar;Reg_v2 内部 timeperiod=2N → N≤6。
+    Reg_v2_signal(df, 3, 0, 'Reg_v2_3')
+    Reg_v2_signal(df, 6, 0, 'Reg_v2_6')
+    Sgcz_signal(df, 3, 0, 'Sgcz_3')
+    Sgcz_signal(df, 8, 0, 'Sgcz_8')
+    Er_signal(df, 3, 0, 'Er_3')
+    Er_signal(df, 5, 0, 'Er_5')
+    Er_signal(df, 8, 0, 'Er_8')
     df['middle_5'] = df['close'].rolling(5, min_periods=1).mean()
 
     # # 根据指定的参数计算一些技术指标
