@@ -55,3 +55,52 @@ def test_incremental_only_fetches_new_bars_and_equals_full_reload():
     fresh = OneMinuteBarBuffer(RecordingFetch(full), window_ms=100 * 60_000, now_fn=_now_fn_at(t2))
     exp = fresh.get_closed_bars('X')
     assert bars['candle_begin_time'].tolist() == exp['candle_begin_time'].tolist()
+
+
+class FlakyFetch(RecordingFetch):
+    def __init__(self, full):
+        super().__init__(full)
+        self.fail_after = None
+
+    def __call__(self, symbol, since_ms, until_ms):
+        if self.fail_after is not None and len(self.calls) >= self.fail_after:
+            self.calls.append((symbol, int(since_ms), int(until_ms)))
+            raise RuntimeError('boom')
+        return super().__call__(symbol, since_ms, until_ms)
+
+
+def test_incremental_failure_keeps_existing_buffer():
+    full = _series(400)
+    fetch = FlakyFetch(full)
+    t1 = _START + pd.Timedelta(minutes=200) + pd.Timedelta(seconds=5)
+    buf = OneMinuteBarBuffer(fetch, window_ms=100 * 60_000, now_fn=_now_fn_at(t1), log=lambda *a: None)
+    first = buf.get_closed_bars('X')
+    assert len(first) == 100
+    fetch.fail_after = 1                                  # 之后所有拉都抛
+    t2 = _START + pd.Timedelta(minutes=201) + pd.Timedelta(seconds=5)
+    buf._now = _now_fn_at(t2)
+    bars = buf.get_closed_bars('X')                       # 增量拉失败
+    assert not bars.empty                                 # 沿用缓冲,不塌回 0
+    assert bars['candle_begin_time'].max() == _START + pd.Timedelta(minutes=199)
+
+
+def test_cold_load_failure_with_empty_buffer_returns_empty():
+    fetch = FlakyFetch(_series(200))
+    fetch.fail_after = 0                                  # 第一次冷载就抛
+    t = _START + pd.Timedelta(minutes=150) + pd.Timedelta(seconds=5)
+    buf = OneMinuteBarBuffer(fetch, window_ms=100 * 60_000, now_fn=_now_fn_at(t), log=lambda *a: None)
+    assert buf.get_closed_bars('X').empty                 # 无缓冲 + 拉失败 → 空,不抛
+
+
+def test_long_downtime_triggers_cold_reload():
+    full = _series(1000)
+    fetch = RecordingFetch(full)
+    t1 = _START + pd.Timedelta(minutes=200) + pd.Timedelta(seconds=5)
+    buf = OneMinuteBarBuffer(fetch, window_ms=100 * 60_000, now_fn=_now_fn_at(t1), log=lambda *a: None)
+    buf.get_closed_bars('X')
+    t2 = _START + pd.Timedelta(minutes=600) + pd.Timedelta(seconds=5)   # 跳 400 分钟 > 窗宽100
+    buf._now = _now_fn_at(t2)
+    buf.get_closed_bars('X')
+    # 缓冲最后 ts 已早于 now-window → 走冷载全窗(since=cutoff对齐-window),而非增量
+    lo_ms = int((t2.floor('min') - pd.Timedelta(minutes=100)).value // 1_000_000)
+    assert fetch.calls[-1][1] == lo_ms
