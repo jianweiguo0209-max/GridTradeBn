@@ -48,7 +48,8 @@ def test_pv_spike_matches_calc_pv_spike_and_latest_funding():
     expect_pv = int(calc_pv_spike(bars, active_period='15min', mult=3, n=233)['pv_spike'].iloc[-1])
     assert expect_pv == 1                       # 构造的尖峰确实触发（否则测试无意义）
     adp = FakeAdapter(bars=bars, funding=_funding([0.0001, 0.0005, 0.0012]))
-    prov = LiveSignalProvider(adp, mult=3, period='15min', n=233, now_fn=lambda: 1000.0)
+    now_ms = int(bars['candle_begin_time'].iloc[-1].value // 1_000_000) + 60_000  # now 在末根之后→全部已收盘
+    prov = LiveSignalProvider(adp, mult=3, period='15min', n=233, now_fn=lambda: now_ms / 1000.0)
     pv, fr = prov.get('g1', 'X/USDC:USDC', open_ms=0)
     assert pv == expect_pv
     assert abs(fr - 0.0012) < 1e-12             # 取最新一条 fundingRate
@@ -111,15 +112,16 @@ def test_fetch_is_1m_lookback_decoupled_from_open_ms():
     adp = FakeAdapter(bars=_bars_1m(), funding=_funding([0.001]))
     prov = LiveSignalProvider(adp, mult=3, period='15min', n=100, now_fn=lambda: 1_000_000.0)
     now_ms = 1_000_000_000
+    cutoff_ms = (now_ms // 60_000) * 60_000            # 缓冲窗按收盘分钟边界对齐
     prov.get('g1', 'X', open_ms=now_ms - 60_000)      # 开格才 1 分钟
     sym, tf, start, end = adp.last_ohlcv
     assert tf == '1m', '滚动窗需 1m 粒度;取 15m 会退化回半截桶语义'
     assert end == now_ms
-    assert start == now_ms - 108 * 900_000            # (n+8)×period,与 open_ms 无关
+    assert start == cutoff_ms - 108 * 900_000         # (n+8)×period,cutoff对齐,与 open_ms 无关
 
     prov2 = LiveSignalProvider(adp, mult=3, period='15min', n=100, now_fn=lambda: 1_000_000.0)
     prov2.get('g2', 'X', open_ms=0)                   # 开格很久
-    assert adp.last_ohlcv[2] == now_ms - 108 * 900_000  # 窗口不随 open_ms 变
+    assert adp.last_ohlcv[2] == cutoff_ms - 108 * 900_000  # 窗口不随 open_ms 变
 
 
 def test_full_window_baseline_detects_spike_vs_long_history():
@@ -127,8 +129,9 @@ def test_full_window_baseline_detects_spike_vs_long_history():
     (最初实现只取「开网→现在」,开格 1 分钟时基线=自身 expanding,永远判不出。)"""
     bars = _bars_1m(n=1620, base_qv=1e5, spike_qv=5e5)   # 5×基线 > mult=3
     adp = FakeAdapter(bars=bars, funding=_funding([0.001]))
-    prov = LiveSignalProvider(adp, mult=3, period='15min', n=100, now_fn=lambda: 1_000_000.0)
-    pv, _ = prov.get('g1', 'X', open_ms=999_940_000)    # 开格才 1 分钟
+    now_ms = int(bars['candle_begin_time'].iloc[-1].value // 1_000_000) + 60_000  # now 在末根之后→全已收盘
+    prov = LiveSignalProvider(adp, mult=3, period='15min', n=100, now_fn=lambda: now_ms / 1000.0)
+    pv, _ = prov.get('g1', 'X', open_ms=0)              # open_ms 解耦
     assert pv == 1
 
 
@@ -148,3 +151,24 @@ def test_funding_rate_lookback_matches_settlement_interval_plus_1h():
     assert start_ms <= row_ts <= end_ms               # 7h 前的行落在 9h 窗内
     assert row_ts < now_ms - 3 * 3600_000             # 旧固定 3h 窗会早于该行,漏判
     assert abs(fr - 0.00042) < 1e-12                  # 确实取到该行,而非默认 0.0
+
+
+def test_pv_ignores_forming_bar():
+    """末根 forming 桶(未收盘)不参与 pv。尖峰置于 t[105]——只落在最后已收盘 bar(t[119])的
+    15 根滚动窗[105..119]内,不落在 forming bar(t[120])的窗[106..120]。故:丢 forming→pv=1、
+    含 forming→pv=0,两者可区分。"""
+    t = pd.date_range('2026-06-01', periods=121, freq='1min')
+    qv = np.full(121, 1e5, dtype=float)
+    qv[105] = 1e8                     # 只在 t[105] 放尖峰
+    bars = pd.DataFrame({'candle_begin_time': t, 'open': 100.0, 'high': 100.0,
+                         'low': 100.0, 'close': 100.0, 'quote_volume': qv})
+    closed = bars.iloc[:-1]          # 丢 forming(t[120])
+    expect = int(calc_pv_spike(closed, active_period='15min', mult=3, n=233)['pv_spike'].iloc[-1])
+    assert expect == 1               # 收盘视图: 最后 bar=t[119],窗含 t[105]尖峰 → 1
+    incl = int(calc_pv_spike(bars, active_period='15min', mult=3, n=233)['pv_spike'].iloc[-1])
+    assert incl == 0                 # 含 forming: 最后 bar=t[120],窗[106..120]不含尖峰 → 0(旧行为)
+    now_ms = int(t[-1].value // 1_000_000) + 20_000   # now 落在 t[120] 分钟内 → 该桶未收盘
+    adp = FakeAdapter(bars=bars, funding=_funding([0.001]))
+    prov = LiveSignalProvider(adp, mult=3, period='15min', n=233, now_fn=lambda: now_ms / 1000.0)
+    pv, _ = prov.get('g1', 'X', 0)
+    assert pv == expect              # 只按已收盘算,forming 桶不进窗

@@ -20,6 +20,7 @@ import time
 import pandas as pd
 
 from gridtrade.core.grid_engine import calc_pv_spike
+from gridtrade.execution.bar_buffer import OneMinuteBarBuffer
 
 
 def _period_ms(period):
@@ -28,7 +29,7 @@ def _period_ms(period):
 
 
 class LiveSignalProvider:
-    def __init__(self, adapter, *, mult=3, period='15min', n=233, refresh_sec=900,
+    def __init__(self, adapter, *, mult=3, period='15min', n=233, refresh_sec=60,
                  now_fn=None, log=print):
         self.adapter = adapter
         self.mult = mult
@@ -38,6 +39,11 @@ class LiveSignalProvider:
         self._now = now_fn or time.time
         self.log = log
         self._cache = {}   # grid_id -> (fetched_at_sec, pv_spike, funding_rate)
+        # per-symbol 已收盘 1m 滚动缓冲：冷载全窗、之后增量、失败沿用缓冲、丢 forming 桶(见 bar_buffer)
+        self._buffer = OneMinuteBarBuffer(
+            fetch_fn=lambda sym, s, u: adapter.fetch_ohlcv(sym, '1m', s, u),
+            window_ms=(self.n + 8) * _period_ms(self.period),
+            now_fn=self._now, log=log)
 
     def get(self, grid_id, symbol, open_ms):
         """返回 (pv_spike:int(0/1), funding_rate:float)。节流：refresh_sec 内复用缓存。"""
@@ -57,15 +63,10 @@ class LiveSignalProvider:
 
     def _pv_spike(self, symbol, open_ms, now_ms):
         try:
-            # 取数窗与 open_ms 解耦（open_ms 仅留签名兼容），覆盖 n+8 个 period 供 rolling 基线。
-            # **粒度必须是 1m**（方案C，2026-07-18）：calc_pv_spike 现在算「截至 t 的滚动窗」，
-            # 需要 period 内的细粒度成交额。此前取原生 15m → resample 成空操作 → iloc[-1] 是
-            # **进行中的半截桶**，而回测那侧是**整桶（含未来）**广播 —— 两侧从不同源，实测回测
-            # 67.2% 的格窗见尖峰、实盘仅 20.6%（丢 69%），且相位锁使实盘命中率低至 0.16%。
-            # adapter.fetch_ohlcv 自动分页（每次 limit=1000），1620 根 ≈2 次调用，权重可忽略。
-            since_ms = now_ms - (self.n + 8) * _period_ms(self.period)
-            bars = self.adapter.fetch_ohlcv(symbol, '1m', since_ms, now_ms)
-            if bars is None or len(bars) == 0 or 'quote_volume' not in bars.columns:
+            # 从缓冲取**已收盘 1m**（丢 forming 半截桶=(b)；增量取数=治(c)降级；窗宽=n+8个period）。
+            # 粒度 1m + 收盘桶 + 逐分钟评估 → 与回测 pv_spike_for_window/calc_pv_spike 机制对齐。
+            bars = self._buffer.get_closed_bars(symbol)
+            if bars is None or bars.empty or 'quote_volume' not in bars.columns:
                 return 0
             sp = calc_pv_spike(bars, active_period=self.period, mult=self.mult, n=self.n)
             if sp is None or sp.empty:
