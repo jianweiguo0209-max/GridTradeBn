@@ -295,3 +295,8 @@ def test_wechat_config_defaults_and_env_override():
         'WECHAT_TIMEZONE': 'UTC', 'STRATEGY_NAME': 'prod'})
     assert cfg.wechat_webhook_url.endswith('/hook')
     assert cfg.wechat_timezone == 'UTC' and cfg.strategy_name == 'prod'
+
+
+def test_signal_refresh_sec_default_and_env():
+    assert load_deploy_config(env={}).signal_refresh_sec == 60.0
+    assert load_deploy_config(env={'SIGNAL_REFRESH_SEC': '900'}).signal_refresh_sec == 900.0
