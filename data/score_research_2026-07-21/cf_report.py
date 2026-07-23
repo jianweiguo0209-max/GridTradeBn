@@ -91,8 +91,8 @@ def ab_compare(cf, picks_a, picks_b):
 
 
 def main():
-    lines = ['win     rounds alpha_e0 capture regret pool_med pool_top tax_pk/pl '
-             'alpha_s030 汇率 calib 池外']
+    """全指标成绩单(中文列头,含燃料/毒药 z 明细);同步写 txt 与 parquet。"""
+    rows = []
     for wn in WINS:
         p = '%s/ablation/cf_%s.parquet' % (RD, wn)
         if not os.path.exists(p):
@@ -101,16 +101,29 @@ def main():
         d = per_round_metrics(cf)
         a = aggregate(d, cf)
         dg = diagnostics(cf, pd.read_parquet(LAB[wn]))
-        lines.append('%-7s %5d %+7.1fbp %5.2f %+6.1fbp %+7.1fbp %+7.1fbp '
-                     '%+4.1f/%+4.1f %+7.1fbp %5.2f %+6.1fbp %3d'
-                     % (wn, a['rounds'], a['alpha_e0_bp'], a['capture'],
-                        a['regret_bp'], a['pool_med_bp'], a['pool_top_bp'],
-                        a['tax_picks_bp'], a['tax_pool_bp'], a['alpha_s030_bp'],
-                        dg['rate'], dg['calib_bp'], a['picks_outside_pool']))
-    txt = '\n'.join(lines)
+        rows.append({
+            '窗': wn,
+            '轮数': a['rounds'],
+            '选币alpha_E0(bp)': round(a['alpha_e0_bp'], 1),
+            '捕获率': round(a['capture'], 3),
+            '遗憾(bp)': round(a['regret_bp'], 1),
+            '池中位(bp)': round(a['pool_med_bp'], 1),
+            '池顶(bp)': round(a['pool_top_bp'], 1),
+            '止损税·选(bp)': round(a['tax_picks_bp'], 1),
+            '止损税·池(bp)': round(a['tax_pool_bp'], 1),
+            '系统alpha_s030(bp)': round(a['alpha_s030_bp'], 1),
+            '燃料z': round(dg['z_cross1'], 2),
+            '毒药z': round(dg['z_drift'], 2),
+            '汇率(平衡0.54)': round(dg['rate'], 2),
+            '体检分(bp)': round(dg['calib_bp'], 1),
+            '池外选中': a['picks_outside_pool'],
+        })
+    t = pd.DataFrame(rows)
+    txt = t.to_string(index=False)
     print(txt, flush=True)
     with open('%s/ablation/cf_results.txt' % RD, 'w') as f:
         f.write(txt + '\n')
+    t.to_parquet('%s/ablation/cf_results.parquet' % RD)
 
 
 if __name__ == '__main__':
