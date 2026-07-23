@@ -325,3 +325,23 @@ def test_resolve_bt_universe_n_blacklist_is_raw_length_not_intersection():
                                      min_lev=10.0, log=lambda *a: None)
     assert uni == ['AAA/USDT:USDT']
     assert stats['n_blacklist'] == len(bl)              # 原始长度=2,而非交集=1
+
+
+def test_sweep_run_uses_shared_universe_builder(monkeypatch):
+    """sweep_run 票池必须走 resolve_bt_universe(口径分叉回归锁,spec 2026-07-24)。"""
+    import scripts.sweep_run as SRU
+    calls = {}
+
+    def fake_ds(cache):
+        return _uni_adapter(), None
+
+    def fake_resolve(adapter, blacklist, **kw):
+        calls['blacklist'] = tuple(blacklist)
+        return ['AAA/USDT:USDT'], {'n_tradfi': 0, 'n_lowlev': 0,
+                                   'n_blacklist': 0, 'min_lev': 10.0}
+
+    monkeypatch.setattr(SRU, '_binance_datasource_1h', fake_ds)
+    monkeypatch.setattr(SRU, 'resolve_bt_universe', fake_resolve)
+    uni = SRU.resolve_sweep_universe(cache=None)
+    assert uni == ['AAA/USDT:USDT']
+    assert len(calls['blacklist']) > 0          # tier0 黑名单已传入
