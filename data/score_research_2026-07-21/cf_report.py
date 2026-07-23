@@ -51,6 +51,10 @@ def aggregate(d, cf):
             'pool_top_bp': d['pool_top'].mean() * 1e4,
             'tax_picks_bp': (pk['pnl_e0'] - pk['pnl_s030']).mean() * 1e4,
             'tax_pool_bp': (pl['pnl_e0'] - pl['pnl_s030']).mean() * 1e4,
+            'picks_e0_bp': pk['pnl_e0'].mean() * 1e4,      # 绝对值:选中币纯网格均值
+            'pool_e0_bp': pl['pnl_e0'].mean() * 1e4,       # 绝对值:池纯网格均值
+            'picks_s030_bp': pk['pnl_s030'].mean() * 1e4,  # 绝对值:选中币系统实收均值
+            'pool_s030_bp': pl['pnl_s030'].mean() * 1e4,   # 绝对值:池系统实收均值
             'picks_outside_pool': int((cf['picked'] & ~cf['in_pool']).sum())}
 
 
@@ -104,6 +108,10 @@ def main():
         rows.append({
             '窗': wn,
             '轮数': a['rounds'],
+            '选中E0均值(bp)': round(a['picks_e0_bp'], 1),
+            '池E0均值(bp)': round(a['pool_e0_bp'], 1),
+            '选中s030均值(bp)': round(a['picks_s030_bp'], 1),
+            '池s030均值(bp)': round(a['pool_s030_bp'], 1),
             '选币alpha_E0(bp)': round(a['alpha_e0_bp'], 1),
             '捕获率': round(a['capture'], 3),
             '遗憾(bp)': round(a['regret_bp'], 1),
