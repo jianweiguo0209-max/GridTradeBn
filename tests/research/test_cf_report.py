@@ -63,3 +63,20 @@ def test_ab_compare_disjoint_only():
     r = m.ab_compare(cf, pa, pb)
     assert r['n_disjoint'] == 2                        # (rt2,B) vs (rt2,C)
     assert abs(r['mean_diff_bp'] - 10.0) < 1e-9        # 0 − (−10bp)
+
+
+def test_diagnostics_z_rate_calib_math():
+    m = _mod()
+    cf = _toy_cf()
+    # 池截面: cross1 A=3,B=2,C=1 → z=+1/0/−1(样本std=1); drift A=.02,B=.04,C=.06 → z=−1/0/+1
+    rows = []
+    for rt in ('2026-01-01 00:00', '2026-01-01 01:00'):
+        for sym, c1, dr in (('A', 3.0, 0.02), ('B', 2.0, 0.04), ('C', 1.0, 0.06)):
+            rows.append({'rt': pd.Timestamp(rt), 'symbol': sym, 'cross1': c1, 'drift': dr})
+    lab = pd.DataFrame(rows)
+    # 选中: 轮1 A(z=+1/−1), 轮2 B(0/0) → zc=0.5, zd=−0.5, rate=−1
+    d = m.diagnostics(cf, lab, weights={'cross1': 10.0, 'drift': -20.0})
+    assert abs(d['z_cross1'] - 0.5) < 1e-12
+    assert abs(d['z_drift'] + 0.5) < 1e-12
+    assert abs(d['rate'] + 1.0) < 1e-12
+    assert abs(d['calib_bp'] - 15.0) < 1e-12   # 10·0.5 + (−20)·(−0.5)

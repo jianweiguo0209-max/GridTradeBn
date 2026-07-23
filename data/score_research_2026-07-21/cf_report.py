@@ -54,8 +54,9 @@ def aggregate(d, cf):
             'picks_outside_pool': int((cf['picked'] & ~cf['in_pool']).sum())}
 
 
-def diagnostics(cf, lab):
-    """选中桶 vs 池的燃料/毒药 z、汇率(z_drift/z_cross1,平衡线0.54)、calib 分(bp)。"""
+def diagnostics(cf, lab, weights=None):
+    """选中桶 vs 池的燃料/毒药 z、汇率(z_drift/z_cross1,平衡线0.54)、calib 分(bp)。
+    weights=None 时读 score_eval_weights.json 的 weights_bp_per_sigma(生产路径)。"""
     j = cf.merge(lab.rename(columns={'rt': 'run_time'}),
                  on=['run_time', 'symbol'], how='left')
     pool = j[j['in_pool']].copy()
@@ -65,10 +66,12 @@ def diagnostics(cf, lab):
             / g.transform('std').replace(0, np.nan)
     pk = pool[pool['picked']]
     zc, zd = float(pk['z_cross1'].mean()), float(pk['z_drift'].mean())
-    w = json.load(open('%s/ablation/score_eval_weights.json' % RD))['weights_bp_per_sigma']
+    if weights is None:
+        weights = json.load(
+            open('%s/ablation/score_eval_weights.json' % RD))['weights_bp_per_sigma']
     rate = zd / zc if np.isfinite(zc) and abs(zc) > 1e-9 else np.nan
     return {'z_cross1': zc, 'z_drift': zd, 'rate': rate,
-            'calib_bp': w['cross1'] * zc + w['drift'] * zd}
+            'calib_bp': weights['cross1'] * zc + weights['drift'] * zd}
 
 
 def ab_compare(cf, picks_a, picks_b):
