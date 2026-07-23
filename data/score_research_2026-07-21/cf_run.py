@@ -1,0 +1,123 @@
+# data/score_research_2026-07-21/cf_run.py
+"""P1 驱动(spec §4 Phase1):逐选币轮全票池反事实双口径。
+轮=(run_time,offset) 取自 pdetail_<win>(战役 byte 精确生产格=实际选中记录);
+池=build_pit_candidates 生产语义(top55%+PIT,universe 已剔黑名单);
+Atr_5 查 sc_factors/hold_factors 面板;选中币恒评(池外 in_pool=False 标记)。
+产物 ablation/cf_<win>.parquet。用法: cf_run.py <WIN> [stride] [limit]
+stride=每N轮取1(算力降采样,配对设计统计无损;正式跑按冒烟耗时定)。
+"""
+import importlib.util
+import os
+import sys
+import time
+
+sys.path.insert(0, '/Users/thomaschang/Projects/GridTradeBi')
+import gridtrade.backtest  # noqa: F401  锁线程
+
+import numpy as np
+import pandas as pd
+
+from gridtrade.backtest import vision as V
+from gridtrade.backtest.cache import ParquetCache
+from gridtrade.backtest.selection_replay import build_pit_candidates, load_full_series
+from gridtrade.config import DEFAULT_TIER_POLICY
+from gridtrade.core.tier_policy import effective_blacklist
+
+RD = '/Users/thomaschang/Projects/GridTradeBi/data/score_research_2026-07-21'
+_spec = importlib.util.spec_from_file_location('cf_eval', RD + '/cf_eval.py')
+cf_eval = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(cf_eval)
+
+WD = {'W1': ('2025-08-15', '2025-10-14'), 'W2': ('2025-10-15', '2025-12-14'),
+      'OOS': ('2026-01-01', '2026-02-28'), 'IS': ('2026-03-01', '2026-06-30'),
+      'HOLD-A': ('2025-02-01', '2025-03-31'), 'HOLD-B': ('2024-10-01', '2024-11-30')}
+FAC = {w: '%s/sc_factors_%s.parquet' % (RD, w) for w in ('W1', 'W2', 'OOS', 'IS')}
+FAC.update({w: '%s/ablation/hold_factors_%s.parquet' % (RD, w)
+            for w in ('HOLD-A', 'HOLD-B')})
+TOP_VOLUME_PCT = 0.55        # 生产 env UNIVERSE_TOP_VOLUME_PCT 现值(spec §1)
+M1_CAP = 320                 # 1m LRU 上限:须>单轮池币数(~260),否则轮内清缓存=IO 爆炸
+
+
+def main(wn, stride=1, limit=None):
+    out_p = '%s/ablation/cf_%s.parquet' % (RD, wn)
+    if os.path.exists(out_p) and limit is None:
+        print('[%s] SKIP(已有产物)' % wn, flush=True)
+        return
+    w0, w1 = WD[wn]
+    pdet = pd.read_parquet('%s/ablation/pdetail_%s.parquet' % (RD, wn))
+    fac = pd.read_parquet(FAC[wn])[['rt', 'symbol', 'Atr_5']]
+    atr = {(pd.Timestamp(r.rt), r.symbol): float(r.Atr_5) for r in fac.itertuples()}
+    rounds = pdet[['run_time', 'offset']].drop_duplicates().sort_values('run_time')
+    rounds = rounds.iloc[::max(1, int(stride))]
+    if limit is not None:
+        rounds = rounds.head(limit)
+    picks_by_rt = pdet.groupby('run_time')['symbol'].apply(set).to_dict()
+    bl = effective_blacklist((), DEFAULT_TIER_POLICY)
+    syms = sorted(set(V.list_archive_symbols()) - set(bl))
+    cache = ParquetCache(V.default_cache_root())
+    lo1h = pd.Timestamp(w0) - pd.Timedelta(days=10)
+    hi1h = pd.Timestamp(w1) + pd.Timedelta(days=2)
+    series = load_full_series(cache, syms, '1h')
+    for s_ in list(series):                       # 裁窗省内存
+        df = series[s_]
+        df = df[(df['candle_begin_time'] >= lo1h) & (df['candle_begin_time'] < hi1h)]
+        if len(df) < 24:
+            del series[s_]
+        else:
+            series[s_] = df.reset_index(drop=True)
+    m1lo = pd.Timestamp(w0) - pd.Timedelta(days=2)
+    m1hi = pd.Timestamp(w1) + pd.Timedelta(days=2)
+    m1_map, fd_map = {}, {}
+    rows, n_skip, t0 = [], 0, time.time()
+    for i, rr in enumerate(rounds.itertuples()):
+        rt = pd.Timestamp(rr.run_time)
+        pool = set(build_pit_candidates(
+            series, rt, max_candle_num=160, min_quote_volume=0.0,
+            top_volume_pct=TOP_VOLUME_PCT, blacklist=()).keys())
+        picks = picks_by_rt.get(rr.run_time, set())
+        for sym in sorted(pool | picks):
+            a5 = atr.get((rt, sym))
+            if a5 is None or not np.isfinite(a5):
+                n_skip += 1
+                continue
+            m1 = m1_map.get(sym)
+            if m1 is None:
+                m1 = cache.read_all_days('1m', sym)
+                if m1 is not None and not m1.empty:
+                    m1 = m1[(m1['candle_begin_time'] >= m1lo)
+                            & (m1['candle_begin_time'] < m1hi)].reset_index(drop=True)
+                m1_map[sym] = m1
+            fd = fd_map.get(sym)
+            if fd is None:
+                fd = cache.read_all_days('funding', sym)
+                fd_map[sym] = fd
+            try:
+                out = cf_eval.eval_grid(m1, fd, rt, a5, geometry='v2')
+            except Exception:
+                n_skip += 1
+                continue
+            if out is None:
+                n_skip += 1
+                continue
+            rows.append({'run_time': rt, 'offset': int(rr.offset), 'symbol': sym,
+                         'in_pool': sym in pool, 'picked': sym in picks,
+                         'Atr_5': a5, **out})
+        if len(m1_map) > M1_CAP:
+            m1_map.clear()
+            fd_map.clear()
+        if (i + 1) % 10 == 0:
+            print('[%s] 轮 %d/%d 行=%d skip=%d %.1fs/轮'
+                  % (wn, i + 1, len(rounds), len(rows), n_skip,
+                     (time.time() - t0) / (i + 1)), flush=True)
+    df = pd.DataFrame(rows)
+    if limit is None:
+        df.to_parquet(out_p)
+    n_out = int((df['picked'] & ~df['in_pool']).sum()) if len(df) else 0
+    print('[%s] DONE 轮=%d 行=%d skip=%d 池外选中=%d' % (wn, len(rounds), len(df),
+          n_skip, n_out), flush=True)
+
+
+if __name__ == '__main__':
+    main(sys.argv[1],
+         int(sys.argv[2]) if len(sys.argv) > 2 else 1,
+         int(sys.argv[3]) if len(sys.argv) > 3 else None)
