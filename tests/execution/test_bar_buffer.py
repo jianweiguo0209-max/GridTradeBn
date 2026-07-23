@@ -104,3 +104,31 @@ def test_long_downtime_triggers_cold_reload():
     # 缓冲最后 ts 已早于 now-window → 走冷载全窗(since=cutoff对齐-window),而非增量
     lo_ms = int((t2.floor('min') - pd.Timedelta(minutes=100)).value // 1_000_000)
     assert fetch.calls[-1][1] == lo_ms
+
+
+def test_fresh_buffer_short_circuits_fetch():
+    """同一分钟内重复调用（同币双格场景）：缓冲已含最新收盘桶 → 零新增请求、结果逐字节一致。"""
+    full = _series(400)
+    fetch = RecordingFetch(full)
+    t1 = _START + pd.Timedelta(minutes=200) + pd.Timedelta(seconds=5)
+    buf = OneMinuteBarBuffer(fetch, window_ms=100 * 60_000, now_fn=_now_fn_at(t1))
+    first = buf.get_closed_bars('X')
+    n_calls = len(fetch.calls)                       # 冷载 1 次
+    second = buf.get_closed_bars('X')                # 同分钟再调
+    assert len(fetch.calls) == n_calls               # 短路：零新增 fetch
+    pd.testing.assert_frame_equal(first, second)     # 数据完全同源
+
+
+def test_fresh_short_circuit_unsticks_after_minute_rollover():
+    """分钟翻转后必须恢复增量取数（防过度缓存吃掉新收盘桶）。"""
+    full = _series(400)
+    fetch = RecordingFetch(full)
+    now = {'ts': _START + pd.Timedelta(minutes=200) + pd.Timedelta(seconds=5)}
+    buf = OneMinuteBarBuffer(fetch, window_ms=100 * 60_000,
+                             now_fn=lambda: now['ts'].value / 1e9)
+    buf.get_closed_bars('X')
+    n_calls = len(fetch.calls)
+    now['ts'] += pd.Timedelta(minutes=1)             # 进入下一分钟
+    bars = buf.get_closed_bars('X')
+    assert len(fetch.calls) == n_calls + 1           # 恢复增量 fetch
+    assert bars['candle_begin_time'].max() == _START + pd.Timedelta(minutes=200)

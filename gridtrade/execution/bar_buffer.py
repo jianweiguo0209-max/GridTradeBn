@@ -27,23 +27,27 @@ class OneMinuteBarBuffer:
         cutoff_ms = int(cutoff.value // 1_000_000)
         lo_ms = cutoff_ms - self.window_ms                      # 窗口按收盘分钟边界对齐
         buf = self._buf.get(symbol)
-        stale = (buf is None or buf.empty
-                 or int(buf['candle_begin_time'].iloc[-1].value // 1_000_000) < lo_ms)
-        try:
-            if stale:
-                df = self.fetch_fn(symbol, lo_ms, now_ms)
-                buf = self._closed(df, cutoff)
-            else:
-                last_ms = int(buf['candle_begin_time'].iloc[-1].value // 1_000_000)
-                inc = self._closed(self.fetch_fn(symbol, last_ms + _MIN_MS, now_ms), cutoff)
-                if not inc.empty:
-                    buf = (pd.concat([buf, inc], ignore_index=True)
-                           .drop_duplicates('candle_begin_time')
-                           .sort_values('candle_begin_time'))
-        except Exception as exc:            # 降级：沿用旧缓冲，绝不塌回空
-            self.log('[bar_buffer] %s fetch 降级,沿用缓冲: %r' % (symbol, exc))
-            if buf is None:
-                return pd.DataFrame()
+        last_ms = (int(buf['candle_begin_time'].iloc[-1].value // 1_000_000)
+                   if buf is not None and not buf.empty else None)
+        # 新鲜度短路：末根==cutoff-1min ⇒ 缓冲已含最新已收盘桶，增量 fetch 只会拉到
+        # 被丢弃的 forming 桶=纯浪费权重（cap2 同币双格每分钟重复拉的根因，2026-07-23）。
+        # 跳过取数直接走既有切片，返回数据与 fetch 后完全同源——pv 机制口径零变化。
+        if last_ms != cutoff_ms - _MIN_MS:
+            stale = last_ms is None or last_ms < lo_ms
+            try:
+                if stale:
+                    df = self.fetch_fn(symbol, lo_ms, now_ms)
+                    buf = self._closed(df, cutoff)
+                else:
+                    inc = self._closed(self.fetch_fn(symbol, last_ms + _MIN_MS, now_ms), cutoff)
+                    if not inc.empty:
+                        buf = (pd.concat([buf, inc], ignore_index=True)
+                               .drop_duplicates('candle_begin_time')
+                               .sort_values('candle_begin_time'))
+            except Exception as exc:        # 降级：沿用旧缓冲，绝不塌回空
+                self.log('[bar_buffer] %s fetch 降级,沿用缓冲: %r' % (symbol, exc))
+                if buf is None:
+                    return pd.DataFrame()
         if buf is None or buf.empty:
             return pd.DataFrame()
         lo = pd.Timestamp(lo_ms, unit='ms')
