@@ -527,6 +527,35 @@ def exclude_low_leverage(symbols, tiers_fetch, *, notional, gearing, min_lev, lo
     return kept, len(dropped)
 
 
+def resolve_bt_universe(adapter, blacklist, *, archive_symbols=None, min_lev=None,
+                        log=print):
+    """回测票池单一构建入口(spec 2026-07-24-sweep-universe-align):归档全量(含退市,无幸存者
+    偏差)−黑名单−非COIN(TradFi)−低杠杆(BT_MIN_LEVERAGE 默认10=实盘同值,=0 显式停用)。
+    main() 与 sweep_run 共用——2026-07-24 选币可预测性 recon 发现 sweep/研究脚本自建裸池
+    绕过两道过滤(s030 出自宽池),口径分叉在此收口。archive_symbols/min_lev 注入点仅供测试,
+    生产路径默认 None。"""
+    from gridtrade.backtest import vision as V
+    arch_full = (V.list_archive_symbols() if archive_symbols is None
+                 else list(archive_symbols))
+    _arch = set(arch_full) - set(blacklist)
+    universe, _n_tradfi = exclude_non_coin(_arch, adapter)
+    _minlev = (float(os.environ.get('BT_MIN_LEVERAGE', 10.0))
+               if min_lev is None else float(min_lev))
+    # notional/gearing 与回测 sizing 同源:cap=1000(simulate 硬编)× gearing(旧lev×0.68=3.4)
+    # →$3400,与实盘当前 $2555 同档位区间(档界多为 5k/10k+)。
+    _gear = BT_STRATEGY['leverage'] * 0.68
+    universe, _n_lowlev = exclude_low_leverage(
+        universe, adapter.client.fetch_leverage_tiers,
+        notional=1000.0 * _gear, gearing=_gear, min_lev=_minlev)
+    # n_blacklist=黑名单原始长度——与原 main() 打印 len(bt_blacklist) 逐字节等价;
+    # 交集口径在黑名单含不在归档符号时会少报,破坏统计行语义不变。
+    stats = {'n_blacklist': len(blacklist),
+             'n_tradfi': _n_tradfi, 'n_lowlev': _n_lowlev, 'min_lev': _minlev}
+    log('[BT] 全市场票池 %d 币(归档含退市,−黑名单 %d,−非COIN %d,−低杠杆 %d@min_lev=%g)'
+        % (len(universe), stats['n_blacklist'], _n_tradfi, _n_lowlev, _minlev))
+    return universe, stats
+
+
 def prewarm_1h(cache, universe, warm_start_ms, end_ms, *, log=print):
     """phase1：全市场 1h 选币 OHLCV——Vision 归档批量 + API 尾补(归档滞后1-2天)。
     返回 adapter（复用于 phase2）。"""
@@ -624,19 +653,7 @@ def main(argv=None):
         bt_blacklist = effective_blacklist(BT_BLACKLIST, tiers)
         print('[BT] tiers 启用: tier0=%d tier1=%d cap=%d' %
               (len(tiers.tier0), len(tiers.tier1), tiers.tier2_cap))
-    # 票池=归档全量合约（含退市，无幸存者偏差，spec §6.1）−黑名单 −非 COIN(TradFi,spec 2026-07-15)
-    _arch = set(V.list_archive_symbols()) - set(bt_blacklist)
-    universe, _n_tradfi = exclude_non_coin(_arch, _adapter)
-    # 票池杠杆过滤(默认=实盘 prod UNIVERSE_MIN_LEVERAGE=10,用户定 2026-07-18;设 0=停用
-    # 回旧口径,与历史 sweep 可比)。notional/gearing 与回测 sizing 同源:cap=1000(simulate
-    # 硬编)× gearing(旧lev×0.68=3.4)→$3400,与实盘当前 $2555 同档位区间(档界多为 5k/10k+)。
-    _minlev = float(os.environ.get('BT_MIN_LEVERAGE', 10.0))
-    _gear = BT_STRATEGY['leverage'] * 0.68
-    universe, _n_lowlev = exclude_low_leverage(
-        universe, _adapter.client.fetch_leverage_tiers,
-        notional=1000.0 * _gear, gearing=_gear, min_lev=_minlev)
-    print('[BT] 全市场票池 %d 币(归档含退市,−黑名单 %d,−非COIN %d,−低杠杆 %d@min_lev=%g)'
-          % (len(universe), len(bt_blacklist), _n_tradfi, _n_lowlev, _minlev))
+    universe, _uni_stats = resolve_bt_universe(_adapter, bt_blacklist)
     st1h = V.warm_vision(cache, universe, _ms(warm_start), _ms(win_end),
                          timeframes=('1h',))
     print('[BT] 1h 预热@Vision: %s' % st1h)
