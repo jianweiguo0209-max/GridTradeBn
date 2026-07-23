@@ -1,0 +1,6 @@
+[W1] n=20 | 锚A(s030) mismatch=0 | 锚B(geoE0) mismatch=0 | E0@V2−E0@geo bp: 中位 +0.00 p5 +0.0 p95 +0.0 非零占比 0.00
+[W1] n=699 | 锚A(s030) mismatch=0 | 锚B(geoE0) mismatch=0 | E0@V2−E0@geo bp: 中位 +0.00 p5 -53.2 p95 +52.1 非零占比 0.17
+[W1] n=699 | 锚A(s030) mismatch=0 | 锚B(geoE0) mismatch=0 | E0@V2−E0@geo bp: 中位 +0.00 p5 -53.2 p95 +52.1 非零占比 0.17
+[W2] n=699 | 锚A(s030) mismatch=0 | 锚B(geoE0) mismatch=0 | E0@V2−E0@geo bp: 中位 +0.00 p5 -51.8 p95 +94.3 非零占比 0.21
+[OOS] n=699 | 锚A(s030) mismatch=0 | 锚B(geoE0) mismatch=0 | E0@V2−E0@geo bp: 中位 +0.00 p5 -21.2 p95 +7.3 非零占比 0.12
+[IS] n=699 | 锚A(s030) mismatch=0 | 锚B(geoE0) mismatch=0 | E0@V2−E0@geo bp: 中位 +0.00 p5 -34.6 p95 +22.3 非零占比 0.14
