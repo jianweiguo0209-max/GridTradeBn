@@ -2,6 +2,7 @@
 spec: docs/superpowers/specs/2026-07-14-binance-migration-design.md §3.1
 """
 import re
+import time
 
 import ccxt
 import pandas as pd
@@ -26,8 +27,17 @@ class BinanceAdapter(CcxtAdapter):
     name = 'binance'
     FUNDING_INTERVAL_HOURS = 8   # 信息性：部分币 4h/1h；记账走真实流水不受影响（spec §九）
 
-    def __init__(self, client):
+    def __init__(self, client, *, income_ttl_sec=300.0, algo_book_ttl_sec=60.0,
+                 now_fn=time.time):
         super().__init__(client, name='binance')
+        # snapshot 重读降频(spec 2026-07-23):income 资金费 8h 才结算、algo 簿(保险丝)
+        # 极少变——13s 快照轮逐次真取纯浪费(遥测实测二者合计 ~280 权重/min)。
+        # <=0 = 关闭缓存,每次真取,逐字节恢复旧行为。
+        self.income_ttl_sec = float(income_ttl_sec)
+        self.algo_book_ttl_sec = float(algo_book_ttl_sec)
+        self._now = now_fn
+        self._income_cache = None      # (fetched_at, since_used, symbols_used:set, grouped:dict)
+        self._algo_book_cache = None   # (fetched_at, rows:list)
 
     # fapi 同时挂 USDT-M 与 USDC-M 合约：只收本结算币，防 USDC 合约混入票池（spec §3.1）；
     # 且只收 COIN 加密永续,剔 TradFi 代币化永续(非 7×24 跳空打穿网格,spec 2026-07-15）。
@@ -351,7 +361,27 @@ class BinanceAdapter(CcxtAdapter):
         return out
 
     def fetch_funding_payments_all(self, symbols, since_ms=None):
-        """income(FUNDING_FEE) 账户级单流（权重30）——币安按 symbol 正确打标，
+        """income(FUNDING_FEE) 账户级单流(权重30) + TTL 缓存(spec 2026-07-23)。
+        命中三条件=TTL 内+请求 since≥缓存 since+请求 symbols⊆缓存 symbols;任一不满足
+        (新开格 cursor=0 拉回 since/新币入快照)→真取,正确性自保。命中时本地按请求
+        since/symbols 切片,契约不变(键=请求 symbols 全集,缺省空列表,升序)。
+        真取失败原样上抛且不写缓存(快照构建失败整轮跳过=现行为)。"""
+        req_since = 0 if since_ms is None else int(since_ms)
+        c = self._income_cache
+        if (self.income_ttl_sec > 0 and c is not None
+                and (self._now() - c[0]) < self.income_ttl_sec
+                and req_since >= c[1] and set(symbols) <= c[2]):
+            grouped = c[3]
+            return {s: [p for p in grouped.get(s, []) if p.ts >= req_since]
+                    for s in symbols}
+        out = self._fetch_funding_payments_fresh(symbols, since_ms=since_ms)
+        self._income_cache = (self._now(), req_since, set(symbols), out)
+        return out
+
+    def _fetch_funding_payments_fresh(self, symbols, since_ms=None):
+        """（原 fetch_funding_payments_all 方法体原样搬移，含原 docstring 的
+        分页含边界重取+tranId 去重+防死转说明——此处一行不改。）
+        income(FUNDING_FEE) 账户级单流（权重30）——币安按 symbol 正确打标，
         分组回各币种。无 since → 币安默认近7天。统一"支付为正"（income 正=收入取负）。
         分页含边界重取+tranId 去重：资金费全仓位同刻并结，+1 前进会丢页界并列行（评审实证）。"""
         idmap = self._id_map()
