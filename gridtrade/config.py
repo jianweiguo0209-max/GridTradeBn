@@ -101,6 +101,9 @@ class DeployConfig:
     monitor_parallel: int = 4           # monitor per-grid 并行 worker 数；1=退回全串行（保底开关）
     monitor_unit_warn_sec: float = 30.0  # 单网格监控单元耗时告警阈值（病态格日志指名道姓）
     signal_refresh_sec: float = 60.0    # pv/funding 每格复算节流(s);默认60=每分钟(对齐回测逐1m);900=旧节奏
+    # snapshot 重读降频(spec 2026-07-23):income/algo 簿 TTL 秒;<=0=关闭缓存(旧行为)
+    snapshot_income_ttl_sec: float = 300.0
+    snapshot_algo_book_ttl_sec: float = 60.0
     # MarketShockBrake(spec 2026-07-08)：|票池中位数 k 小时收益|≥thr → 暂停开格 pause 小时(只关不开)。
     # thr=0.025:新几何完整口径重跑(2026-07-11,sb2)支配解——Δ≈0/四窗MDD全改善/W1+4.07/捕获37/37;
     # 旧 GO 档 0.04 在 band2 下 Δ−1.95pp(W2 反弹被拦)。thr<=0=停用;约束 pause<=k(重启自愈依赖信号自持)。
@@ -184,6 +187,8 @@ def load_deploy_config(env=None) -> DeployConfig:
         cap=cap,
         monitor_interval_sec=_f(env, 'MONITOR_INTERVAL_SEC', 5.0),
         signal_refresh_sec=_f(env, 'SIGNAL_REFRESH_SEC', 60.0),
+        snapshot_income_ttl_sec=_f(env, 'SNAPSHOT_INCOME_TTL_SEC', 300.0),
+        snapshot_algo_book_ttl_sec=_f(env, 'SNAPSHOT_ALGO_BOOK_TTL_SEC', 60.0),
         scheduler_period=_s(env, 'SCHEDULER_PERIOD', '12H'),
         max_concurrent=_i(env, 'MAX_CONCURRENT', 12),
         total_budget=_f(env, 'TOTAL_BUDGET', 1_000_000.0),

@@ -73,7 +73,7 @@ class BinanceAdapter(CcxtAdapter):
 
     @classmethod
     def from_credentials(cls, api_key, secret, *, testnet=False, proxies=None,
-                         timeout=10000):
+                         timeout=10000, income_ttl_sec=300.0, algo_book_ttl_sec=60.0):
         import ccxt
         client = ccxt.binanceusdm({
             'apiKey': api_key, 'secret': secret,
@@ -89,7 +89,8 @@ class BinanceAdapter(CcxtAdapter):
             # 把 API 指向 demo-fapi.binance.com；demo API key 在 https://demo.binance.com
             # 的 API Management 生成。BINANCE_TESTNET=true 的语义即 Demo Trading。
             client.enable_demo_trading(True)
-        return cls(client)
+        return cls(client, income_ttl_sec=income_ttl_sec,
+                   algo_book_ttl_sec=algo_book_ttl_sec)
 
     def create_stop_order(self, symbol, side, size, trigger_price, *,
                           reduce_only=True, slippage=0.15, client_oid=None):

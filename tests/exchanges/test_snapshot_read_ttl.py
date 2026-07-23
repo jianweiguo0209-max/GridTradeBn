@@ -177,3 +177,10 @@ def test_algo_ghost_row_persists_within_ttl_then_clears():
     clk.t += 61.0
     out = a.fetch_open_orders_all(['BTC/USDT:USDT'])
     assert '9' not in {o.id for o in out}                # 到期真取后消失
+
+
+def test_from_credentials_passes_ttls():
+    from gridtrade.exchanges.binance import BinanceAdapter
+    a = BinanceAdapter.from_credentials('k', 's', income_ttl_sec=5.0,
+                                        algo_book_ttl_sec=7.0)
+    assert a.income_ttl_sec == 5.0 and a.algo_book_ttl_sec == 7.0

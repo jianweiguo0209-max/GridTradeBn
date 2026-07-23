@@ -64,6 +64,8 @@ def build_runtime(config) -> Runtime:
         'secret': config.api_secret,
         'testnet': config.testnet,
         'quote_currency': config.quote_currency,
+        'income_ttl_sec': getattr(config, 'snapshot_income_ttl_sec', 300.0),
+        'algo_book_ttl_sec': getattr(config, 'snapshot_algo_book_ttl_sec', 60.0),
     })
     adapter = ResilientAdapter(inner, breakers=default_breakers())
 

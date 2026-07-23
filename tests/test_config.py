@@ -300,3 +300,13 @@ def test_wechat_config_defaults_and_env_override():
 def test_signal_refresh_sec_default_and_env():
     assert load_deploy_config(env={}).signal_refresh_sec == 60.0
     assert load_deploy_config(env={'SIGNAL_REFRESH_SEC': '900'}).signal_refresh_sec == 900.0
+
+
+def test_snapshot_ttl_env_parsing_and_defaults():
+    cfg = load_deploy_config(env={'SNAPSHOT_INCOME_TTL_SEC': '120',
+                                  'SNAPSHOT_ALGO_BOOK_TTL_SEC': '30'})
+    assert cfg.snapshot_income_ttl_sec == 120.0
+    assert cfg.snapshot_algo_book_ttl_sec == 30.0
+    cfg2 = load_deploy_config(env={})
+    assert cfg2.snapshot_income_ttl_sec == 300.0
+    assert cfg2.snapshot_algo_book_ttl_sec == 60.0
