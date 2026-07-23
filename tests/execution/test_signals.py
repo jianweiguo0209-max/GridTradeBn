@@ -172,3 +172,29 @@ def test_pv_ignores_forming_bar():
     prov = LiveSignalProvider(adp, mult=3, period='15min', n=233, now_fn=lambda: now_ms / 1000.0)
     pv, _ = prov.get('g1', 'X', 0)
     assert pv == expect              # 只按已收盘算,forming 桶不进窗
+
+
+def test_funding_deduped_across_grids_same_symbol():
+    """cap2 同币双格：第二格在 refresh 窗内取同 symbol 费率 → 命中 symbol 缓存，零新增请求。"""
+    now = {'t': 1000.0}
+    adp = FakeAdapter(bars=_bars_with_spike(), funding=_funding([0.001]))
+    prov = LiveSignalProvider(adp, refresh_sec=60, now_fn=lambda: now['t'])
+    prov.get('g1', 'X/USDT:USDT', open_ms=0)
+    prov.get('g2', 'X/USDT:USDT', open_ms=0)         # 同币第二格（不同 grid_id）
+    assert adp.funding_calls == 1                    # funding 只真取一次
+    now['t'] += 61.0                                 # TTL 过期
+    prov.get('g1', 'X/USDT:USDT', open_ms=0)
+    assert adp.funding_calls == 2                    # 过期后重取
+
+
+def test_funding_failure_not_cached_at_symbol_level():
+    """取数失败降级返 0.0 但不得写入 symbol 缓存——否则降级值被粘住 refresh_sec。"""
+    now = {'t': 1000.0}
+    adp = FakeAdapter(bars=_bars_with_spike(), funding=_funding([0.001]),
+                      raise_funding=True)
+    prov = LiveSignalProvider(adp, refresh_sec=60, now_fn=lambda: now['t'])
+    _, fr = prov.get('g1', 'X/USDT:USDT', open_ms=0)
+    assert fr == 0.0                                 # 失败降级
+    adp.raise_funding = False
+    _, fr = prov.get('g2', 'X/USDT:USDT', open_ms=0) # 另一格随后取
+    assert abs(fr - 0.001) < 1e-12                   # 未被降级值污染

@@ -39,6 +39,9 @@ class LiveSignalProvider:
         self._now = now_fn or time.time
         self.log = log
         self._cache = {}   # grid_id -> (fetched_at_sec, pv_spike, funding_rate)
+        # symbol 级费率缓存（2026-07-23）：cap2 同币双格下按 grid 节流会同币重复取数
+        # （日志实锤 GWEI 同秒×2）。费率每 8h 才结算，refresh_sec 内复用零信息损失。
+        self._fr_cache = {}   # symbol -> (fetched_at_sec, funding_rate)
         # per-symbol 已收盘 1m 滚动缓冲：冷载全窗、之后增量、失败沿用缓冲、丢 forming 桶(见 bar_buffer)
         self._buffer = OneMinuteBarBuffer(
             fetch_fn=lambda sym, s, u: adapter.fetch_ohlcv(sym, '1m', s, u),
@@ -77,14 +80,20 @@ class LiveSignalProvider:
             return 0
 
     def _funding_rate(self, symbol, now_ms):
+        now = now_ms / 1000.0
+        c = self._fr_cache.get(symbol)
+        if c is not None and (now - c[0]) < self.refresh_sec:
+            return c[1]
         try:
             # 回看窗=结算周期+1h——币安 8h 结算下固定 3h 窗有 5/8 时间取不到最新费率(终审实证)。
             hours = float(getattr(self.adapter, 'FUNDING_INTERVAL_HOURS', 8)) + 1.0
             fh = self.adapter.fetch_funding_history(
                 symbol, now_ms - int(hours * 3600_000), now_ms)
             if fh is None or len(fh) == 0:
-                return 0.0
-            return float(fh.sort_values('ts')['fundingRate'].iloc[-1])
+                return 0.0            # 空结果（如新上币）不缓存：下次照常重试
+            fr = float(fh.sort_values('ts')['fundingRate'].iloc[-1])
+            self._fr_cache[symbol] = (now, fr)   # 只缓存真取到的费率；失败/空不污染
+            return fr
         except Exception as exc:
             self.log('[signals] funding_rate %s 失败降级: %r' % (symbol, exc))
             return 0.0
