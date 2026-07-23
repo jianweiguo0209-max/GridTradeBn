@@ -24,8 +24,9 @@ positions/prices/balance（权重小）。
    XYZ-MSTR 事故根治）：丝不在（可见）挂单簿 → 先问 `order_status` 权威状态，
    'open'=信息盲区不动。陈旧 algo 簿**不会导致重复挂丝**；重挂即消守卫（streak≥2
    停手）继续兜底。
-2. **income 的 since_ms 每轮变**（`cycles.py:213-214`，全格 funding_cursor 取 min，
-   新开格 cursor=0 会把 since 拉回）——缓存必须带参数语义，不能只看 TTL。
+2. **income 的 since_ms 每轮变**（`cycles.py:209-210`，全格 funding_cursor 取 min；
+   新开格若无 funding_cursor，回退用 `created_at` 而非 0，since 一般不倒退——新币
+   击穿走 symbols 超集规则，since 倒退护栏是纵深防御）——缓存必须带参数语义，不能只看 TTL。
 3. **快照契约允许**：`base.py` 批量读契约原文"返回调用时刻的最新已知状态（只读幂等，
    **不要求强一致**）……实现不得让上层感知分页游标/权重/调用时序"——adapter 内缓存
    是契约内行为。

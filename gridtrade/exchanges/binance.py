@@ -287,6 +287,14 @@ class BinanceAdapter(CcxtAdapter):
             # 可能是 algo 簿的触发单（保险丝）：走 trigger 路径重试；
             # 仍不存在则由 algo 路径原样抛 OrderNotFound（语义=确实已不在）。
             self.client.cancel_order(order_id, native, {'trigger': True})
+            # trigger 路径撤单成功=确实从 algo 簿撤掉了一枚触发单：立即失效 algo 簿缓存
+            # (spec 2026-07-23)。同币并发(cap2,生产常态)下 A 格关格撤丝、B 格仍活——若不
+            # 失效，TTL 窗内(至多 60s≈2-4 monitor 轮)缓存仍含 A 的幽灵丝行，落在 B 受保护
+            # 集合(reconciler.py:67-79)之外；B 的孤儿清扫(reconciler.py:81-84)对已不存在
+            # 的单再 cancel_order 一次 → OrderNotFound 上抛、B 所在 unit 本轮 reconcile
+            # 中断，degraded 计数被"同币关格"污染。常规簿撤单成功=非 algo 单，不失效
+            # （保留缓存收益）。
+            self._algo_book_cache = None
 
     def order_status(self, symbol, order_id) -> str:
         """权威单状态('open'/'filled'/'canceled'/'unknown')。双簿查单:常规簿→algo/trigger 簿
@@ -330,7 +338,8 @@ class BinanceAdapter(CcxtAdapter):
         self.client.cancel_all_orders(native, {'trigger': True})
 
     def fetch_open_orders_all(self, symbols):
-        # 账户级两簿并读(常规40+algo40 权重)。algo 簿=保险丝对账专用、极少变→TTL 缓存
+        # 账户级两簿并读(常规40+algo40 权重;5s 轮预算升至 ~2180/min,仍低于 2400——若见
+        # 429 优先调大 MONITOR_INTERVAL_SEC)。algo 簿=保险丝对账专用、极少变→TTL 缓存
         # (spec 2026-07-23);常规簿判成交核心,永远真取。create_stop_order 挂新丝时主动
         # 失效缓存(新丝下轮立即可见);撤丝后的幽灵行由三态判存在性语义+TTL 到期自愈吸收,
         # 保险丝重挂有 order_status 权威判+streak 守卫双兜底,陈旧簿不会导致重复挂丝。
@@ -373,10 +382,11 @@ class BinanceAdapter(CcxtAdapter):
 
     def fetch_funding_payments_all(self, symbols, since_ms=None):
         """income(FUNDING_FEE) 账户级单流(权重30) + TTL 缓存(spec 2026-07-23)。
-        命中三条件=TTL 内+请求 since≥缓存 since+请求 symbols⊆缓存 symbols;任一不满足
-        (新开格 cursor=0 拉回 since/新币入快照)→真取,正确性自保。命中时本地按请求
-        since/symbols 切片,契约不变(键=请求 symbols 全集,缺省空列表,升序)。
-        真取失败原样上抛且不写缓存(快照构建失败整轮跳过=现行为)。"""
+        命中三条件=TTL 内+请求 since≥缓存 since+请求 symbols⊆缓存 symbols;任一不满足→
+        真取,正确性自保(新币入快照靠 symbols 超集规则击穿;新开格若无 funding_cursor,
+        cycles.py:209-210 回退用 created_at 而非 0,since 一般不倒退——since 倒退护栏是
+        纵深防御)。命中时本地按请求 since/symbols 切片,契约不变(键=请求 symbols 全集,
+        缺省空列表,升序)。真取失败原样上抛且不写缓存(快照构建失败整轮跳过=现行为)。"""
         req_since = 0 if since_ms is None else int(since_ms)
         c = self._income_cache
         if (self.income_ttl_sec > 0 and c is not None
@@ -390,9 +400,7 @@ class BinanceAdapter(CcxtAdapter):
         return out
 
     def _fetch_funding_payments_fresh(self, symbols, since_ms=None):
-        """（原 fetch_funding_payments_all 方法体原样搬移，含原 docstring 的
-        分页含边界重取+tranId 去重+防死转说明——此处一行不改。）
-        income(FUNDING_FEE) 账户级单流（权重30）——币安按 symbol 正确打标，
+        """income(FUNDING_FEE) 账户级单流（权重30）——币安按 symbol 正确打标，
         分组回各币种。无 since → 币安默认近7天。统一"支付为正"（income 正=收入取负）。
         分页含边界重取+tranId 去重：资金费全仓位同刻并结，+1 前进会丢页界并列行（评审实证）。"""
         idmap = self._id_map()

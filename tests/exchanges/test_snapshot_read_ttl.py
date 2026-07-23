@@ -179,6 +179,35 @@ def test_algo_ghost_row_persists_within_ttl_then_clears():
     assert '9' not in {o.id for o in out}                # 到期真取后消失
 
 
+def test_cancel_order_trigger_success_invalidates_algo_cache():
+    # 撤丝(trigger 回退成功)必须失效 algo 簿缓存：同币并发(cap2) A 格关格撤丝、B 格仍活，
+    # 若不失效，TTL 窗内(至多 60s≈2-4 monitor 轮)缓存仍含 A 的幽灵丝行，落在 B 受保护集
+    # 合外——孤儿清扫(reconciler.py:81-84)对已不存在的单再 cancel_order 一次 → OrderNotFound
+    # 上抛、B 所在 unit 本轮 reconcile 中断,degraded 计数被同币关格污染。
+    import ccxt
+    c, clk = _BookClient(), _Clock()
+    def cancel(order_id, symbol=None, params=None):
+        if not (params or {}).get('trigger'):
+            raise ccxt.OrderNotFound('binanceusdm {"code":-2011,"msg":"Unknown order sent."}')
+    c.cancel_order = cancel
+    a = _adapter(c, clk, algo_ttl=60.0)
+    a.fetch_open_orders_all(['BTC/USDT:USDT'])           # 填充缓存(trigger_calls==1)
+    a.cancel_order('BTC/USDT:USDT', '9')                 # 常规 -2011 → trigger 回退成功
+    a.fetch_open_orders_all(['BTC/USDT:USDT'])
+    assert c.trigger_calls == 2                          # 缓存被失效，重新真取
+
+
+def test_cancel_order_regular_success_does_not_invalidate_algo_cache():
+    # 逆向护栏：常规簿撤单直接成功(非 algo 单)不该白白击穿缓存——保留 TTL 缓存收益。
+    c, clk = _BookClient(), _Clock()
+    c.cancel_order = lambda order_id, symbol=None, params=None: None
+    a = _adapter(c, clk, algo_ttl=60.0)
+    a.fetch_open_orders_all(['BTC/USDT:USDT'])           # 填充缓存(trigger_calls==1)
+    a.cancel_order('BTC/USDT:USDT', '7')                 # 常规撤单直接成功
+    a.fetch_open_orders_all(['BTC/USDT:USDT'])
+    assert c.trigger_calls == 1                          # 缓存保留，未击穿
+
+
 def test_from_credentials_passes_ttls():
     from gridtrade.exchanges.binance import BinanceAdapter
     a = BinanceAdapter.from_credentials('k', 's', income_ttl_sec=5.0,
