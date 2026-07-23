@@ -115,6 +115,7 @@ class BinanceAdapter(CcxtAdapter):
         p['workingType'] = 'MARK_PRICE'
         r = self.client.create_order(self.to_native(symbol), 'market', side, size,
                                      None, p)
+        self._algo_book_cache = None   # 新丝立即可见：失效 algo 簿缓存(spec 2026-07-23)
         return self._to_order(r)
 
     def _market_max_qty(self, symbol):
@@ -328,11 +329,20 @@ class BinanceAdapter(CcxtAdapter):
         self.client.cancel_all_orders(native, {'trigger': True})
 
     def fetch_open_orders_all(self, symbols):
-        # 账户级两簿并读（常规 40 + algo 40 权重；5s 轮预算升至 ~2180/min，仍低于
-        # 2400——若见 429 优先调大 MONITOR_INTERVAL_SEC）
+        # 账户级两簿并读(常规40+algo40 权重)。algo 簿=保险丝对账专用、极少变→TTL 缓存
+        # (spec 2026-07-23);常规簿判成交核心,永远真取。create_stop_order 挂新丝时主动
+        # 失效缓存(新丝下轮立即可见);撤丝后的幽灵行由三态判存在性语义+TTL 到期自愈吸收,
+        # 保险丝重挂有 order_status 权威判+streak 守卫双兜底,陈旧簿不会导致重复挂丝。
         want = set(symbols)
         rows = list(self.client.fetch_open_orders(None))
-        rows += list(self.client.fetch_open_orders(None, params={'trigger': True}))
+        c = self._algo_book_cache
+        if (self.algo_book_ttl_sec > 0 and c is not None
+                and (self._now() - c[0]) < self.algo_book_ttl_sec):
+            algo_rows = c[1]
+        else:
+            algo_rows = list(self.client.fetch_open_orders(None, params={'trigger': True}))
+            self._algo_book_cache = (self._now(), algo_rows)
+        rows = rows + algo_rows
         return [o for o in (self._to_order(r) for r in rows) if o.symbol in want]
 
     def fetch_positions_all(self, symbols):
