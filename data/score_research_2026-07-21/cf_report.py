@@ -119,10 +119,18 @@ def main():
             '池外选中': a['picks_outside_pool'],
         })
     t = pd.DataFrame(rows)
-    txt = t.to_string(index=False)
+    tt = t.set_index('窗').T          # 转置:指标为行、窗为列(宽表难读)
+    txt = tt.to_string()
     print(txt, flush=True)
     with open('%s/ablation/cf_results.txt' % RD, 'w') as f:
         f.write(txt + '\n')
+    md = ['| 指标 | ' + ' | '.join(str(c) for c in tt.columns) + ' |',
+          '|---|' + '---|' * len(tt.columns)]
+    for idx, r in tt.iterrows():
+        md.append('| %s | ' % idx + ' | '.join(
+            ('%g' % v) if isinstance(v, float) else str(v) for v in r.values) + ' |')
+    with open('%s/ablation/cf_results.md' % RD, 'w') as f:
+        f.write('\n'.join(md) + '\n')
     t.to_parquet('%s/ablation/cf_results.parquet' % RD)
 
 
