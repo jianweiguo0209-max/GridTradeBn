@@ -186,14 +186,34 @@ def select_grids(cache, universe, window_start, window_end, strategy_config, fac
             return hit
     grids = []
     run_times = [pd.Timestamp(t) for t in pd.date_range(window_start, window_end, freq='1H')]
-    SR.replay_selection(cache, universe, run_times, strategy_config, factors,
-                        lambda rt, off, row: grids.append((rt, off, row.copy())),
-                        timeframe=timeframe, min_quote_volume=min_quote_volume,
-                        top_volume_pct=top_volume_pct,
-                        blacklist=blacklist, workers=workers, log=log)
+    done = set()
+    if use_cache:                                       # 断点续跑:接上 checkpoint 已完成的轮
+        ck = SC.load_checkpoint(cache, key, params)
+        if ck is not None:
+            grids = list(ck['grids'])
+            done = set(ck['done'])
+            log('[BT] select checkpoint RESUME %s (done=%d/%d picks=%d)'
+                % (key, len(done), len(run_times), len(grids)))
+    remaining = [rt for rt in run_times if str(rt) not in done]
+    if remaining:
+        state = {'k': 0}
+
+        def _on_rt_done(rt):                            # 每完成一轮:记账,按天刷 checkpoint
+            done.add(str(rt))
+            state['k'] += 1
+            if use_cache and state['k'] % SC.CKPT_EVERY == 0:
+                SC.save_checkpoint(cache, key, params, done, grids)
+
+        SR.replay_selection(cache, universe, remaining, strategy_config, factors,
+                            lambda rt, off, row: grids.append((rt, off, row.copy())),
+                            timeframe=timeframe, min_quote_volume=min_quote_volume,
+                            top_volume_pct=top_volume_pct,
+                            blacklist=blacklist, workers=workers, log=log,
+                            on_rt_done=(_on_rt_done if use_cache else None))
     log('[BT] picks=%d' % len(grids))
     if use_cache:
         SC.save(cache, key, params, grids)
+        SC.clear_checkpoint(cache, key)                 # 晋升成品后清 checkpoint
         log('[BT] select cache MISS %s (saved)' % key)
     return grids
 
