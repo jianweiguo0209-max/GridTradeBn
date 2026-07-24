@@ -99,6 +99,28 @@ def test_pv_cache_reused_across_same_key_and_recomputed_on_change(monkeypatch):
     assert calls['n'] == 2 * len(wd.raw)          # pv key 变：必重算
 
 
+def test_pv_cache_never_reuses_short_list_across_windows(monkeypatch):
+    """回归：W1 短列表不能被 IS 长窗口按同一 PV 参数复用（曾触发 IndexError）。"""
+    short = _fake_wd(2)
+    short.name = 'W1'
+    long = _fake_wd(7)
+    long.name = 'IS'
+    long.start = short.start + pd.Timedelta(days=120)
+    long.end = long.start + pd.Timedelta(days=122)
+    calls = {'n': 0}
+    real = SW.pv_spike_for_window
+
+    def counted(series, bars, pv_cfg):
+        calls['n'] += 1
+        return real(series, bars, pv_cfg)
+
+    monkeypatch.setattr(SW, 'pv_spike_for_window', counted)
+    cache = {}
+    assert len(SW.tasks_for(short, SW.baseline(), cache)) == 2
+    assert len(SW.tasks_for(long, SW.baseline(), cache)) == 7
+    assert calls['n'] == 9
+
+
 def test_geometry_arm_changes_grid_params():
     wd = _fake_wd(1)
     pv_cache = {}

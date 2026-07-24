@@ -562,11 +562,22 @@ _ALL_FACTORS = [
     ('Er_3', lambda d: Er_signal(d, 3, 0, 'Er_3')),
     ('Er_5', lambda d: Er_signal(d, 5, 0, 'Er_5')),
     ('Er_8', lambda d: Er_signal(d, 8, 0, 'Er_8')),
+    ('MarketPl_5', lambda d: MarketPl_signal(d, 5, 0, 'MarketPl_5')),
+    ('Dc_5', lambda d: Dc_signal(d, 5, 0, 'Dc_5')),
     ('middle_5', _set_middle_5),
     ('ma_2', lambda d: _set_ma(d, 2)),
     ('ma_5', lambda d: _set_ma(d, 5)),
     ('ma_13', lambda d: _set_ma(d, 13)),
 ]
+
+# cal_factor_batch 明确支持的列。与 _ALL_FACTORS 分开列出是故意的：新增逐币因子却忘记补
+# 批量实现时，启动前校验/测试必须 fail-fast，不能等子进程在 dropna 才报 KeyError。
+BATCH_FACTOR_NAMES = frozenset({
+    'Reg_v2_2', 'Sgcz_2', 'Reg_v2_5', 'Sgcz_5', 'Er_2', 'db_volume_v1_2',
+    'Atr_5', 'S_shape_5', 'Reg_v2_3', 'Reg_v2_6', 'Sgcz_3', 'Sgcz_8',
+    'Er_3', 'Er_5', 'Er_8', 'MarketPl_5', 'Dc_5', 'middle_5',
+    'ma_2', 'ma_5', 'ma_13',
+})
 
 
 def cal_factor(df, needed=None):
@@ -628,6 +639,15 @@ def cal_factor_batch(df, needed=None):
         if want(name):
             ema = gtransform('close', lambda s, _n=n: s.ewm(alpha=2 / (_n + 1), adjust=False).mean())
             df[name] = ((high - ema) / ema + (low - ema) / ema).abs()
+    if want('MarketPl_5'):
+        quote_ema = gtransform('quote_volume', lambda s: s.ewm(span=5, adjust=False).mean())
+        volume_ema = gtransform('volCcy', lambda s: s.ewm(span=5, adjust=False).mean())
+        df['MarketPl_5'] = close / (quote_ema / volume_ema + eps) - 1
+    if want('Dc_5'):
+        upper = gtransform('high', lambda s: s.rolling(5, min_periods=1).max())
+        lower = gtransform('low', lambda s: s.rolling(5, min_periods=1).min())
+        middle = (upper + lower) / 2
+        df['Dc_5'] = (upper - lower) / middle
     if want('db_volume_v1_2'):
         vstd = gtransform('volCcy', lambda s: s.rolling(2).std())
         vmean = gtransform('volCcy', lambda s: s.rolling(2).mean())

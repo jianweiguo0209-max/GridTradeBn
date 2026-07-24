@@ -48,6 +48,16 @@ def test_needed_factors_covers_config_and_filter():
     assert got == {'Reg_v2_5', 'Sgcz_5', 'Er_2', 'Reg_v2_2', 'Sgcz_2', 'db_volume_v1_2'}
 
 
+def test_marketpl_dc_are_batch_supported_and_unknown_fails_fast():
+    import pytest
+    from gridtrade.core.selection import validate_factor_support
+    got = validate_factor_support({'MarketPl_5': True, 'Dc_5': False, 'Er_2': True},
+                                  {'Atr_5', 'middle_5'})
+    assert {'MarketPl_5', 'Dc_5', 'Er_2', 'Atr_5', 'middle_5'} <= got
+    with pytest.raises(ValueError, match='回测批量因子未接线.*NoSuch_5'):
+        validate_factor_support({'NoSuch_5': True})
+
+
 def test_replay_passes_pruned_needed_to_batch(tmp_path, monkeypatch):
     """回测提速接线:replay 走向量化 batch 路,按 config+过滤器+几何裁出 needed 传给
     cal_factor_batch,而非全算(None)。"""

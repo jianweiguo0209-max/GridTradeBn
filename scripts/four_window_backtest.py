@@ -125,7 +125,6 @@ def run(name, output_root='data/result', workers=1, heartbeat_sec=30, mode='trad
         if not universe:
             raise RuntimeError('本地 1h 缓存票池为空；请先按回测文档预热数据')
         print('[票池] 本地归档缓存 %d 币（与冻结 s030 宽池口径一致）' % len(universe), flush=True)
-        pv_cache = {}
         for index, window in enumerate(WINDOW_ORDER, 1):
             b = BASELINE[window]
             print('\n[窗口 %d/6] %s %s ~ %s：选币/装配开始' %
@@ -135,6 +134,8 @@ def run(name, output_root='data/result', workers=1, heartbeat_sec=30, mode='trad
                                cache, universe, w, x['start'], x['end'], workers=workers),
                            heartbeat_sec)
             print('[窗口 %d/6] %s：仿真开始 grids=%d' % (index, window, len(wd.raw)), flush=True)
+            # PV 复用只在同一窗口的多参数臂内有意义；六窗单臂报告按窗隔离，杜绝跨窗串味。
+            pv_cache = {}
             df = heartbeat('%s 网格仿真' % window,
                            lambda d=wd: SW.run_arm(d, SW.Arm('manual', name, {}),
                                                    pv_cache, workers=workers),

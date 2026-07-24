@@ -171,6 +171,11 @@ def select_grids(cache, universe, window_start, window_end, strategy_config, fac
     结果按选币参数 + 每币缓存天范围数据指纹磁盘缓存（BT_SELECT_CACHE=off 旁路）。
     candidates_per_rt>1：三档递补用 top-K 候选——放宽选币截断为 rank<=K（经
     strategy_config.choose_symbols 覆盖，天然进缓存 key、不同 K 不串）；K=1 逐位恒等现状。"""
+    # 必须在 select-cache 查询之前验证：否则旧缓存会掩盖“config 引用了 batch 未实现因子”，
+    # 直到另一个窗口 cache miss 才在子进程晚报 KeyError。
+    from gridtrade.core.selection import validate_factor_support
+    from gridtrade.core.grid_params import GRID_ROW_FACTORS
+    validate_factor_support(factors, GRID_ROW_FACTORS)
     if candidates_per_rt and int(candidates_per_rt) > 1:
         strategy_config = dict(strategy_config, choose_symbols=int(candidates_per_rt))
     from gridtrade.backtest import select_cache as SC

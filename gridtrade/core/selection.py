@@ -1,7 +1,8 @@
 import numpy as np
 import pandas as pd
 
-from gridtrade.core.factors import cal_factor, cal_factor_batch, cal_cross_factor
+from gridtrade.core.factors import (BATCH_FACTOR_NAMES, cal_factor, cal_factor_batch,
+                                    cal_cross_factor)
 
 
 def trans_period_for_grid(data, period, exg_dict=None, offset=0):
@@ -42,6 +43,16 @@ def needed_factors(factor_info):
     """选币实际读到的因子列 = config factors ∪ 硬编码过滤器。传给 cal_factor(needed=)
     只算这些列(回测提速);未知名(外部注入的因子)照带,cal_factor 无 spec 时自动跳过。"""
     return set(factor_info) | set(FILTER_FACTORS)
+
+
+def validate_factor_support(factor_info, extra=()):
+    """批量回测启动前验证所有会读取的因子都有 batch 实现，返回实际所需集合。"""
+    needed = needed_factors(factor_info) | set(extra)
+    missing = sorted(needed - set(BATCH_FACTOR_NAMES))
+    if missing:
+        raise ValueError('回测批量因子未接线: %s；请先在 factors.cal_factor_batch 和 '
+                         'BATCH_FACTOR_NAMES 中实现，禁止带缺列进入选币子进程' % missing)
+    return needed
 
 
 # 对k线数据进行周期转换

@@ -10,7 +10,7 @@ import time
 import pandas as pd
 
 from gridtrade.core.grid_params import GRID_ROW_FACTORS
-from gridtrade.core.selection import (compute_offset, needed_factors,
+from gridtrade.core.selection import (compute_offset, needed_factors, validate_factor_support,
                                       proceed_calc_symbol_factor, select_grid_coin)
 from gridtrade.exchanges.base import CANDLE_COLS
 
@@ -64,7 +64,7 @@ def _select_over_run_times(series, run_times, period, weight_list, factors,
     （含无选中的轮）回调一次，标记该轮已完成。默认 None 时行为同旧（仅积累返回）。"""
     out = []
     # 只算被引用的因子列(选中结果与全算 diff==0):选币读的 ∪ 布网几何读的(Atr_5/middle_5)
-    needed = needed_factors(factors) | set(GRID_ROW_FACTORS)
+    needed = validate_factor_support(factors, GRID_ROW_FACTORS)
     devnull = open(os.devnull, 'w')
     try:
         for run_time in run_times:
