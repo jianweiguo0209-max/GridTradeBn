@@ -12,7 +12,9 @@ def build_adapter(config: dict) -> ExchangeAdapter:
         adapter = BinanceAdapter.from_credentials(
             config.get('api_key', ''), config.get('secret', ''),
             testnet=bool(config.get('testnet', False)),
-            proxies=config.get('proxies'))
+            proxies=config.get('proxies'),
+            income_ttl_sec=float(config.get('income_ttl_sec', 300.0)),
+            algo_book_ttl_sec=float(config.get('algo_book_ttl_sec', 60.0)))
     else:
         raise ValueError(f'未知交易所: {name!r}（支持: binance/fake）')
     # 可选覆写计价/结算币：非空才覆写（同所多结算之门：USDT-M 默认 / USDC-M 显式设）。

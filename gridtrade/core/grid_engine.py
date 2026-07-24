@@ -214,7 +214,8 @@ def _compute_bb_breakdown(bars_df, period=20, n_std=2.0):
 
 
 def _apply_exit(df, cap, c_rate_taker, stop_cfg=None, margin_rate=0.05, pv_spike_df=None,
-                active_stop_mode='pv', bars_df=None, pv_pnl_thr=-0.015, break_price=None):
+                active_stop_mode='pv', bars_df=None, pv_pnl_thr=-0.015, break_price=None,
+                pv_idio_df=None, pv_idio_thr=None):
     """
     复刻实盘 calc_loss_or_profit 的退出优先级，对 net_value 序列逐 bar 取最早触发：
       1) 固定止损     pnlRatio < -stop_loss
@@ -255,6 +256,15 @@ def _apply_exit(df, cap, c_rate_taker, stop_cfg=None, margin_rate=0.05, pv_spike
         if active_stop_mode == 'pv' and pv_spike_df is not None:
             m = pd.merge(df[['candle_begin_time']], pv_spike_df, on='candle_begin_time', how='left')
             mark((m['pv_spike'].fillna(0).values == 1) & (pr < pv_pnl_thr), 'pv主动止损')
+            # 截面条件化(pv_idio,2026-07-22):单币异动时刻(币15m收益−市场中位15m收益 深负,
+            # 由上游标注 idio_tight)按紧阈值 pv_idio_thr 补开火——拦离散单雷;市场同动/平静
+            # 时刻维持宽松 pv_pnl_thr(V型崩持有/磨涨免误杀)。两参缺一=关,行为逐位同旧。
+            if pv_idio_df is not None and pv_idio_thr is not None:
+                mi = pd.merge(df[['candle_begin_time']], pv_idio_df,
+                              on='candle_begin_time', how='left')
+                mark((m['pv_spike'].fillna(0).values == 1)
+                     & (mi['idio_tight'].fillna(0).values == 1)
+                     & (pr < pv_idio_thr), 'pv主动止损')
         elif active_stop_mode == 'atr' and bars_df is not None:
             sig = _compute_atr_breakdown(bars_df)
             m = pd.merge(df[['candle_begin_time']], sig, on='candle_begin_time', how='left')
@@ -425,7 +435,8 @@ def simulate_grid_engine(bars_df, grid_params, cap=10000.0, leverage=5.0, fee=0.
                          stop_cfg=None, c_rate_taker=0.0005,
                          funding_df=None, neutral_init=False, pv_spike_df=None,
                          active_stop_mode='pv', pv_pnl_thr=-0.015,
-                         pv_mult=3, pv_n=233, pv_period='15min', pv_body_ratio=0.0):
+                         pv_mult=3, pv_n=233, pv_period='15min', pv_body_ratio=0.0,
+                         pv_idio_df=None, pv_idio_thr=None):
     """
     端到端封装：bars(本项目 1m df) + 布网参数 → 资金曲线终值。
     grid_params: dict(low_price, high_price, grid_count, stop_high_price, stop_low_price)
@@ -491,7 +502,8 @@ def simulate_grid_engine(bars_df, grid_params, cap=10000.0, leverage=5.0, fee=0.
         eq0 = _attach_fr_last(eq0, funding_df)
         eq0, stop_reason, _ = _apply_exit(eq0, cap, c_rate_taker, stop_cfg, margin_rate, pv_spike_df,
                                           active_stop_mode=active_stop_mode, bars_df=z,
-                                          pv_pnl_thr=pv_pnl_thr, break_price=None)
+                                          pv_pnl_thr=pv_pnl_thr, break_price=None,
+                                          pv_idio_df=pv_idio_df, pv_idio_thr=pv_idio_thr)
         return {'pnl_ratio': 0.0, 'net_value_final': 1.0, 'terminated': bool(stop_reason),
                 'exit_reason': stop_reason or '未触网', 'blown_up': False, 'n_trades': 0,
                 'broke': False, 'unreal_pnl': 0.0, 'real_pnl': 0.0}
@@ -511,7 +523,8 @@ def simulate_grid_engine(bars_df, grid_params, cap=10000.0, leverage=5.0, fee=0.
         brk_px = gi['终止最高价'] if _last_tick > gi['终止最高价'] else gi['终止最低价']
     eq, stop_reason, blown = _apply_exit(eq, cap, c_rate_taker, stop_cfg, margin_rate, pv_spike_df,
                                          active_stop_mode=active_stop_mode, bars_df=bars,
-                                         pv_pnl_thr=pv_pnl_thr, break_price=brk_px)
+                                         pv_pnl_thr=pv_pnl_thr, break_price=brk_px,
+                                         pv_idio_df=pv_idio_df, pv_idio_thr=pv_idio_thr)
     nv = float(eq['net_value'].iloc[-1])
     exit_reason = stop_reason or ('破网' if broke else '窗口结束')
     # 已实现 vs 未实现拆分（诊断/analytics）：unreal_pnl=最后一根浮盈/cap；real_pnl=其余(已实现净费)

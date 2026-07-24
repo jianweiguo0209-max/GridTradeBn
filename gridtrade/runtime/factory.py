@@ -64,6 +64,8 @@ def build_runtime(config) -> Runtime:
         'secret': config.api_secret,
         'testnet': config.testnet,
         'quote_currency': config.quote_currency,
+        'income_ttl_sec': getattr(config, 'snapshot_income_ttl_sec', 300.0),
+        'algo_book_ttl_sec': getattr(config, 'snapshot_algo_book_ttl_sec', 60.0),
     })
     adapter = ResilientAdapter(inner, breakers=default_breakers())
 
@@ -97,7 +99,7 @@ def build_runtime(config) -> Runtime:
     # 实盘退出信号：pv_spike（对齐回测 calc_pv_spike）+ funding_rate（HL 真实费率），按 grid 节流
     signals = LiveSignalProvider(adapter, mult=DEFAULT_STOP_CFG['pv_mult'],
                                  period=DEFAULT_STOP_CFG['pv_period'], n=DEFAULT_STOP_CFG['pv_n'],
-                                 log=_flush_log)
+                                 refresh_sec=config.signal_refresh_sec, log=_flush_log)
     manager = GridManager(executor, gates, stop_cfg=DEFAULT_STOP_CFG,
                           event_bus=bus, signal_provider=signals)
 

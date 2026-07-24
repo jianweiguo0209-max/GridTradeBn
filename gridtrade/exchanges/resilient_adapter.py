@@ -62,8 +62,15 @@ class ResilientAdapter(ExchangeAdapter):
         self._write_lock = threading.Lock()
         self._sleep = sleep
         self._rng = rng
+        # 权重遥测（2026-07-23）：_call 单咽喉计逻辑调用数（分页方法计一、重试不重复计,
+        # 找权重大头的归因够用）。分钟翻转由 report_weight 打点并清零。
+        self._weight_lock = threading.Lock()
+        self._call_counts = {}
+        self._last_report_min = None
 
     def _call(self, _name, *args, **kwargs):
+        with self._weight_lock:
+            self._call_counts[_name] = self._call_counts.get(_name, 0) + 1
         inner_fn = getattr(self._inner, _name)
         if _name in WRITE_METHODS:
             def attempt():
@@ -76,6 +83,31 @@ class ResilientAdapter(ExchangeAdapter):
         return call_with_retry(attempt, self._policy,
                                sleep=self._sleep, rng=self._rng,
                                breaker=breaker)
+
+    def report_weight(self, log=print, now=None):
+        """权重遥测上报：分钟翻转时打一行「header 水位 + 方法级调用计数(降序)」并清零；
+        同分钟内 no-op（驱动方每轮无脑调即可）。契约：绝不抛异常——遥测不得影响交易路径。
+        计数窗≈上一分钟（驱动粒度 monitor ~13s/轮，边界误差 ≤ 一轮）。"""
+        try:
+            minute = int((now if now is not None else time.time()) // 60)
+            if minute == self._last_report_min:
+                return
+            self._last_report_min = minute
+            with self._weight_lock:
+                counts, self._call_counts = self._call_counts, {}
+            if not counts:
+                return                      # 静默期不刷屏
+            fn = getattr(self._inner, 'used_weight_1m', None)
+            w = fn() if fn is not None else None
+            top = sorted(counts.items(), key=lambda kv: -kv[1])
+            log('[weight] w1m=%s calls/min: %s'
+                % ('?' if w is None else w,
+                   ' '.join('%s=%d' % kv for kv in top)))
+        except Exception as exc:
+            try:
+                log('[weight] report failed: %r' % exc)
+            except Exception:
+                pass                        # log 本身坏了也不外抛
 
     # ---- 行情（公共）----
     def list_instruments(self) -> List[Instrument]:

@@ -2,6 +2,9 @@ import math
 
 import numpy as np
 
+# 选中 row 里被布网几何(v1/v2)读取的因子列;回测按需算因子时必须保留(close 是基础列不列)
+GRID_ROW_FACTORS = ('Atr_5', 'middle_5')
+
 
 def calc_grid_params_v1(row, price_limit, stop_limit, **kwargs):
     """

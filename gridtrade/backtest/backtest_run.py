@@ -131,7 +131,8 @@ def _simulate_grid_task(payload):
     payload=(data_task, cfg)：data_task 是选币/数据（可跨参数组合复用），cfg 是仿真配置。
     funding_df 已在父进程按持仓窗预切片（等价、payload 小）；pv_spike_df 已在父进程按
     27h 前置历史预算（实盘同源语义，见 assemble_grid_tasks）。"""
-    (rt, offset, sym, entry, gp, bars_df, funding_df, pv_spike_df), cfg = payload
+    (rt, offset, sym, entry, gp, bars_df, funding_df, pv_spike_df, *_tail), cfg = payload
+    pv_idio_df = _tail[0] if _tail else None      # 尾部追加字段(pv_idio 截面条件化,可缺省)
     pv_cfg = cfg['pv_cfg']
     # 下单量按该币真实 stepSize **向下截断**，对齐实盘（quantize_amount → ccxt
     # amount_to_precision 是 TRUNCATE，wire_qty <= order_num 恒成立）。此前硬传 0.0 把引擎自带的
@@ -147,7 +148,9 @@ def _simulate_grid_task(payload):
                                pv_pnl_thr=pv_cfg.get('pnl_thr', -0.015),
                                pv_mult=pv_cfg.get('mult', 3), pv_n=pv_cfg.get('n', 233),
                                pv_period=pv_cfg.get('period', '15min'),
-                               pv_body_ratio=pv_cfg.get('con2', 0.0))
+                               pv_body_ratio=pv_cfg.get('con2', 0.0),
+                               pv_idio_df=pv_idio_df,
+                               pv_idio_thr=cfg.get('pv_idio_thr'))
     return {
         'run_time': rt, 'offset': int(offset), 'symbol': sym,
         'entry': entry, 'grid_num': int(gp['grid_count']),
@@ -183,14 +186,34 @@ def select_grids(cache, universe, window_start, window_end, strategy_config, fac
             return hit
     grids = []
     run_times = [pd.Timestamp(t) for t in pd.date_range(window_start, window_end, freq='1H')]
-    SR.replay_selection(cache, universe, run_times, strategy_config, factors,
-                        lambda rt, off, row: grids.append((rt, off, row.copy())),
-                        timeframe=timeframe, min_quote_volume=min_quote_volume,
-                        top_volume_pct=top_volume_pct,
-                        blacklist=blacklist, workers=workers, log=log)
+    done = set()
+    if use_cache:                                       # 断点续跑:接上 checkpoint 已完成的轮
+        ck = SC.load_checkpoint(cache, key, params)
+        if ck is not None:
+            grids = list(ck['grids'])
+            done = set(ck['done'])
+            log('[BT] select checkpoint RESUME %s (done=%d/%d picks=%d)'
+                % (key, len(done), len(run_times), len(grids)))
+    remaining = [rt for rt in run_times if str(rt) not in done]
+    if remaining:
+        state = {'k': 0}
+
+        def _on_rt_done(rt):                            # 每完成一轮:记账,按天刷 checkpoint
+            done.add(str(rt))
+            state['k'] += 1
+            if use_cache and state['k'] % SC.CKPT_EVERY == 0:
+                SC.save_checkpoint(cache, key, params, done, grids)
+
+        SR.replay_selection(cache, universe, remaining, strategy_config, factors,
+                            lambda rt, off, row: grids.append((rt, off, row.copy())),
+                            timeframe=timeframe, min_quote_volume=min_quote_volume,
+                            top_volume_pct=top_volume_pct,
+                            blacklist=blacklist, workers=workers, log=log,
+                            on_rt_done=(_on_rt_done if use_cache else None))
     log('[BT] picks=%d' % len(grids))
     if use_cache:
         SC.save(cache, key, params, grids)
+        SC.clear_checkpoint(cache, key)                 # 晋升成品后清 checkpoint
         log('[BT] select cache MISS %s (saved)' % key)
     return grids
 
@@ -276,7 +299,8 @@ def build_grid_tasks(cache, universe, window_start, window_end, strategy_config,
 
 def simulate_tasks(data_tasks, *, leverage, fee_rate=0.0002, taker_rate=0.0005,
                    max_rate=0.68, stop_cfg=None,
-                   active_stop_mode='pv', pv_cfg=None, workers=1, lot_by_sym=None):
+                   active_stop_mode='pv', pv_cfg=None, workers=1, lot_by_sym=None,
+                   pv_idio_thr=None):
     """对已组装的 data_tasks 跑仿真（可并行）→ 明细 DataFrame。仿真配置在此传入，故同一批
     data_tasks 可反复用不同 (active_stop_mode/pv_cfg/stop_cfg) 仿真——扫参提速的关键。
     fee_rate=maker（网格挂单成交，默认 2bps）、taker_rate=taker（平仓/止损/破网，默认
@@ -287,7 +311,8 @@ def simulate_tasks(data_tasks, *, leverage, fee_rate=0.0002, taker_rate=0.0005,
         lot_by_sym = _LS.load(_V.default_cache_root())
     cfg = {'lev': leverage, 'fee_rate': fee_rate, 'taker_rate': taker_rate,
            'max_rate': max_rate, 'stop_cfg': stop_cfg, 'lot_by_sym': lot_by_sym,
-           'active_stop_mode': active_stop_mode, 'pv_cfg': pv_cfg or {}}
+           'active_stop_mode': active_stop_mode, 'pv_cfg': pv_cfg or {},
+           'pv_idio_thr': pv_idio_thr}
     payloads = [(dt, cfg) for dt in data_tasks]
     if workers and workers > 1 and len(payloads) > 1:
         from concurrent.futures import ProcessPoolExecutor
@@ -522,6 +547,35 @@ def exclude_low_leverage(symbols, tiers_fetch, *, notional, gearing, min_lev, lo
     return kept, len(dropped)
 
 
+def resolve_bt_universe(adapter, blacklist, *, archive_symbols=None, min_lev=None,
+                        log=print):
+    """回测票池单一构建入口(spec 2026-07-24-sweep-universe-align):归档全量(含退市,无幸存者
+    偏差)−黑名单−非COIN(TradFi)−低杠杆(BT_MIN_LEVERAGE 默认10=实盘同值,=0 显式停用)。
+    main() 与 sweep_run 共用——2026-07-24 选币可预测性 recon 发现 sweep/研究脚本自建裸池
+    绕过两道过滤(s030 出自宽池),口径分叉在此收口。archive_symbols/min_lev 注入点仅供测试,
+    生产路径默认 None。"""
+    from gridtrade.backtest import vision as V
+    arch_full = (V.list_archive_symbols() if archive_symbols is None
+                 else list(archive_symbols))
+    _arch = set(arch_full) - set(blacklist)
+    universe, _n_tradfi = exclude_non_coin(_arch, adapter)
+    _minlev = (float(os.environ.get('BT_MIN_LEVERAGE', 10.0))
+               if min_lev is None else float(min_lev))
+    # notional/gearing 与回测 sizing 同源:cap=1000(simulate 硬编)× gearing(旧lev×0.68=3.4)
+    # →$3400,与实盘当前 $2555 同档位区间(档界多为 5k/10k+)。
+    _gear = BT_STRATEGY['leverage'] * 0.68
+    universe, _n_lowlev = exclude_low_leverage(
+        universe, adapter.client.fetch_leverage_tiers,
+        notional=1000.0 * _gear, gearing=_gear, min_lev=_minlev)
+    # n_blacklist=黑名单原始长度——与原 main() 打印 len(bt_blacklist) 逐字节等价;
+    # 交集口径在黑名单含不在归档符号时会少报,破坏统计行语义不变。
+    stats = {'n_blacklist': len(blacklist),
+             'n_tradfi': _n_tradfi, 'n_lowlev': _n_lowlev, 'min_lev': _minlev}
+    log('[BT] 全市场票池 %d 币(归档含退市,−黑名单 %d,−非COIN %d,−低杠杆 %d@min_lev=%g)'
+        % (len(universe), stats['n_blacklist'], _n_tradfi, _n_lowlev, _minlev))
+    return universe, stats
+
+
 def prewarm_1h(cache, universe, warm_start_ms, end_ms, *, log=print):
     """phase1：全市场 1h 选币 OHLCV——Vision 归档批量 + API 尾补(归档滞后1-2天)。
     返回 adapter（复用于 phase2）。"""
@@ -619,19 +673,7 @@ def main(argv=None):
         bt_blacklist = effective_blacklist(BT_BLACKLIST, tiers)
         print('[BT] tiers 启用: tier0=%d tier1=%d cap=%d' %
               (len(tiers.tier0), len(tiers.tier1), tiers.tier2_cap))
-    # 票池=归档全量合约（含退市，无幸存者偏差，spec §6.1）−黑名单 −非 COIN(TradFi,spec 2026-07-15)
-    _arch = set(V.list_archive_symbols()) - set(bt_blacklist)
-    universe, _n_tradfi = exclude_non_coin(_arch, _adapter)
-    # 票池杠杆过滤(默认=实盘 prod UNIVERSE_MIN_LEVERAGE=10,用户定 2026-07-18;设 0=停用
-    # 回旧口径,与历史 sweep 可比)。notional/gearing 与回测 sizing 同源:cap=1000(simulate
-    # 硬编)× gearing(旧lev×0.68=3.4)→$3400,与实盘当前 $2555 同档位区间(档界多为 5k/10k+)。
-    _minlev = float(os.environ.get('BT_MIN_LEVERAGE', 10.0))
-    _gear = BT_STRATEGY['leverage'] * 0.68
-    universe, _n_lowlev = exclude_low_leverage(
-        universe, _adapter.client.fetch_leverage_tiers,
-        notional=1000.0 * _gear, gearing=_gear, min_lev=_minlev)
-    print('[BT] 全市场票池 %d 币(归档含退市,−黑名单 %d,−非COIN %d,−低杠杆 %d@min_lev=%g)'
-          % (len(universe), len(bt_blacklist), _n_tradfi, _n_lowlev, _minlev))
+    universe, _uni_stats = resolve_bt_universe(_adapter, bt_blacklist)
     st1h = V.warm_vision(cache, universe, _ms(warm_start), _ms(win_end),
                          timeframes=('1h',))
     print('[BT] 1h 预热@Vision: %s' % st1h)

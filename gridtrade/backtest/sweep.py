@@ -18,6 +18,7 @@ pv 尖峰按 (mult, n, period) 键缓存复用：非 pv 族的臂共享同一份
 import os
 from dataclasses import dataclass, field
 
+import numpy as np
 import pandas as pd
 
 from gridtrade.backtest import selection_replay as SR
@@ -36,15 +37,16 @@ _STOP = _S['stop_loss_config']
 _V2 = _S['grid_v2_config']
 
 # 断言钉死现值：config 一改本模块立刻炸（spec §6 防口径漂移）。
-# 2026-07-19 重扫v2 回滚候选A 三值(诚实引擎终审:旧现值唯一 4/6 窗正+零破网)——
-# stop 0.035→0.045、trailing 恢复 0.3/0.00618、cmin 20→10。
-assert abs(_STOP['stop_loss'] - 0.045) < 1e-12, 'stop_loss 现值漂移，扫参网格须同步复核'
-assert abs(_STOP['trailing_k'] - 0.3) < 1e-12 and abs(_STOP['trailing_floor'] - 0.00618) < 1e-12, \
-    'trailing 应为开(0.3/0.00618)'
+# 2026-07-22 s030 冠军配置(geo_final 战役,诚实引擎六窗Σ+7.1pp+双留出全过)——
+# band 2→3、cmin 10→16、stop 0.045→0.03、trailing_floor 0.00618→0.02、pv_thr +0.005→−0.01。
+# ⚠今后战役的锚=此配置;旧锚(2026-07-19 现值)存档见 data/score_research_2026-07-21/。
+assert abs(_STOP['stop_loss'] - 0.03) < 1e-12, 'stop_loss 现值漂移，扫参网格须同步复核'
+assert abs(_STOP['trailing_k'] - 0.3) < 1e-12 and abs(_STOP['trailing_floor'] - 0.02) < 1e-12, \
+    'trailing 应为开(0.3/0.02)'
 assert abs(_STOP['fundingRate_stop_loss'] - 0.0015) < 1e-12
-assert abs(_STOP['pv_pnl_thr'] - 0.005) < 1e-12 and _STOP['pv_mult'] == 3 and _STOP['pv_n'] == 100
-assert _V2['atr_range_multiplier'] == 2 and abs(_V2['grid_spacing_max'] - 0.04) < 1e-12
-assert _V2['grid_count_min'] == 10 and _S['leverage'] == 5
+assert abs(_STOP['pv_pnl_thr'] + 0.01) < 1e-12 and _STOP['pv_mult'] == 3 and _STOP['pv_n'] == 100
+assert _V2['atr_range_multiplier'] == 3 and abs(_V2['grid_spacing_max'] - 0.04) < 1e-12
+assert _V2['grid_count_min'] == 16 and _S['leverage'] == 5
 
 FEE_MAKER = 0.0002        # 币安 USDT-M VIP0
 FEE_TAKER = 0.0005
@@ -86,6 +88,13 @@ def live_baseline():
         'count_min': _V2['grid_count_min'],
         'spacing_max': _V2['grid_spacing_max'],
         'gearing': GEARING,
+        # pv 截面条件化(2026-07-22 判别器战役):drop=0 关(现状,锚逐位不变);>0 时单币异动
+        # 时刻(币15m收益−市场中位15m收益 < −drop)pv 按紧阈值 pv_idio_thr 开火,其余走 pv_thr
+        'pv_idio_drop': 0.0,
+        'pv_idio_thr': 0.005,
+        # 波动归一变体(SWEEP6):idio15 < −k×σ_coin(该币自身idio的24h滚动std,PIT shift(1))
+        # ——治固定百分比的量纲病(妖币2%是日常/静币2%是异动)。k=0 关;与 drop 互斥,k 优先。
+        'pv_idio_k': 0.0,
     }
 
 
@@ -180,6 +189,57 @@ def _pv_key(p):
     return (p['pv_mult'], p['pv_n'], p['pv_period'])
 
 
+_MKT_R15 = None      # 市场中位15m收益指数(懒加载;scripts/build_market_r15.py 预构建)
+
+
+def _load_mkt_r15():
+    global _MKT_R15
+    if _MKT_R15 is None:
+        from gridtrade.backtest import vision as _V   # 惰性,避免循环依赖(同 backtest_run)
+        p = os.path.join(str(_V.default_cache_root()), 'market_r15.parquet')
+        _MKT_R15 = pd.read_parquet(p)
+    return _MKT_R15
+
+
+def _idio_for(bars, mkt, drop):
+    """单格 idio 标注:币15m对数收益 − 市场中位15m收益 < −drop → idio_tight=1(单币异动)。
+    币收益按**日历分钟**对齐(K线缺口→NaN,与 market_r15 构建同口径,防跨缺口虚差);
+    前15根/缺口/市场指数缺行 → NaN→0(保守=不紧)。"""
+    t = pd.DatetimeIndex(bars['candle_begin_time'])
+    s = pd.Series(np.log(bars['close'].astype(float).values), index=t)
+    g = s.reindex(pd.date_range(t[0], t[-1], freq='1min'))
+    r15 = (g - g.shift(15)).reindex(t).values
+    m = bars[['candle_begin_time']].merge(mkt, on='candle_begin_time', how='left')
+    idio = r15 - m['mkt_r15'].values
+    with np.errstate(invalid='ignore'):
+        tight = (idio < -drop)
+    return pd.DataFrame({'candle_begin_time': bars['candle_begin_time'].values,
+                         'idio_tight': tight.astype('int8')})
+
+
+def _idio_z_for(series, bars, mkt, k):
+    """波动归一 idio 标注:idio15 < −k×σ_coin → idio_tight=1。
+    σ_coin = 该币 idio15 的过去24h(1440min,min_periods=300)滚动 std,shift(1) 严格 PIT;
+    24h 预热取自全量 1m 序列(同 pv 尖峰 27h 前置历史模式)。缺数据/σ未热 → 0(不紧)。"""
+    t0 = bars['candle_begin_time'].iloc[0]
+    t1 = bars['candle_begin_time'].iloc[-1]
+    seg = series[(series['candle_begin_time'] >= t0 - pd.Timedelta(hours=26))
+                 & (series['candle_begin_time'] <= t1)]
+    s = pd.Series(np.log(seg['close'].astype(float).values),
+                  index=pd.DatetimeIndex(seg['candle_begin_time']))
+    grid = pd.date_range(s.index[0], t1, freq='1min')
+    g = s.reindex(grid)
+    r15 = g - g.shift(15)
+    mk = mkt.set_index('candle_begin_time')['mkt_r15'].reindex(grid)
+    idio = r15 - mk
+    sigma = idio.rolling(1440, min_periods=300).std().shift(1)
+    with np.errstate(invalid='ignore'):
+        tight = (idio < -k * sigma)
+    out = tight.reindex(pd.DatetimeIndex(bars['candle_begin_time'])).fillna(False)
+    return pd.DataFrame({'candle_begin_time': bars['candle_begin_time'].values,
+                         'idio_tight': out.values.astype('int8')})
+
+
 def tasks_for(wd, params, pv_cache):
     """按臂参数组装 data_tasks（几何重算 + pv 尖峰按 key 复用）。"""
     v2 = dict(_V2, atr_range_multiplier=params['band'],
@@ -191,14 +251,21 @@ def tasks_for(wd, params, pv_cache):
         pv_cache[key] = [pv_spike_for_window(series, bars, pv_cfg)
                          for _rt, _off, _row, bars, _fd, series in wd.raw]
     pv_list = pv_cache[key]
+    drop = float(params.get('pv_idio_drop') or 0.0)
+    kz = float(params.get('pv_idio_k') or 0.0)
+    mkt = _load_mkt_r15() if (drop > 0 or kz > 0) else None
     tasks = []
-    for i, (rt, off, row, bars, fd, _series) in enumerate(wd.raw):
+    for i, (rt, off, row, bars, fd, series) in enumerate(wd.raw):
         px = calc_grid_params_v2(row=row, price_limit=_S['price_limit'],
                                  stop_limit=_S['stop_limit'], v2_config=v2)
         gp = dict(low_price=px['low_price'], high_price=px['high_price'],
                   grid_count=px['grid_count'], stop_high_price=px['stop_high_price'],
                   stop_low_price=px['stop_low_price'])
-        tasks.append((rt, off, row['symbol'], float(row['close']), gp, bars, fd, pv_list[i]))
+        t = (rt, off, row['symbol'], float(row['close']), gp, bars, fd, pv_list[i])
+        if mkt is not None:      # 尾部追加(勿改前8位序,_simulate_grid_task 尾部容忍)
+            idf = _idio_z_for(series, bars, mkt, kz) if kz > 0 else _idio_for(bars, mkt, drop)
+            t = t + (idf,)
+        tasks.append(t)
     return tasks
 
 
@@ -219,7 +286,11 @@ def run_arm(wd, arm, pv_cache, *, workers=1):
     return simulate_tasks(tasks, leverage=lev, fee_rate=FEE_MAKER, taker_rate=FEE_TAKER,
                           max_rate=MAX_RATE, stop_cfg=stop_cfg,
                           active_stop_mode=p['active_stop_mode'], pv_cfg=pv_cfg,
-                          workers=workers)
+                          workers=workers,
+                          pv_idio_thr=(p['pv_idio_thr']
+                                       if (float(p.get('pv_idio_drop') or 0.0) > 0
+                                           or float(p.get('pv_idio_k') or 0.0) > 0)
+                                       else None))
 
 
 def metrics(df, days):

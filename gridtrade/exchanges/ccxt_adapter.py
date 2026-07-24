@@ -67,6 +67,19 @@ class CcxtAdapter(ExchangeAdapter):
         ms = getattr(self.client, 'milliseconds', None)
         return int(ms()) if callable(ms) else int(time.time() * 1000)
 
+    def used_weight_1m(self) -> Optional[int]:
+        """当前分钟已用请求权重：读最近一次响应的 x-mbx-used-weight-1m header，
+        零额外请求（2026-07-23 权重遥测）。header 缺失/非币安内核 → None。
+        供 ResilientAdapter.report_weight 上报水位。"""
+        headers = getattr(self.client, 'last_response_headers', None) or {}
+        for k, v in headers.items():
+            if str(k).lower() == 'x-mbx-used-weight-1m':
+                try:
+                    return int(v)
+                except (TypeError, ValueError):
+                    return None
+        return None
+
     def fetch_ohlcv(self, symbol, timeframe, start_ms, end_ms) -> pd.DataFrame:
         native = self.to_native(symbol)
         tf_ms = int(self.client.parse_timeframe(timeframe) * 1000)

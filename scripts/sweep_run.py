@@ -18,8 +18,20 @@ from gridtrade.backtest import sweep as SW
 from gridtrade.backtest import safe_workers
 from gridtrade.backtest import vision as V
 from gridtrade.backtest.cache import ParquetCache
+from gridtrade.backtest.backtest_run import _binance_datasource_1h, resolve_bt_universe
 from gridtrade.core.tier_policy import effective_blacklist
 from gridtrade.config import DEFAULT_TIER_POLICY
+
+
+def resolve_sweep_universe(cache):
+    """sweep 票池=共享构建器(COIN-only+低杠杆,与实盘/backtest_run 同口径;
+    spec 2026-07-24——此前自建裸池致 s030 在实盘开不出的币上打分)。
+    杠杆档私有端点凭证由底部 load_env_file 注入;不可用 fail-loud,
+    BT_MIN_LEVERAGE=0 显式回旧口径(与历史 CSV 可比时用)。"""
+    adapter, _ = _binance_datasource_1h(cache)
+    bl = effective_blacklist((), DEFAULT_TIER_POLICY)
+    universe, _stats = resolve_bt_universe(adapter, bl)
+    return universe
 
 
 def main(argv=None):
@@ -68,8 +80,7 @@ def main(argv=None):
                 ov[k] = v.strip()          # active_stop_mode / pv_period 等字符串维
         SW.set_baseline(ov)
         print('[sweep] Pass2 基线覆盖: %s' % ov, flush=True)
-    bl = effective_blacklist((), DEFAULT_TIER_POLICY)
-    universe = sorted(set(V.list_archive_symbols()) - set(bl))
+    universe = resolve_sweep_universe(cache)
 
     print('[sweep] families=%s windows=%s workers=%d universe=%d'
           % (','.join(families), ','.join(wnames), workers, len(universe)), flush=True)

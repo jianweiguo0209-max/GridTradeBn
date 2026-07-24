@@ -39,3 +39,12 @@ def test_cal_factor_registers_lazy_column():
     out = cal_factor(df)
     assert 'S_shape_5' in out.columns
     assert np.isfinite(out['S_shape_5'].iloc[-1])
+
+
+def test_cal_factor_window_scan_columns_lazy():
+    """因子窗扫描备选列(2026-07-21):cal_factor 产出全部窗变体列,末行有限(config 不引用=惰性)。"""
+    df = _bars([2.0] * 30)
+    out = cal_factor(df)
+    for col in ('Reg_v2_3', 'Reg_v2_6', 'Sgcz_3', 'Sgcz_8', 'Er_3', 'Er_5', 'Er_8'):
+        assert col in out.columns, col
+        assert np.isfinite(out[col].iloc[-1]), col

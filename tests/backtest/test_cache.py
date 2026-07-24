@@ -43,6 +43,27 @@ def test_read_all_days_none_when_absent(tmp_path):
     assert _cache(tmp_path).read_all_days('1h', 'NOPE') is None
 
 
+def test_read_all_days_schema_drift_with_empty_sentinel(tmp_path):
+    """空哨兵天(列可能是 null 类型)与真数据天混读不崩,且真行/列保留(promote 语义)。"""
+    c = _cache(tmp_path)
+    c.write('1h', 'X', '2024-01-02', pd.DataFrame({'ts': [2], 'close': [11.0]}))
+    c.write_empty('1h', 'X', '2024-01-01', columns=['ts', 'close'])   # 早于真数据天
+    alld = c.read_all_days('1h', 'X')
+    assert alld is not None
+    assert set(alld.columns) >= {'ts', 'close'}
+    real = alld[alld['ts'].notna()]
+    assert list(real['ts']) == [2] and list(real['close']) == [11.0]
+
+
+def test_read_all_days_chronological_concat_order(tmp_path):
+    """乱序落盘,read_all_days 按天(ISO 字典序=时序)拼接。"""
+    c = _cache(tmp_path)
+    for day, ts in [('2024-01-03', 30), ('2024-01-01', 10), ('2024-01-02', 20)]:
+        c.write('1h', 'X', day, pd.DataFrame({'ts': [ts], 'close': [float(ts)]}))
+    alld = c.read_all_days('1h', 'X')
+    assert list(alld['ts']) == [10, 20, 30]
+
+
 def test_list_days(tmp_path):
     import pandas as pd
     from gridtrade.backtest.cache import ParquetCache

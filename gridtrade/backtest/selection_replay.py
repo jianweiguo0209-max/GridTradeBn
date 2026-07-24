@@ -9,8 +9,9 @@ import time
 
 import pandas as pd
 
-from gridtrade.core.selection import (compute_offset, proceed_calc_symbol_factor,
-                                      select_grid_coin)
+from gridtrade.core.grid_params import GRID_ROW_FACTORS
+from gridtrade.core.selection import (compute_offset, needed_factors,
+                                      proceed_calc_symbol_factor, select_grid_coin)
 from gridtrade.exchanges.base import CANDLE_COLS
 
 
@@ -56,10 +57,14 @@ def build_pit_candidates(series, run_time, *, max_candle_num,
 
 def _select_over_run_times(series, run_times, period, weight_list, factors,
                            choose_symbols, max_candle_num, min_quote_volume, blacklist,
-                           top_volume_pct=0.0):
+                           top_volume_pct=0.0, on_emit=None, on_rt_done=None):
     """逐 run_time 选币的纯循环体（串行/并行共用）。返回 [(run_time, offset, row)]。
-    内部 redirect_stdout 抑制 core 选币函数的诊断 print（no data/[警告] 等）。"""
+    内部 redirect_stdout 抑制 core 选币函数的诊断 print（no data/[警告] 等）。
+    on_emit(rt,off,row) 每选中一条即回调（流式，供断点续跑落盘）；on_rt_done(rt) 每轮**处理完**
+    （含无选中的轮）回调一次，标记该轮已完成。默认 None 时行为同旧（仅积累返回）。"""
     out = []
+    # 只算被引用的因子列(选中结果与全算 diff==0):选币读的 ∪ 布网几何读的(Atr_5/middle_5)
+    needed = needed_factors(factors) | set(GRID_ROW_FACTORS)
     devnull = open(os.devnull, 'w')
     try:
         for run_time in run_times:
@@ -69,16 +74,24 @@ def _select_over_run_times(series, run_times, period, weight_list, factors,
                 series, run_time, max_candle_num=max_candle_num,
                 min_quote_volume=min_quote_volume, top_volume_pct=top_volume_pct,
                 blacklist=blacklist)
-            if not symbol_candle_data:
-                continue
-            with contextlib.redirect_stdout(devnull):
-                all_df = proceed_calc_symbol_factor(symbol_candle_data, run_time, period, offset)
-                if all_df is None or all_df.empty:
-                    continue
-                factor_data = select_grid_coin(all_df, factors, weight_list, choose_symbols, run_time)
-            factor_data = factor_data[(factor_data['time'] + pd.to_timedelta(period)) >= run_time]
-            for _, row in factor_data.iterrows():
-                out.append((run_time, offset, row.copy()))
+            if symbol_candle_data:
+                with contextlib.redirect_stdout(devnull):
+                    all_df = proceed_calc_symbol_factor(symbol_candle_data, run_time, period,
+                                                        offset, needed=needed, batch=True)
+                    factor_data = None
+                    if all_df is not None and not all_df.empty:
+                        factor_data = select_grid_coin(all_df, factors, weight_list,
+                                                       choose_symbols, run_time)
+                if factor_data is not None:
+                    factor_data = factor_data[
+                        (factor_data['time'] + pd.to_timedelta(period)) >= run_time]
+                    for _, row in factor_data.iterrows():
+                        item = (run_time, offset, row.copy())
+                        out.append(item)
+                        if on_emit is not None:
+                            on_emit(*item)
+            if on_rt_done is not None:
+                on_rt_done(run_time)
     finally:
         devnull.close()
     return out
@@ -111,7 +124,7 @@ def _replay_chunk(payload):
 
 def replay_selection(cache, symbols, run_times, strategy_config, factors, on_select, *,
                      timeframe='1h', min_quote_volume=0.0, top_volume_pct=0.0,
-                     blacklist=(), workers=1, log=print):
+                     blacklist=(), workers=1, log=print, on_rt_done=None):
     period = strategy_config['period']
     weight_list = strategy_config['weight_list']
     choose_symbols = strategy_config['choose_symbols']
@@ -129,14 +142,18 @@ def replay_selection(cache, symbols, run_times, strategy_config, factors, on_sel
                      top_volume_pct)
                     for chunk in chunks]
         with ProcessPoolExecutor(max_workers=len(payloads)) as ex:
-            for chunk_result in ex.map(_replay_chunk, payloads):   # map 保输入序 ⇒ 与串行逐位一致
+            # map 保输入序 ⇒ 与串行逐位一致;每块回来后标记该块所有轮已完成(块粒度续跑)
+            for chunk, chunk_result in zip(chunks, ex.map(_replay_chunk, payloads)):
                 for run_time, offset, row in chunk_result:
                     on_select(run_time, offset, row)
+                if on_rt_done is not None:
+                    for rt in chunk:
+                        on_rt_done(pd.Timestamp(rt))
     else:
         series = load_full_series(cache, symbols, timeframe)
-        for run_time, offset, row in _select_over_run_times(
-                series, run_times, period, weight_list, factors,
-                choose_symbols, max_candle_num, min_quote_volume, blacklist,
-                top_volume_pct=top_volume_pct):
-            on_select(run_time, offset, row)
+        # 串行流式:on_emit 逐条产出、on_rt_done 逐轮标记完成(轮粒度续跑)
+        _select_over_run_times(
+            series, run_times, period, weight_list, factors,
+            choose_symbols, max_candle_num, min_quote_volume, blacklist,
+            top_volume_pct=top_volume_pct, on_emit=on_select, on_rt_done=on_rt_done)
     return len(run_times)

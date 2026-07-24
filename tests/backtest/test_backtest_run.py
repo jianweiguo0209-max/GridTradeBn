@@ -254,3 +254,94 @@ def test_exclude_non_coin_raises_on_empty_markets():
     a = BinanceAdapter(c)
     with pytest.raises(RuntimeError):
         exclude_non_coin({'BTC/USDT:USDT'}, a)
+
+
+class _UniClient:
+    """resolve_bt_universe 契约桩：markets 含 COIN/非COIN,杠杆档含高/低杠杆。"""
+    def __init__(self):
+        self.markets = {
+            'AAA/USDT:USDT': {'symbol': 'AAA/USDT:USDT', 'swap': True, 'settle': 'USDT',
+                              'info': {'underlyingType': 'COIN'}},
+            'TRAD/USDT:USDT': {'symbol': 'TRAD/USDT:USDT', 'swap': True, 'settle': 'USDT',
+                               'info': {'underlyingType': 'EQUITY'}},   # TradFi → 剔
+            'LOW/USDT:USDT': {'symbol': 'LOW/USDT:USDT', 'swap': True, 'settle': 'USDT',
+                              'info': {'underlyingType': 'COIN'}},      # 低杠杆 → 剔
+        }
+
+    def load_markets(self):
+        return self.markets
+
+    def fetch_leverage_tiers(self, symbols=None, params=None):
+        # 档位表:AAA 高杠杆(50x@任意名义), LOW 低杠杆(5x);退市 DEAD 不在表 → 保留
+        def tier(lev):
+            return [{'maxNotional': 1e12, 'maxLeverage': lev,
+                     'info': {'initialLeverage': str(lev), 'notionalCap': '1000000000000'}}]
+        # ⚠ tier 行形状以同文件 test_exclude_low_leverage_* 既有桩为准——若 exclude_low_leverage
+        # 解析报 KeyError,逐字段对齐既有桩,勿改生产代码
+        return {'AAA/USDT:USDT': tier(50), 'LOW/USDT:USDT': tier(5)}
+
+
+def _uni_adapter():
+    from gridtrade.exchanges.binance import BinanceAdapter
+    return BinanceAdapter(_UniClient())
+
+
+def test_resolve_bt_universe_applies_both_filters_keeps_delisted():
+    from gridtrade.backtest.backtest_run import resolve_bt_universe
+    arch = ['AAA/USDT:USDT', 'TRAD/USDT:USDT', 'LOW/USDT:USDT',
+            'DEAD/USDT:USDT',            # 退市:不在 markets/档位表 → 双过滤都保留
+            'BL/USDT:USDT']              # 黑名单
+    uni, stats = resolve_bt_universe(_uni_adapter(), ['BL/USDT:USDT'],
+                                     archive_symbols=arch, min_lev=10.0,
+                                     log=lambda *a: None)
+    assert uni == ['AAA/USDT:USDT', 'DEAD/USDT:USDT']   # 非COIN剔/低杠杆剔/退市留/黑名单剔
+    assert stats == {'n_blacklist': 1, 'n_tradfi': 1, 'n_lowlev': 1, 'min_lev': 10.0}
+
+
+def test_resolve_bt_universe_minlev_zero_bypasses_leverage_filter():
+    from gridtrade.backtest.backtest_run import resolve_bt_universe
+    arch = ['AAA/USDT:USDT', 'LOW/USDT:USDT']
+    uni, stats = resolve_bt_universe(_uni_adapter(), (), archive_symbols=arch,
+                                     min_lev=0.0, log=lambda *a: None)
+    assert uni == ['AAA/USDT:USDT', 'LOW/USDT:USDT']    # =0 显式停用回旧口径
+    assert stats['n_lowlev'] == 0
+
+
+def test_resolve_bt_universe_env_default_minlev(monkeypatch):
+    from gridtrade.backtest.backtest_run import resolve_bt_universe
+    monkeypatch.delenv('BT_MIN_LEVERAGE', raising=False)
+    _, stats = resolve_bt_universe(_uni_adapter(), (), archive_symbols=['AAA/USDT:USDT'],
+                                   log=lambda *a: None)
+    assert stats['min_lev'] == 10.0                     # min_lev=None → env 默认 10.0
+
+
+def test_resolve_bt_universe_n_blacklist_is_raw_length_not_intersection():
+    # 锁语义:n_blacklist=黑名单原始长度(原 main() 打印 len(bt_blacklist) 的口径)——
+    # 黑名单含不在归档的符号(GHOST)时,交集口径会少报,破坏统计 print 行逐字节等价。
+    from gridtrade.backtest.backtest_run import resolve_bt_universe
+    arch = ['AAA/USDT:USDT', 'BL/USDT:USDT']
+    bl = ['BL/USDT:USDT', 'GHOST/USDT:USDT']            # GHOST 不在归档
+    uni, stats = resolve_bt_universe(_uni_adapter(), bl, archive_symbols=arch,
+                                     min_lev=10.0, log=lambda *a: None)
+    assert uni == ['AAA/USDT:USDT']
+    assert stats['n_blacklist'] == len(bl)              # 原始长度=2,而非交集=1
+
+
+def test_sweep_run_uses_shared_universe_builder(monkeypatch):
+    """sweep_run 票池必须走 resolve_bt_universe(口径分叉回归锁,spec 2026-07-24)。"""
+    import scripts.sweep_run as SRU
+    calls = {}
+
+    def fake_ds(cache):
+        return _uni_adapter(), None
+
+    def fake_resolve(adapter, blacklist, **kw):
+        calls['blacklist'] = tuple(blacklist)
+        return ['AAA/USDT:USDT'], {'n_tradfi': 0, 'n_lowlev': 0,
+                                   'n_blacklist': 0, 'min_lev': 10.0}
+
+    monkeypatch.setattr(SRU, '_binance_datasource_1h', fake_ds)
+    monkeypatch.setattr(SRU, 'resolve_bt_universe', fake_resolve)
+    uni = SRU.resolve_sweep_universe(cache=None)
+    assert uni == ['AAA/USDT:USDT']
+    assert len(calls['blacklist']) > 0          # tier0 黑名单已传入

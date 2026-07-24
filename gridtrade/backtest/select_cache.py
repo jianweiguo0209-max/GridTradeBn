@@ -90,15 +90,62 @@ def load(cache, key, params):
 
 def save(cache, key, params, grids):
     """原子写 pkl（临时文件 + os.replace）。"""
+    _atomic_dump(cache, _path(cache, key),
+                 {'version': CACHE_VERSION, 'params': params, 'grids': grids})
+
+
+def clear_final(cache, key):
+    """删掉整窗成品缓存（无则忽略）。"""
+    p = _path(cache, key)
+    if os.path.exists(p):
+        os.remove(p)
+
+
+# ---- 断点续跑 checkpoint：同 key 落"已完成轮 done + 目前 picks"，按天刷；跑完晋升成品后清 ----
+CKPT_EVERY = int(os.environ.get('BT_SELECT_CKPT_EVERY', '48'))   # 每完成 N 轮刷一次(≈2天/12H)
+
+
+def _ckpt_path(cache, key):
+    return os.path.join(_dir(cache), '%s.ckpt' % key)
+
+
+def save_checkpoint(cache, key, params, done, grids):
+    """原子写 checkpoint（done=已完成 run_time 字符串列表，grids=目前累计 picks）。"""
+    _atomic_dump(cache, _ckpt_path(cache, key),
+                 {'version': CACHE_VERSION, 'params': params,
+                  'done': list(done), 'grids': grids})
+
+
+def load_checkpoint(cache, key, params):
+    """命中且 version+params 一致 → {'done','grids'}；否则 None（含参数漂移不复用）。"""
+    p = _ckpt_path(cache, key)
+    if not (os.path.exists(p) and os.path.getsize(p) > 0):
+        return None
+    try:
+        with open(p, 'rb') as f:
+            obj = pickle.load(f)
+    except BaseException:
+        return None
+    if obj.get('version') != CACHE_VERSION or obj.get('params') != params:
+        return None
+    return {'done': obj.get('done', []), 'grids': obj.get('grids', [])}
+
+
+def clear_checkpoint(cache, key):
+    p = _ckpt_path(cache, key)
+    if os.path.exists(p):
+        os.remove(p)
+
+
+def _atomic_dump(cache, path, obj):
     d = _dir(cache)
     os.makedirs(d, exist_ok=True)
-    p = _path(cache, key)
     fd, tmp = tempfile.mkstemp(dir=d, suffix='.tmp')
     os.close(fd)
     try:
         with open(tmp, 'wb') as f:
-            pickle.dump({'version': CACHE_VERSION, 'params': params, 'grids': grids}, f)
-        os.replace(tmp, p)
+            pickle.dump(obj, f)
+        os.replace(tmp, path)
     except BaseException:
         if os.path.exists(tmp):
             os.remove(tmp)

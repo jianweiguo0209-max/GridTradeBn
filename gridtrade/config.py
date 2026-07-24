@@ -100,6 +100,10 @@ class DeployConfig:
     scheduler_fetch_pace_ms: float = 250.0    # 选币取数币间间隔（币安权重实测重校，见 scheduler.py）；0=关
     monitor_parallel: int = 4           # monitor per-grid 并行 worker 数；1=退回全串行（保底开关）
     monitor_unit_warn_sec: float = 30.0  # 单网格监控单元耗时告警阈值（病态格日志指名道姓）
+    signal_refresh_sec: float = 60.0    # pv/funding 每格复算节流(s);默认60=每分钟(对齐回测逐1m);900=旧节奏
+    # snapshot 重读降频(spec 2026-07-23):income/algo 簿 TTL 秒;<=0=关闭缓存(旧行为)
+    snapshot_income_ttl_sec: float = 300.0
+    snapshot_algo_book_ttl_sec: float = 60.0
     # MarketShockBrake(spec 2026-07-08)：|票池中位数 k 小时收益|≥thr → 暂停开格 pause 小时(只关不开)。
     # thr=0.025:新几何完整口径重跑(2026-07-11,sb2)支配解——Δ≈0/四窗MDD全改善/W1+4.07/捕获37/37;
     # 旧 GO 档 0.04 在 band2 下 Δ−1.95pp(W2 反弹被拦)。thr<=0=停用;约束 pause<=k(重启自愈依赖信号自持)。
@@ -182,6 +186,9 @@ def load_deploy_config(env=None) -> DeployConfig:
         database_url=_s(env, 'DATABASE_URL', ''),
         cap=cap,
         monitor_interval_sec=_f(env, 'MONITOR_INTERVAL_SEC', 5.0),
+        signal_refresh_sec=_f(env, 'SIGNAL_REFRESH_SEC', 60.0),
+        snapshot_income_ttl_sec=_f(env, 'SNAPSHOT_INCOME_TTL_SEC', 300.0),
+        snapshot_algo_book_ttl_sec=_f(env, 'SNAPSHOT_ALGO_BOOK_TTL_SEC', 60.0),
         scheduler_period=_s(env, 'SCHEDULER_PERIOD', '12H'),
         max_concurrent=_i(env, 'MAX_CONCURRENT', 12),
         total_budget=_f(env, 'TOTAL_BUDGET', 1_000_000.0),
@@ -259,7 +266,11 @@ DEFAULT_STRATEGY_CONFIG = {
         # 建网参数四窗扫描(2026-07-09,实盘口径:legacy 满窗 PV×mr0.68×新费率,memory
         # grid-params-sweep-verdict):PV 换形(+0.005)接管防爆后(四窗 7180 格破网 0),
         # 带宽从"防破网保险"变"收益杠杆"——窄带高换手胜出,与旧调优(宽带)结论翻转。
-        'atr_range_multiplier': 2,     # ←5:窄带;四窗均值 4.00→7.60%,唯一 W1 正收益组
+        # 2→3(2026-07-22 s030 冠军,geo_final 战役):宽带=便宜的尾部保险(消融实证止损链收
+        # 71%期望税买尾部,3×ATR 带以库存∝漂移/带宽的几何学买到同款保护)。与 2026-07-09
+        # "窄带胜出"不矛盾——当年是单改带宽于旧止损链底座;s030 是联动配置(宽带+密格+
+        # pv让位+紧固损),六窗对锚Σ+7.1pp、双留出全过(HOLD-A 三指标胜/HOLD-B Calmar 4.1v3.0)。
+        'atr_range_multiplier': 3,
         'range_pct_min': 0.05,
         'range_pct_max': 0.50,
         'grid_spacing_atr_ratio': 0.5,
@@ -270,7 +281,11 @@ DEFAULT_STRATEGY_CONFIG = {
         # 14.4)、仅 W1/W2 占优,regime 依赖不稳。首触丢弃 bug 恰偏袒密网(线密→最近线离 entry 近→
         # 首笔亏损单更常被吞),cmin20 的当年优势主要是该幻觉。注:flex_count=4×band 恒等式(atr 约掉)
         # → cmin 几乎恒绑定,是事实上的格数旋钮。
-        'grid_count_min': 10,
+        # 10→16(2026-07-22 s030):与 2026-07-19 回滚的 cmin20 本质不同——那次是 bug 引擎选出
+        # 的单改(诚实引擎 IS 崩至 2.1);此次全程诚实引擎(69754cf 后)且为联动配置的一环
+        # (带宽 3×ATR 下 flex≡12,cmin16 兜底≈恒 16 格,步距 0.375×ATR 与现役几乎同,
+        # 实质是"同资金摊宽摊薄":单格 −37.5%、同漂移库存 ×0.62)。低波 clamp 区自动更密(至33格)。
+        'grid_count_min': 16,
         'grid_count_max': 149,
         'stop_buffer_ratio': 0.01,     # 回测零敏感(破网 0);纯实盘丝距旋钮,留观察
     },
@@ -280,18 +295,28 @@ DEFAULT_STOP_CFG = {
     # 回滚 0.035→0.045(2026-07-19 重扫v2):候选A 的收紧依据("0.035 压 MDD 而收益不减")出自带
     # 保真度 bug 的引擎;诚实引擎实测 stop:0.035 四调参窗 3/4 胜但留出窗现形(HOLD-A −4.8 垫底
     # vs 基线 −4.5),收益边际、不值得动。0.045 = HL 时代原值(2026-07-10 口径)。
-    'stop_loss': 0.045,
+    # 0.045→0.03(2026-07-22 s030):pv 让位(−0.01)后固损从"最后防线"变"亏损主挡板",SWEEP4
+    # 阶梯实测 0.03 为内点(0.025 起误杀弹回格,IS 固损 20→126);三窗 ret/Calmar/mdd 全升。
+    # 与 2026-07-19 "0.035 留出现形"不矛盾——那是旧底座(pv+0.005 抢跑,固损没活干)的单改。
+    'stop_loss': 0.03,
     # 连续回撤止盈恢复开启(2026-07-19 重扫v2,推翻 2026-07-15 候选A 的"关"):当年"关掉四窗更优"
     # 是 pv 前视幻觉下的适应——带前视的 pv 料事如神先砍亏损,trailing 显得多余。诚实引擎(pv 去前视,
     # 9199503)实测 trailing 是真保护:关掉则 W1 7.3→0.8、OOS −3.0→−4.2(少亏 3.5pp 没了)、
     # HOLD-A 崩盘窗它锁利数百笔;仅 IS 顺风窗付代价(14.4→20.5 的机会成本)。四窗 3/4 + 留出窗验证,
     # 0.3/0.00618 = HL 时代原值。收紧档(0.2/0.004)在震荡窗更强但 IS/HOLD-B 转负,不取。
     'trailing_k': 0.3,
-    'trailing_floor': 0.00618,
+    # 0.00618→0.02(2026-07-22 s030):锁盈门槛抬到 2%(峰值>2% 才武装),治"锁小利没收燃料
+    # 溢价"(消融实证回撤止盈砍半燃料↔pnl 相关);SWEEP T 阶梯四窗 Σ 单峰于 2%。
+    # trailing 本体保留(全关在每窗均非最优)。
+    'trailing_floor': 0.02,
     'fundingRate_stop_loss': 0.0015,   # 资金费率止损（交易所真实 fundingRate）
     # pv 主动止损（量能尖峰 + pnl 门槛）；2026-07-07 PV 研究终配置（干净数据+对齐费率四窗全正，
     # spec 2026-07-07-pv-legacy-semantics-live）：尖峰时浮盈不足 +0.5% 即撤（策略换形，~70% 格首尖峰退出）
-    'pv_pnl_thr': 0.005,               # pv 触发门槛：pv_spike && pnlRatio<+0.005（evaluate_exit 读此值）
+    # +0.005→−0.01(2026-07-22 s030,本轮最大单点发现):+0.005 在磨涨 regime 系统性自伤——
+    # IS 窗 45% 格死于"浮盈<0.5%遇尖峰即砍",全是准赢家;−0.01=亏≥1%才认尖峰。SWEEP P 阶梯
+    # 四窗 Σ 单峰于 −0.01(W1 单调向紧/IS 单调向关的 regime 镜像平衡点);pv 全关在每窗均非
+    # 最优(崩盘窗保命价值真实,判别器两代参数化均未过线,见 memory grid-fitness-score-research)。
+    'pv_pnl_thr': -0.01,               # pv 触发门槛：pv_spike && pnlRatio<thr（evaluate_exit 读此值）
     'pv_mult': 3,                      # 量能尖峰倍数（LiveSignalProvider 算 pv_spike 用）
     'pv_period': '15min',              # 量能重采样周期（'15min' 非 '15m'——后者被 pandas 当月）
     'pv_n': 100,                       # 量能基线滚动窗口（15m×100≈25h 真滚动；signals 取 n+8 根前置历史）

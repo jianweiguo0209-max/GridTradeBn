@@ -365,6 +365,10 @@ def run_monitor_cycle(reconciler, manager, log=print, *,
                len(degraded), time.monotonic() - t_round,
                slowest['grid_id'], slowest.get('elapsed', 0.0)))
 
+    rw = getattr(getattr(manager.executor, 'adapter', None), 'report_weight', None)
+    if rw is not None:      # 权重遥测：每轮驱动一次（分钟翻转才真打;fake/HL 适配器无此方法→跳过）
+        rw(log)
+
     if commands is not None and audit is not None:
         consume_one(commands, audit, manager, flags, exchange=exchange)
     if equity_repo is not None:
