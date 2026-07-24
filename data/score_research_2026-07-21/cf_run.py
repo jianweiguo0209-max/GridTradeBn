@@ -31,7 +31,11 @@ _spec.loader.exec_module(cf_eval)
 
 WD = {'W1': ('2025-08-15', '2025-10-14'), 'W2': ('2025-10-15', '2025-12-14'),
       'OOS': ('2026-01-01', '2026-02-28'), 'IS': ('2026-03-01', '2026-06-30'),
-      'HOLD-A': ('2025-02-01', '2025-03-31'), 'HOLD-B': ('2024-10-01', '2024-11-30')}
+      'HOLD-A': ('2025-02-01', '2025-03-31'), 'HOLD-B': ('2024-10-01', '2024-11-30'),
+      # IS 半窗(2026-07-24): 4月窗工作集~8GB 独占16GB机;切半各~4GB 可与他窗2并发。
+      # 产物 cf_IS-a/b 由调度器 concat 成 cf_IS.parquet(逐格协议不变,采样相位切点重置)
+      'IS-a': ('2026-03-01', '2026-04-30'), 'IS-b': ('2026-05-01', '2026-06-30')}
+SRC = {'IS-a': 'IS', 'IS-b': 'IS'}   # 半窗别名: 因子/pdetail 用母窗文件
 FAC = {w: '%s/sc_factors_%s.parquet' % (RD, w) for w in ('W1', 'W2', 'OOS', 'IS')}
 FAC.update({w: '%s/ablation/hold_factors_%s.parquet' % (RD, w)
             for w in ('HOLD-A', 'HOLD-B')})
@@ -45,10 +49,13 @@ def main(wn, stride=1, limit=None):
         print('[%s] SKIP(已有产物)' % wn, flush=True)
         return
     w0, w1 = WD[wn]
-    pdet = pd.read_parquet('%s/ablation/pdetail_%s.parquet' % (RD, wn))
-    fac = pd.read_parquet(FAC[wn])[['rt', 'symbol', 'Atr_5']]
+    src = SRC.get(wn, wn)
+    pdet = pd.read_parquet('%s/ablation/pdetail_%s.parquet' % (RD, src))
+    fac = pd.read_parquet(FAC[src])[['rt', 'symbol', 'Atr_5']]
     atr = {(pd.Timestamp(r.rt), r.symbol): float(r.Atr_5) for r in fac.itertuples()}
     rounds = pdet[['run_time', 'offset']].drop_duplicates().sort_values('run_time')
+    w0t, w1t = pd.Timestamp(w0), pd.Timestamp(w1) + pd.Timedelta(days=1)
+    rounds = rounds[(rounds['run_time'] >= w0t) & (rounds['run_time'] < w1t)]  # 半窗切片(全窗=无操作)
     rounds = rounds.iloc[::max(1, int(stride))]
     if limit is not None:
         rounds = rounds.head(limit)
