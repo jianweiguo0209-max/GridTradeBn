@@ -534,11 +534,48 @@ def Reg_v2_signal(*args):
 
     return df
 
-def cal_factor(df):
-    """
-    计算单个币种的因子值
-    :param df:
-    :return:
+def _set_middle_5(df):
+    df['middle_5'] = df['close'].rolling(5, min_periods=1).mean()
+
+
+def _set_ma(df, n):
+    df['ma_%s' % n] = df['close'].rolling(n).mean()
+
+
+# 因子构建表(name → 在 df 上就地加该列的可调用);顺序=历史 cal_factor 调用序,保持
+# needed=None 全算口径逐位不变(各因子函数互不读对方输出、只写自己那列 → 取子集精确)。
+#   短/长周期选币因子(Reg_v2/Sgcz)、震荡度(Er_2)、自研量能(db_volume)、波动量级/形状(Atr/S_shape)、
+#   因子窗扫描备选列(2026-07-21,惰性)、middle_5、技术指标 ma。
+_ALL_FACTORS = [
+    ('Reg_v2_2', lambda d: Reg_v2_signal(d, 2, 0, 'Reg_v2_2')),
+    ('Sgcz_2', lambda d: Sgcz_signal(d, 2, 0, 'Sgcz_2')),
+    ('Reg_v2_5', lambda d: Reg_v2_signal(d, 5, 0, 'Reg_v2_5')),
+    ('Sgcz_5', lambda d: Sgcz_signal(d, 5, 0, 'Sgcz_5')),
+    ('Er_2', lambda d: Er_signal(d, 2, 0, 'Er_2')),
+    ('db_volume_v1_2', lambda d: db_volume_v1_signal(d, 2, 0, 'db_volume_v1_2')),
+    ('Atr_5', lambda d: Atr_signal(d, 5, 0, 'Atr_5')),
+    ('S_shape_5', lambda d: S_shape_signal(d, 5, 0, 'S_shape_5')),
+    ('Reg_v2_3', lambda d: Reg_v2_signal(d, 3, 0, 'Reg_v2_3')),
+    ('Reg_v2_6', lambda d: Reg_v2_signal(d, 6, 0, 'Reg_v2_6')),
+    ('Sgcz_3', lambda d: Sgcz_signal(d, 3, 0, 'Sgcz_3')),
+    ('Sgcz_8', lambda d: Sgcz_signal(d, 8, 0, 'Sgcz_8')),
+    ('Er_3', lambda d: Er_signal(d, 3, 0, 'Er_3')),
+    ('Er_5', lambda d: Er_signal(d, 5, 0, 'Er_5')),
+    ('Er_8', lambda d: Er_signal(d, 8, 0, 'Er_8')),
+    ('middle_5', _set_middle_5),
+    ('ma_2', lambda d: _set_ma(d, 2)),
+    ('ma_5', lambda d: _set_ma(d, 5)),
+    ('ma_13', lambda d: _set_ma(d, 13)),
+]
+
+
+def cal_factor(df, needed=None):
+    """计算单个币种的因子值。
+
+    needed=None(默认)→ 全算,与历史口径逐位相同(live/golden 不变)。
+    needed=集合 → 只算被引用的因子列(回测提速:选币只读 config factors ∪ 过滤器,余为惰性);
+    涨跌幅/上涨/下跌(截面因子输入)恒算;集合里 cal_factor 无 spec 的名(如外部注入的
+    p12_cross1)自动跳过。各因子独立 → 取子集与全算对应列 diff==0。
     """
     # 每日涨跌幅
     df['涨跌幅'] = df['close'].pct_change()
@@ -549,39 +586,76 @@ def cal_factor(df):
     df.loc[df['涨跌幅'] > 0, '上涨'] = 1
     df.loc[df['涨跌幅'] <= 0, '下跌'] = 1
 
-    # 选币因子 - 短周期(N=2)：捕捉近期状态
-    Reg_v2_signal(df, 2, 0, 'Reg_v2_2')
-    Sgcz_signal(df, 2, 0, 'Sgcz_2')
+    for name, build in _ALL_FACTORS:
+        if needed is None or name in needed:
+            build(df)
 
-    # 选币因子 - 长周期(N=5)：确认中期趋势（先下跌）
-    Reg_v2_signal(df, 5, 0, 'Reg_v2_5')
-    Sgcz_signal(df, 5, 0, 'Sgcz_5')
+    return df
 
-    # 震荡度因子（|BullPower+BearPower|，越小越震荡）
-    # 短周期(N=2)：捕捉"刚刚进入震荡"的择时信号
-    Er_signal(df, 2, 0, 'Er_2')
 
-    # 自研因子
-    db_volume_v1_signal(df, 2, 0, 'db_volume_v1_2')
+def _reg_v2_vec(s, n):
+    lr = ta.LINEARREG(s, timeperiod=2 * n)
+    return 100 * (s - lr) / (lr + eps)
 
-    Atr_signal(df, 5, 0, 'Atr_5')
-    S_shape_signal(df, 5, 0, 'S_shape_5')   # 波动形状(事件币标记);config 不列则惰性
 
-    # 因子窗扫描备选列(2026-07-21 用户令,惰性:config factors 不引用则零影响)。
-    # 约束:PIT 预算 max_candle_num=160(1h)≈13 根 12H bar;Reg_v2 内部 timeperiod=2N → N≤6。
-    Reg_v2_signal(df, 3, 0, 'Reg_v2_3')
-    Reg_v2_signal(df, 6, 0, 'Reg_v2_6')
-    Sgcz_signal(df, 3, 0, 'Sgcz_3')
-    Sgcz_signal(df, 8, 0, 'Sgcz_8')
-    Er_signal(df, 3, 0, 'Er_3')
-    Er_signal(df, 5, 0, 'Er_5')
-    Er_signal(df, 8, 0, 'Er_8')
-    df['middle_5'] = df['close'].rolling(5, min_periods=1).mean()
+def cal_factor_batch(df, needed=None):
+    """向量化版 cal_factor(回测提速):df 为多币**堆叠帧**(须含 'symbol' 列),按 symbol
+    分组一次算完,与逐币 cal_factor 逐位一致(parity 见 tests/core/test_factor_batch.py)——
+    省掉每(币,rt)重建小帧的 pandas 对象开销。needed 语义同 cal_factor。仅回测 batch 路径用;
+    live/研究直调 cal_factor 走逐币路(proceed_calc_symbol_factor batch=False 默认)。"""
+    g = df.groupby('symbol', sort=False)
+    close, high, low = df['close'], df['high'], df['low']
 
-    # # 根据指定的参数计算一些技术指标
-    for n in [2, 5, 13]:
-        df['ma_%s' % n] = df['close'].rolling(n).mean()
+    chg = g['close'].pct_change().fillna(df['close'] / df['open'] - 1)
+    df['涨跌幅'] = chg
+    df['上涨'] = (chg > 0).astype(int)
+    df['下跌'] = (chg <= 0).astype(int)
 
+    def want(name):
+        return needed is None or name in needed
+
+    def gtransform(col, fn):
+        return g[col].transform(fn)
+
+    for n, name in ((2, 'Reg_v2_2'), (5, 'Reg_v2_5'), (3, 'Reg_v2_3'), (6, 'Reg_v2_6')):
+        if want(name):
+            df[name] = gtransform('close', lambda s, _n=n: _reg_v2_vec(s, _n))
+    for n, name in ((2, 'Sgcz_2'), (5, 'Sgcz_5'), (3, 'Sgcz_3'), (8, 'Sgcz_8')):
+        if want(name):
+            hm = gtransform('high', lambda s, _n=n: s.rolling(_n, min_periods=1).mean())
+            df[name] = (close - hm) / (hm + eps)
+    for n, name in ((2, 'Er_2'), (3, 'Er_3'), (5, 'Er_5'), (8, 'Er_8')):
+        if want(name):
+            ema = gtransform('close', lambda s, _n=n: s.ewm(alpha=2 / (_n + 1), adjust=False).mean())
+            df[name] = ((high - ema) / ema + (low - ema) / ema).abs()
+    if want('db_volume_v1_2'):
+        vstd = gtransform('volCcy', lambda s: s.rolling(2).std())
+        vmean = gtransform('volCcy', lambda s: s.rolling(2).mean())
+        raw = vstd / (vmean + 1e-8)
+        df['db_volume_v1_2'] = raw.groupby(df['symbol'], sort=False).transform(
+            lambda s: (s - s.mean()) / s.std())
+    if want('Atr_5') or want('S_shape_5'):
+        pc = g['close'].shift(1)
+        c1, c2, c3 = high - low, (high - pc).abs(), (low - pc).abs()
+        if want('Atr_5'):
+            # Atr_signal 用 df[['c1','c2','c3']].max(axis=1) = skipna 行最大(首行 pc=NaN → TR=c1)
+            tr_a = pd.concat([c1, c2, c3], axis=1).max(axis=1)
+            atr = tr_a.groupby(df['symbol'], sort=False).transform(
+                lambda s: s.rolling(5, min_periods=1).mean())
+            mid = gtransform('close', lambda s: s.rolling(5, min_periods=1).mean())
+            df['Atr_5'] = atr / mid
+        if want('S_shape_5'):
+            # S_shape_signal 用 np.maximum = NaN 传播(首行 TR=NaN),与 Atr 的 TR 口径不同
+            tr_s = np.maximum(c1, np.maximum(c2, c3))
+            tr_sg = tr_s.groupby(df['symbol'], sort=False)
+            mtr = tr_sg.transform(lambda s: s.rolling(5, min_periods=1).mean())
+            dtr = tr_sg.transform(lambda s: s.rolling(5, min_periods=1).median())
+            df['S_shape_5'] = mtr / (dtr + eps)
+    if want('middle_5'):
+        df['middle_5'] = gtransform('close', lambda s: s.rolling(5, min_periods=1).mean())
+    for n in (2, 5, 13):
+        if want('ma_%s' % n):
+            df['ma_%s' % n] = gtransform('close', lambda s, _n=n: s.rolling(_n).mean())
     return df
 
 

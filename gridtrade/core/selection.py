@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from gridtrade.core.factors import cal_factor, cal_cross_factor
+from gridtrade.core.factors import cal_factor, cal_factor_batch, cal_cross_factor
 
 
 def trans_period_for_grid(data, period, exg_dict=None, offset=0):
@@ -34,8 +34,19 @@ def trans_period_for_grid(data, period, exg_dict=None, offset=0):
     return period_df
 
 
+# select_grid_coin 硬编码过滤器读到的因子列(不在 config factors 里也必算)
+FILTER_FACTORS = ('Reg_v2_2', 'Sgcz_2', 'db_volume_v1_2')
+
+
+def needed_factors(factor_info):
+    """选币实际读到的因子列 = config factors ∪ 硬编码过滤器。传给 cal_factor(needed=)
+    只算这些列(回测提速);未知名(外部注入的因子)照带,cal_factor 无 spec 时自动跳过。"""
+    return set(factor_info) | set(FILTER_FACTORS)
+
+
 # 对k线数据进行周期转换
-def proceed_calc_symbol_factor(symbol_candle_data, run_time, period, offset):
+def proceed_calc_symbol_factor(symbol_candle_data, run_time, period, offset, needed=None,
+                               batch=False):
     period_df_list = []
     exg_dict = {}
     for symbol, df in symbol_candle_data.items():
@@ -48,8 +59,10 @@ def proceed_calc_symbol_factor(symbol_candle_data, run_time, period, offset):
             continue
         df = trans_period_for_grid(df, period, exg_dict=exg_dict, offset=offset)
 
-        # 计算因子
-        df = cal_factor(df)
+        # 计算因子(needed=None 全算;回测传 needed 只算被引用列)。batch=True 时因子延后到
+        # 堆叠帧上向量化算(cal_factor_batch),此处只重采样。
+        if not batch:
+            df = cal_factor(df, needed=needed)
 
         period_df_list.append(df)
 
@@ -59,6 +72,8 @@ def proceed_calc_symbol_factor(symbol_candle_data, run_time, period, offset):
         return pd.DataFrame()
 
     all_data_df = pd.concat(period_df_list, ignore_index=True)
+    if batch:   # 多币堆叠帧一次向量化算因子(与逐币 cal_factor 逐位一致)
+        all_data_df = cal_factor_batch(all_data_df, needed=needed)
     all_data_df.sort_values('time', inplace=True)
     all_data_df.reset_index(inplace=True, drop=True)
 
