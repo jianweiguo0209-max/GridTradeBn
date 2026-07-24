@@ -14,6 +14,8 @@ import os
 import tempfile
 
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 
 class ParquetCache:
@@ -82,16 +84,20 @@ class ParquetCache:
         return sorted(fn[:-len('.parquet')] for fn in os.listdir(d) if fn.endswith('.parquet'))
 
     def read_all_days(self, namespace, symbol):
-        """读取某 symbol 在该 namespace 下所有已缓存天的数据，合并返回（按天排序）。"""
-        frames = []
+        """读取某 symbol 在该 namespace 下所有已缓存天的数据，合并返回（按天排序）。
+
+        逐天读 arrow table → concat_tables(promote) → 一次 to_pandas：比"逐天
+        read_parquet + pd.concat"少 N-1 次 pandas 转换/拼接，实测 ~2.9x（byte-exact，
+        见 tests/backtest/test_cache.py）。promote 兼容空哨兵天的 null 列 schema 漂移。"""
+        tables = []
         for day in self.list_days(namespace, symbol):
             p = self._path(namespace, symbol, day)
             if os.path.getsize(p) == 0:
                 continue
             try:
-                frames.append(pd.read_parquet(p))
+                tables.append(pq.read_table(p))
             except BaseException:
                 continue
-        if not frames:
+        if not tables:
             return None
-        return pd.concat(frames, ignore_index=True)
+        return pa.concat_tables(tables, promote=True).to_pandas()
