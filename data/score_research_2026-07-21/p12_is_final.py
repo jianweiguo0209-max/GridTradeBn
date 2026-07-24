@@ -29,7 +29,9 @@ FR = {'fundingRate_stop_loss': _STOP['fundingRate_stop_loss']}
 TR = {'trailing_k': 0.15, 'trailing_floor': 0.01}
 PVC5 = {'mult': 5, 'n': 100, 'period': '15min'}
 VAR = {'St4': dict(stop_loss=0.04, **TR, **FR),
-       'St5': dict(stop_loss=0.05, **TR, **FR)}
+       'St5': dict(stop_loss=0.05, **TR, **FR),
+       'F30': dict(stop_loss=0.05, **TR, fundingRate_stop_loss=0.003),
+       'F99': dict(stop_loss=0.05, **TR, fundingRate_stop_loss=1.0)}
 # 此前未见窗读数(合并t用): (mean_bp, n, std_bp)
 PRIOR = {'HOLD-A': (21.6, 220, 188.3), 'W2': (-11.6, 243, 247.0), 'OOS': (13.8, 247, 216.9)}
 
@@ -129,7 +131,8 @@ def main():
     days = (P['run_time'].max() - P['run_time'].min()).days or 1
     print('② IS 参考读数(绝对值+alpha):', flush=True)
     for k, col in (('现役×s030', 'cur_s'), ('p12×s030原链', 's030'),
-                   ('p12×St4', 'St4'), ('p12×St5', 'St5')):
+                   ('p12×St4', 'St4'), ('p12×St5', 'St5'),
+                   ('p12×F30', 'F30'), ('p12×F99', 'F99')):
         rs = P.groupby('run_time')[col].mean().sort_index().values
         rs = rs[np.isfinite(rs)]
         t_, mm_ = curve(rs)
