@@ -4,8 +4,14 @@ import os
 
 import pytest
 
+# cf_patrol 加载时会 exec gitignore 的 data/.../cf_eval.py+cf_report.py(硬编码研究资产),
+# CI 全新 checkout 没有 → 该测试须在缺资产时 skip(本机有则正常跑)。
+_RD = 'data/score_research_2026-07-21'
 pytestmark = pytest.mark.skipif(
-    not os.path.exists('scripts/cf_patrol.py'), reason='cf_patrol not present')
+    not (os.path.exists('scripts/cf_patrol.py')
+         and os.path.exists(os.path.join(_RD, 'cf_eval.py'))
+         and os.path.exists(os.path.join(_RD, 'cf_report.py'))),
+    reason='cf_patrol 或研究资产(gitignore)不在本机')
 
 
 def _mod():
