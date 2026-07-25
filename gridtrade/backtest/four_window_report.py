@@ -113,6 +113,33 @@ def _pct(value):
     return '%+.2f%%' % (float(value) * 100)
 
 
+def _display_value(value, scale=1.0):
+    """与HTML的 %.2f 完全同口径，先缩放再按两位小数量化。"""
+    return float('%.2f' % (float(value) * float(scale)))
+
+
+def _comparison_class(candidate, baseline, *, higher_is_better=True, scale=1.0):
+    """只标注两位小数后仍可见的优劣；显示值相同保持黑色。"""
+    c, b = _display_value(candidate, scale), _display_value(baseline, scale)
+    if c == b:
+        return ''
+    better = c > b if higher_is_better else c < b
+    return 'better' if better else 'worse'
+
+
+def _colored_cell(value, css_class):
+    cls = ' class="%s"' % css_class if css_class else ''
+    return '<td%s>%s</td>' % (cls, value)
+
+
+def _signed_pp(value):
+    """两位pp；极小负数不显示成扰眼的 -0.00pp。"""
+    shown = _display_value(value)
+    if shown == 0.0:
+        shown = 0.0
+    return '%+.2fpp' % shown
+
+
 def _svg_curve(equity):
     if equity is None or equity.empty or len(equity) < 2:
         return '<p class="muted">尚无权益曲线（窗口未运行或无网格）。</p>'
@@ -148,13 +175,23 @@ def render_html(run_meta, summary, offsets, equity, exit_reasons):
             continue
         r = row.iloc[0]
         reasons = html.escape(str(r.get('failure_reasons') or '—'))
+        ret_class = _comparison_class(r['ret'], b['ret'], scale=100.0)
+        mdd_class = _comparison_class(r['mdd'], b['mdd'], higher_is_better=False,
+                                      scale=100.0)
+        calmar_class = _comparison_class(r['calmar'], b['calmar'])
         rows.append('<tr><td>%s</td><td><span class="pill %s">%s</span></td>'
-                    '<td>%s</td><td>%s</td><td>%+.2fpp</td><td>%.2f</td><td>%.2f</td>'
-                    '<td>%.2f%%</td><td>%.2f%%</td><td>%+.2fpp</td><td>%d/%d</td><td>%s</td></tr>' %
+                    '<td>%s</td>%s%s<td>%.2f%%</td>%s%s<td>%.2f</td>%s'
+                    '<td>%d/%d</td><td>%s</td></tr>' %
                     (WINDOW_LABELS[name], 'ok' if bool(r['passed']) else 'bad', '通过' if bool(r['passed']) else '失败',
-                     _pct(b['ret']), _pct(r['ret']), (r['ret'] - b['ret']) * 100,
-                     b['calmar'], r['calmar'], b['mdd'] * 100, r['mdd'] * 100,
-                     (r['mdd'] - b['mdd']) * 100, int(r['n_broke']), int(r['n_blown']), reasons))
+                     _pct(b['ret']),
+                     _colored_cell(_pct(r['ret']), ret_class),
+                     _colored_cell(_signed_pp((r['ret'] - b['ret']) * 100), ret_class),
+                     b['mdd'] * 100,
+                     _colored_cell('%.2f%%' % (r['mdd'] * 100), mdd_class),
+                     _colored_cell(_signed_pp((r['mdd'] - b['mdd']) * 100), mdd_class),
+                     b['calmar'],
+                     _colored_cell('%.2f' % r['calmar'], calmar_class),
+                     int(r['n_broke']), int(r['n_blown']), reasons))
     offset_sections, exit_sections = [], []
     for name in WINDOW_ORDER:
         od = offsets[offsets['window'] == name] if 'window' in offsets.columns else pd.DataFrame()
@@ -182,24 +219,34 @@ def render_html(run_meta, summary, offsets, equity, exit_reasons):
                                  '</table></div>' % (WINDOW_LABELS[name], exit_rows))
     params = html.escape(json.dumps(run_meta['parameters'], ensure_ascii=False, indent=2, default=str))
     stopped = html.escape(run_meta.get('stopped_reason') or '—')
+    equity_sections = []
+    for name in WINDOW_ORDER:
+        ec = (equity[equity['window'] == name]
+              if equity is not None and 'window' in equity.columns else pd.DataFrame())
+        if not ec.empty:
+            equity_sections.append('<h3>%s</h3>%s' %
+                                   (WINDOW_LABELS[name], _svg_curve(ec)))
+    if not equity_sections:
+        equity_sections.append('<p class="muted">尚无已完成窗口的权益曲线。</p>')
     return '''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>六窗回测报告</title>
 <style>body{font:14px system-ui;margin:0;background:#f4f6f8;color:#172033}.wrap{max-width:1400px;margin:auto;padding:24px}
 h1,h2{margin:0 0 14px}.panel{background:white;border-radius:12px;padding:18px;margin:16px 0;box-shadow:0 2px 12px #0000000d}
 .pill{display:inline-block;padding:4px 9px;border-radius:999px;white-space:nowrap}.ok{background:#dcfce7;color:#166534}.bad{background:#fee2e2;color:#991b1b}.warn{background:#fef3c7;color:#92400e}
+.better{color:#15803d;font-weight:650}.worse{color:#dc2626;font-weight:650}
 table{border-collapse:collapse;width:100%%}th,td{padding:9px;border-bottom:1px solid #e5e7eb;text-align:right}th:first-child,td:first-child{text-align:left}
 .panel> .scroll+ h3,.panel h3:not(:first-child){margin-top:28px}.scroll{overflow:auto}.baseline-table th:nth-child(2),.baseline-table td:nth-child(2){min-width:76px;white-space:nowrap;text-align:center}
 .muted{color:#667085}svg{width:100%%;height:270px}pre{white-space:pre-wrap;background:#0f172a;color:#e2e8f0;padding:14px;border-radius:8px}</style></head>
 <body><div class="wrap"><h1>币安网格六窗基线闸门报告</h1><p><span class="pill %s">%s</span>　实验：%s　基线：%s　模式：%s</p>
 <div class="panel"><h2>闸门结论</h2><p>%s</p><p class="muted">规则：破网/爆仓一票否决；ret 与 MDD 容忍 0.30pp；正收益窗 Calmar 容忍 0.30；负收益窗不比较 Calmar。</p></div>
-<div class="panel scroll"><h2>六窗与基线</h2><table class="baseline-table"><thead><tr><th>窗口</th><th>判定</th><th>基线ret</th><th>候选ret</th><th>Δret</th><th>基线Calmar</th><th>候选Calmar</th><th>基线MDD</th><th>候选MDD</th><th>ΔMDD</th><th>破网/爆仓</th><th>说明</th></tr></thead><tbody>%s</tbody></table></div>
-<div class="panel"><h2>组合权益曲线（已完成窗口拼接展示）</h2>%s</div>
+<div class="panel scroll"><h2>六窗与基线</h2><table class="baseline-table"><thead><tr><th>窗口</th><th>判定</th><th>基线ret</th><th>候选ret</th><th>Δret</th><th>基线MDD</th><th>候选MDD</th><th>ΔMDD</th><th>基线Calmar</th><th>候选Calmar</th><th>破网/爆仓</th><th>说明</th></tr></thead><tbody>%s</tbody></table></div>
+<div class="panel"><h2>组合权益曲线（按窗口分别展示）</h2>%s</div>
 <div class="panel"><h2>分 offset 统计</h2>%s</div>
 <div class="panel"><h2>退出原因</h2>%s</div>
 <div class="panel"><h2>关键参数</h2><pre>%s</pre></div>
 <div class="panel"><h2>产物</h2><p>window_summary.csv · all_grids.csv · offset_summary.csv · equity_curve.csv · exit_reasons.csv · parameters.json · command.txt · run.log</p></div>
 </div></body></html>''' % (css_status, badge, html.escape(run_meta['name']), BASELINE_VERSION,
                               html.escape(mode_text),
-                              stopped, ''.join(rows), _svg_curve(equity), ''.join(offset_sections),
+                              stopped, ''.join(rows), ''.join(equity_sections), ''.join(offset_sections),
                               ''.join(exit_sections), params)
 
 
