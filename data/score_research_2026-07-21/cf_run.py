@@ -46,7 +46,11 @@ M1_CAP = 320                 # 1m LRU 上限:须>单轮池币数(~260),否则轮
 def main(wn, stride=1, limit=None):
     out_p = '%s/ablation/cf_%s.parquet' % (RD, wn)
     if os.path.exists(out_p) and limit is None:
-        print('[%s] SKIP(已有产物)' % wn, flush=True)
+        import time as _t
+        print('[%s] SKIP(已有产物 %dB, mtime %s)——SKIP不感知stride,重跑请先删该文件'
+              % (wn, os.path.getsize(out_p),
+                 _t.strftime('%m-%d %H:%M', _t.localtime(os.path.getmtime(out_p)))),
+              flush=True)
         return
     w0, w1 = WD[wn]
     src = SRC.get(wn, wn)
@@ -55,7 +59,7 @@ def main(wn, stride=1, limit=None):
     atr = {(pd.Timestamp(r.rt), r.symbol): float(r.Atr_5) for r in fac.itertuples()}
     rounds = pdet[['run_time', 'offset']].drop_duplicates().sort_values('run_time')
     w0t, w1t = pd.Timestamp(w0), pd.Timestamp(w1) + pd.Timedelta(days=1)
-    rounds = rounds[(rounds['run_time'] >= w0t) & (rounds['run_time'] < w1t)]  # 半窗切片(全窗=无操作)
+    rounds = rounds[(rounds['run_time'] >= w0t) & (rounds['run_time'] < w1t)]  # 半窗切片(全窗仅剔w1+1d边界轮)
     rounds = rounds.iloc[::max(1, int(stride))]
     if limit is not None:
         rounds = rounds.head(limit)
@@ -136,16 +140,16 @@ def main(wn, stride=1, limit=None):
                   % (wn, i + 1, len(rounds), len(rows), n_skip_atr, n_skip_m1,
                      n_skip_eval, n_skip_exc, (time.time() - t0) / (i + 1)), flush=True)
     df = pd.DataFrame(rows)
-    if limit is None:
-        df.to_parquet(out_p)
     n_out = int((df['picked'] & ~df['in_pool']).sum()) if len(df) else 0
     print('[%s] DONE 轮=%d 行=%d skip(atr/m1/eval/exc)=%d/%d/%d/%d 选中跳过=%d 池外选中=%d'
           % (wn, len(rounds), len(df), n_skip_atr, n_skip_m1, n_skip_eval,
              n_skip_exc, n_pick_skip, n_out), flush=True)
     if n_pick_skip:
-        print('[%s] FAIL 选中格被跳过=%d——数据缺口破坏选中vs池对比,fail-loud' % (wn, n_pick_skip),
+        print('[%s] FAIL 选中格被跳过=%d——数据缺口破坏选中vs池对比,fail-loud(不落盘)' % (wn, n_pick_skip),
               flush=True)
         sys.exit(1)
+    if limit is None:                       # 落盘在fail-loud门后:FAIL不产出,防SKIP静默复用毒产物
+        df.to_parquet(out_p)
 
 
 if __name__ == '__main__':
