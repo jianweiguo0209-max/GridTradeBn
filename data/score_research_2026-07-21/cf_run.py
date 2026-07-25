@@ -77,12 +77,17 @@ def main(wn, stride=1, limit=None):
     m1hi = pd.Timestamp(w1) + pd.Timedelta(days=2)
     m1_map, fd_map = {}, {}
     rows, t0 = [], time.time()
+    m1_cap = M1_CAP
     n_skip_atr = n_skip_m1 = n_skip_eval = n_skip_exc = n_pick_skip = 0
     for i, rr in enumerate(rounds.itertuples()):
         rt = pd.Timestamp(rr.run_time)
         pool = set(build_pit_candidates(
             series, rt, max_candle_num=160, min_quote_volume=0.0,
             top_volume_pct=TOP_VOLUME_PCT, blacklist=()).keys())
+        m1_cap = max(m1_cap, len(pool) + 40)   # 动态上限:恒>池尺寸,防轮内清缓存解析税
+        if i == 0:
+            print('[%s] 池尺寸预检: pool=%d m1_cap=%d' % (wn, len(pool), m1_cap),
+                  flush=True)
         picks = picks_by_rt.get(rr.run_time, set())
         for sym in sorted(pool | picks):
             a5 = atr.get((rt, sym))
@@ -93,7 +98,8 @@ def main(wn, stride=1, limit=None):
                 continue
             m1 = m1_map.get(sym)
             if m1 is None:
-                m1 = cache.read_all_days('1m', sym)
+                m1 = cache.read_days_range(   # 按窗读天,替代全史读(税~10-50x,cache.py 注)
+                    '1m', sym, m1lo.strftime('%Y-%m-%d'), m1hi.strftime('%Y-%m-%d'))
                 if m1 is not None and not m1.empty:
                     m1 = m1[(m1['candle_begin_time'] >= m1lo)
                             & (m1['candle_begin_time'] < m1hi)].reset_index(drop=True)
@@ -122,7 +128,7 @@ def main(wn, stride=1, limit=None):
             rows.append({'run_time': rt, 'offset': int(rr.offset), 'symbol': sym,
                          'in_pool': sym in pool, 'picked': sym in picks,
                          'Atr_5': a5, **out})
-        if len(m1_map) > M1_CAP:
+        if len(m1_map) > m1_cap:
             m1_map.clear()
             fd_map.clear()
         if (i + 1) % 10 == 0:
