@@ -78,12 +78,20 @@ def pool_path(wn):
     return '%s/rsp_pool_%s.parquet' % (OUT, wn)
 
 
-# 选币器:(列名, ascending) 列表 —— 等权名次和,取最小
+# 选币器:(列名, ascending) 列表 —— 等权名次和,取最小(单因子即纯排序)
 RANKERS = {
     'D_ESP': [('Er_2', True), ('Sgcz_5', True), ('p12', False)],
     'D_REP': [('Reg_v2_5', True), ('Er_2', True), ('p12', False)],
     'EP2':   [('Er_2', True), ('p12', False)],
+    # 修订四(2026-07-26)追加:
+    # eff1 = p12_eff 单因子降序 top-1。探针 +13.8bp/t4.91(全项目最强,两死窗全平
+    #        W1−1.3/W2+1.4、OOS+44.7)。t4.91 超多臂噪声期望上限(~3.0)为唯一例外读数。
+    'eff1':  [('p12_eff', False)],
+    'EPE':   [('Er_2', True), ('p12', False), ('p12_eff', False)],   # +9.2/t2.86
 }
+# 各选币器配的链(修订四:eff1 配全族六链;EPE 只配 s030 与 v2固3)
+SEL_CHAINS = {'D_ESP': None, 'D_REP': None, 'EP2': None, 'eff1': None,
+              'EPE': ['s030', 'v2f3']}      # None = 全六链
 TR = {'trailing_k': 0.15, 'trailing_floor': 0.01, 'pv_mult': 5}
 CHAINS = [('s030', {}),                                          # 生产现值全套
           ('v2f3', dict(TR)),                                    # stop 0.03(=基线)
@@ -92,7 +100,9 @@ CHAINS = [('s030', {}),                                          # 生产现值�
           ('F30', dict(TR, stop_loss=0.05, funding_stop=0.003)),
           ('F99', dict(TR, stop_loss=0.05, funding_stop=1.0))]    # carry 标签保留
 ARMS = [('anchor', 'rank', {})] + [
-    ('%s_%s' % (sel, cn), sel, dict(ov)) for sel in RANKERS for cn, ov in CHAINS]
+    ('%s_%s' % (sel, cn), sel, dict(ov))
+    for sel in RANKERS for cn, ov in CHAINS
+    if SEL_CHAINS.get(sel) is None or cn in SEL_CHAINS[sel]]
 CAND_ARMS = [a[0] for a in ARMS if a[1] != 'rank']
 
 
@@ -102,10 +112,17 @@ def emit(line):
 
 
 def _load_p12(wn):
-    lab = pd.read_parquet(LAB[wn])[['rt', 'symbol', 'cross1']]
-    lab = lab.rename(columns={'cross1': 'p12'})
+    """标签表 → p12(=cross1) 与 p12_eff(=cross1/(1+100·mae),brief 修订四)。
+
+    两者同源同 PIT:标签行 rt=T 描述 [T,T+12h),平移 +12h 对齐选币轮 R(与 p12 注入路径同)。
+    eff 的机制:燃料(阶梯跨越数)除以最大不利偏移 ⇒ **单位风险的燃料**,
+    正对"排除单边伪装成波动"的痛点(与 Er_2 的振荡门控互补而非重复)。
+    """
+    lab = pd.read_parquet(LAB[wn])[['rt', 'symbol', 'cross1', 'mae']]
+    lab['p12'] = lab['cross1']
+    lab['p12_eff'] = lab['cross1'] / (1.0 + 100.0 * lab['mae'])
     lab['rt'] = lab['rt'] + pd.Timedelta(hours=12)
-    return lab
+    return lab[['rt', 'symbol', 'p12', 'p12_eff']]
 
 
 def make_picks(pool, ranker, wn, k=SW.TIER_CAND_K):
@@ -115,7 +132,7 @@ def make_picks(pool, ranker, wn, k=SW.TIER_CAND_K):
         return _to_picks(d[np.isfinite(d['rank']) & (d['rank'] <= k)]
                          .sort_values(['rt', 'rank']))
     spec = RANKERS[ranker]
-    need = [c for c, _asc in spec if c != 'p12']
+    need = [c for c, _asc in spec if c not in ('p12', 'p12_eff')]  # 标签列不在面板
     d = d[np.isfinite(d['close']) & np.isfinite(d['Atr_5']) & np.isfinite(d['middle_5'])]
     d = d.merge(_load_p12(wn), on=['rt', 'symbol'], how='inner')
     pn = pd.read_parquet(PANEL[wn])[['rt', 'symbol', 'offset'] + RCOLS]
