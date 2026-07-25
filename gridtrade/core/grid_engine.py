@@ -380,6 +380,12 @@ def cal_equity_curve(candle_df, trade_df, fee, cap, c_rate_taker=0.0005, funding
     if not neg.empty:
         neg['avg_price'] = neg['touch'].expanding().mean()
     price_df = pd.concat([pos, neg], ignore_index=True)
+    if 'avg_price' not in price_df.columns:
+        # pos/neg 同时为空 ⇒ 该格净持仓 _lvl 恒为 0（买卖始终完美配对、从未留仓），
+        # 无任何均价档可算。此前两个 if 都不执行 → avg_price 列未被创建 → 下面 merge 抛
+        # KeyError（2026-07-26 RSP2 战役 W2 实测触发）。补空列走 merge 后既有的 fillna(0)
+        # 正常路径，语义等同「无持仓 ⇒ 均价 0」，对非退化格逐位无影响。
+        price_df['avg_price'] = np.nan
     trade_data = pd.merge(left=trade_data, right=price_df[['_lvl', 'avg_price']], on='_lvl', how='left')
     trade_data['avg_price'].fillna(value=0, inplace=True)
     del trade_data['touch'], trade_data['order_dir'], trade_data['order_num'], trade_data['_lvl']
