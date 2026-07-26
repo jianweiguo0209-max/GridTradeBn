@@ -1,0 +1,13 @@
+== H1 留出一级 MIN_TICKS=3 workers=4 开跑 07-27 04:19 (2臂×5窗) ==
+[HOLD-A] blocked=308 tick表=312币 3.7min
+H1/HOLD-A: END_b2_c26_pv-5_m5       ret    +1.44 mdd -3.17 calmar     2.925 fills   18.7 格1087 破0 剔1193 1.2min | 窗口结束:797, 固定止损:119
+H1/HOLD-A: ANCHOR_b3_c16_pv-10_m3   ret    -1.68 mdd -4.73 calmar    -2.107 fills    4.7 格1109 破0 剔36 0.9min | 窗口结束:840, pv主动:164  [锚,须对上T1 P1/HOLD-A geo_b3_c16]
+[HOLD-A] DONE
+[HOLD-B] blocked=296 tick表=277币 3.7min
+H1/HOLD-B: END_b2_c26_pv-5_m5       ret    +2.56 mdd -6.44 calmar     2.531 fills   19.6 格1166 破0 剔1338 1.3min | 窗口结束:884, pv主动:139
+H1/HOLD-B: ANCHOR_b3_c16_pv-10_m3   ret    +5.47 mdd -2.72 calmar      13.8 fills    4.6 格1169 破0 剔60 1.0min | 窗口结束:916, pv主动:202  [锚,须对上T1 P1/HOLD-B geo_b3_c16]
+[HOLD-B] DONE
+[HOLD-C] blocked=279 tick表=365币 3.7min
+H1/HOLD-C: END_b2_c26_pv-5_m5       ret    -2.65 mdd -6.39 calmar    -2.327 fills   19.8 格1161 破0 剔1230 1.5min | 窗口结束:836, pv主动:145
+H1/HOLD-C: ANCHOR_b3_c16_pv-10_m3   ret    +1.67 mdd -3.59 calmar     2.905 fills    4.8 格1185 破0 剔47 1.1min | 窗口结束:905, pv主动:201  [锚,须对上T1 P1/HOLD-C geo_b3_c16]
+[HOLD-C] DONE
