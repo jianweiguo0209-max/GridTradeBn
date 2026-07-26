@@ -176,6 +176,42 @@ def select(res, reg, tag):
     return keep
 
 
+def beam_tags(beam):
+    """给束内每个点一个**保证互不相同**的短前缀。
+
+    ⚠ 不能用 `bn[:8]` 硬截断:第二代臂名前 8 字符会相同
+      (`pvmult5+fundi3` 与 `pvmult5+pvthr-5` 都截成 `pvmult5+`)⇒ 展开出的臂名相撞
+      ⇒ eff1_chain_scan 的 `臂名重复` 断言把两个作业双双秒崩(2026-07-27 实错)。
+    取「能区分束内全部成员的最短前缀」。
+    """
+    n = 1
+    names = [b for b, _c in beam]
+    while n < 60 and len({b[:n] for b in names}) < len(names):
+        n += 1
+    assert len({b[:n] for b in names}) == len(names), '束内臂名无法区分:%s' % names
+    return {b: b[:n] for b in names}
+
+
+def stage_done(st):
+    """该段是否已跑满:读扫描器抬头的臂数 × 10 单元,与实际读数比。
+
+    ⚠ 没有这个判断,重启后的驱动器会把「后-S1 的束」当成 S0 束,再连做两轮扩展,
+      **编辑距离扩到 4**,超出预注册 §1 冻结的 ≤3(2026-07-27 实错,幸被臂名重复挡下)。
+    """
+    f = '%s/eff1_%s_results.txt' % (A, st.lower())
+    if not os.path.exists(f):
+        return False
+    n, need = 0, None
+    for ln in open(f):
+        if ln.startswith(st + '/'):
+            n += 1
+        else:
+            m = re.search(r'\((\d+)臂×', ln)
+            if m:
+                need = int(m.group(1)) * 10
+    return need is not None and n >= need
+
+
 def expand(beam, res, reg):
     """束内每点沿每轴取全部值,去重、去已跑。
 
@@ -185,6 +221,7 @@ def expand(beam, res, reg):
     """
     seen = {json.dumps(reg[a], sort_keys=True)
             for a in {x for _w, x in res} if a in reg and merged(res, a) is not None}
+    tag = beam_tags(beam)
     out = []
     for bn, bc in beam:
         for ax, vals in AXES.items():
@@ -197,7 +234,8 @@ def expand(beam, res, reg):
                     continue
                 seen.add(key)
                 sfx = ('%g' % (v * 1000)) if abs(v) < 0.1 else ('%g' % v)
-                out.append(('%s+%s%s' % (bn[:8], ax.replace('_', '')[:5], sfx), c))
+                out.append(('%s+%s%s' % (tag[bn], ax.replace('_', '')[:5], sfx), c))
+    assert len({n for n, _c in out}) == len(out), '展开后臂名重复'
     return out
 
 
@@ -222,10 +260,13 @@ def main():
     log('束搜索 v2 启动 B=%d。规则见 2026-07-27-chain-beam-prereg §2(已冻结)。' % BEAM)
     reg = registry()
     res = all_results()
-    beam = select(res, reg, 'S0')
+    todo = [st for st in ('S1', 'S2') if not stage_done(st)]
+    fin = [st for st in ('S1', 'S2') if st not in todo]
+    log('已完成的段:%s;待跑:%s' % (fin or ['无'], todo or ['无']))
+    beam = select(res, reg, fin[-1] if fin else 'S0')
     if not beam:
-        log('S0 无点满足 ⇒ 保持现值,终止'); return
-    for stage in ('S1', 'S2'):
+        log('无点满足 ⇒ 保持现值,终止'); return
+    for stage in todo:
         cfgs = expand(beam, res, reg)
         # ⚠ 基座门必须**按段命名**:两段都叫 BASE_0 会让 S2 的注册覆写 reg['BASE_0'],
         #   于是 S1 的 BASE_0 读数被按 S2 的配置解释;且 res 以 (窗,臂名) 为键,
@@ -233,6 +274,9 @@ def main():
         gates = [('%sG%d' % (stage, i), dict(c)) for i, (_n, c) in enumerate(beam)]
         allc = gates + cfgs
         for n, c in allc:
+            # ⚠ res 以 (窗,臂名) 为键跨段合并;同名不同配置会让旧读数被按新配置解释。
+            if n in reg and json.dumps(reg[n], sort_keys=True) != json.dumps(c, sort_keys=True):
+                raise SystemExit('臂名 %s 已指向不同配置,拒绝覆写(会污染跨段读数)' % n)
             reg[n] = c
         json.dump(reg, open(REG, 'w'), indent=1, ensure_ascii=False)
         log('--- %s:束 %d 点扩出 %d 新配置(+%d 基座门)= %d 臂 ---'
