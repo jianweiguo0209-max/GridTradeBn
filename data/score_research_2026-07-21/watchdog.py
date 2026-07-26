@@ -24,7 +24,7 @@ RD = '/Users/thomaschang/Projects/GridTradeBi/data/score_research_2026-07-21'
 A = RD + '/ablation'
 PY = '/Users/thomaschang/Projects/GridTradeBi/.venv/bin/python'
 ALERT = A + '/ALERTS.log'
-STAGE_ARMS = {'k1': 5, 'k2': 9, 'k3': 12, 'k4': 9}      # 每段应有臂数
+STAGE_ARMS = {'s1': 16, 's2': 24}                       # 束搜索 v2 每段应有臂数
 UNITS = 10
 STALL_MIN = 15
 
@@ -62,14 +62,13 @@ def stage_state(st):
     n = 0
     if os.path.exists(f):
         n = sum(1 for ln in open(f) if ln.startswith(st.upper() + '/'))
-    running = alive('K_STAGE=%s' % st.upper()) or alive('eff1_k1_pv5stop' if st == 'k1'
-                                                        else 'zzz-none')
+    running = alive('K_STAGE=%s' % st.upper())
     return n, STAGE_ARMS[st] * UNITS, running
 
 
 # ⚠ 只扫**本流水线**的日志:ablation/ 下有几周前旧战役的日志,里面的历史 traceback
 #   会淹掉真告警(实测一启动就冒 6 条假告警)。且只看**启动之后新增**的内容。
-LOG_PAT = re.compile(r'^(k[1-4]_[ab]\.log|greedy_driver\.(log|out))$')
+LOG_PAT = re.compile(r'^(s[12]_[ab]\.log|beam_v2\.(log|out))$')
 _pos = {}
 
 
@@ -108,7 +107,7 @@ def main():
     prev_swap = swapouts()
     while True:
         now = time.time()
-        drv = alive('chain_greedy_driver')
+        drv = alive('beam_v2_driver')
         scans = subprocess.run(['pgrep', '-f', 'eff1_chain_scan|eff1_k1_pv5stop'],
                                capture_output=True, text=True).stdout.split()
         p = pressure()
@@ -118,11 +117,11 @@ def main():
 
         # 1 驱动器死亡 → 自动重启(可重入)
         if not drv:
-            if os.path.exists(A + '/greedy_final_beam.json'):
+            if os.path.exists(A + '/beam_v2_final.json'):
                 alert('DONE', '束搜索已完成,看门狗退出'); return
             alert('FATAL', '驱动器不在了 ⇒ 自动重启(可重入,每段已落盘)')
-            subprocess.Popen([PY, '-u', RD + '/chain_greedy_driver.py'],
-                             stdout=open(A + '/greedy_driver.out', 'a'),
+            subprocess.Popen([PY, '-u', RD + '/beam_v2_driver.py'],
+                             stdout=open(A + '/beam_v2.out', 'a'),
                              stderr=subprocess.STDOUT)
             time.sleep(30)
 
@@ -137,7 +136,7 @@ def main():
             hi_pressure = 0
 
         # 4/5 逐段状态
-        for st in ('k1', 'k2', 'k3', 'k4'):
+        for st in ('s1', 's2'):
             n, need, running = stage_state(st)
             if n == 0:
                 continue
@@ -153,7 +152,7 @@ def main():
                 seen.add('short-' + st)
                 alert('RED', '**%s 结果残缺 %d/%d** —— 驱动器会对跑不全的臂静默跳过 ⇒ 束会选错。'
                              '已停驱动器,请人工续跑该段后再启动' % (st.upper(), n, need))
-                subprocess.run(['pkill', '-f', 'chain_greedy_driver'])
+                subprocess.run(['pkill', '-f', 'beam_v2_driver'])
 
         # 2 日志异常
         for f, pat in scan_logs():
