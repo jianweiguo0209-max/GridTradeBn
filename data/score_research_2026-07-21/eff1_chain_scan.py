@@ -53,6 +53,9 @@ _v.loader.exec_module(V2)
 S, G = V2.S, V2.G
 
 STAGE = os.environ.get('K_STAGE', 'K2')
+# K_CONFIGS = JSON list of [name, chain_ov]。由驱动器生成(束搜索:每段对束内每个基座
+# 展开该轴的全部取值,基座本身也入列作字节门)。旧的 K_BASE/K_AXIS 接口保留作兜底。
+CONFIGS = json.loads(os.environ.get('K_CONFIGS', '[]'))
 BASE = json.loads(os.environ.get('K_BASE', '{}'))
 AXIS = json.loads(os.environ.get('K_AXIS', '{}'))
 BUDGET = os.environ.get('K_BUDGET', '?')
@@ -69,11 +72,17 @@ def _fmt(v):
     return ('%g' % (v * 1000)) if abs(v) < 0.1 else ('%g' % v)
 
 
-ARMS = [('BASE', dict(BASE))]                      # 基座 = 字节门
-for k, vals in AXIS.items():
-    for v in vals:
-        ov = dict(BASE); ov[k] = v
-        ARMS.append(('%s%s' % (k.replace('_', '')[:6], _fmt(v)), ov))
+if CONFIGS:
+    ARMS = [(n, ov) for n, ov in CONFIGS]
+else:                                              # 兜底:单基座 × 单轴
+    ARMS = [('BASE', dict(BASE))]
+    for k, vals in AXIS.items():
+        for v in vals:
+            ov = dict(BASE); ov[k] = v
+            ARMS.append(('%s%s' % (k.replace('_', '')[:6], _fmt(v)), ov))
+assert ARMS, '无臂可跑'
+assert len({n for n, _ in ARMS}) == len(ARMS), '臂名重复'
+
 
 
 def emit(line):
@@ -100,8 +109,10 @@ def main():
     universe = sorted(set(V.list_archive_symbols())
                       - set(effective_blacklist((), DEFAULT_TIER_POLICY)))
     SW.set_baseline({})
-    emit('== %s 基座=%s 轴=%s 累计搜索预算=%s 开跑 %s (%d臂×%d单元) =='
-         % (STAGE, BASE, AXIS, BUDGET, time.strftime('%m-%d %H:%M'), len(ARMS), len(WINS)))
+    emit('== %s 累计搜索预算=%s 开跑 %s (%d臂×%d单元) =='
+         % (STAGE, BUDGET, time.strftime('%m-%d %H:%M'), len(ARMS), len(WINS)))
+    for _n, _o in ARMS:
+        emit('   臂 %-14s %s' % (_n, json.dumps(_o, sort_keys=True)))
     emit('== 性质:知识扫描,不选点;裁决前必须先写死预注册 ==')
     done = done_set()
     for wn in WINS:
@@ -140,7 +151,7 @@ def main():
                     float(df['n_fills'].mean()), m['n_grids'], m['n_broke'],
                     (time.time() - t0) / 60,
                     ', '.join('%s:%d' % (k[:4], v) for k, v in er.most_common(3)),
-                    '  [基座字节门]' if name == 'BASE' else ''))
+                    '  [基座字节门]' if name.startswith('BASE') else ''))
         del wd, series
         emit('[%s] DONE' % wn)
     emit('%s_DONE' % STAGE)
