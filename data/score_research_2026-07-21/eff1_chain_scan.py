@@ -85,6 +85,61 @@ assert len({n for n, _ in ARMS}) == len(ARMS), '臂名重复'
 
 
 
+# ---- 窗级缓存:blocked_rts + tick 表只依赖**窗**,不依赖臂 ----
+# 每段每窗重算一次,四段下来同一个窗算 4 遍。实测占单元耗时 5.2min 的绝大部分。
+# 缓存键 = 窗名;存 universe 规模与关键参数做失效校验(参数变了必须重算)。
+# 断点续跑友好:缓存落 ablation/,进程崩了重启直接命中。
+CACHE_VER = 1
+
+
+def _ckpath(kind, wn):
+    return '%s/ablation/cache_%s_%s.json' % (RD, kind, wn)
+
+
+def _meta(universe):
+    return {'ver': CACHE_VER, 'n_universe': len(universe),
+            'shock': list(SW.SHOCK), 'top_pct': BT_UNIVERSE_TOP_PCT,
+            'min_ticks': V2.MIN_TICKS}
+
+
+def cached_blocked(cache, universe, s0, e0, wn):
+    p, meta = _ckpath('blocked', wn), _meta(universe)
+    if os.path.exists(p):
+        try:
+            d = json.load(open(p))
+            if d.get('meta') == meta:
+                return {pd.Timestamp(x) for x in d['rts']}
+        except Exception:
+            pass
+    b = blocked_rts(cache, universe, pd.Timestamp(s0),
+                    pd.Timestamp(e0) + pd.Timedelta(days=1), '1h', *SW.SHOCK,
+                    min_quote_volume=0.0, top_volume_pct=BT_UNIVERSE_TOP_PCT)
+    tmp = p + '.tmp'
+    json.dump({'meta': meta, 'rts': [str(pd.Timestamp(x)) for x in b]}, open(tmp, 'w'))
+    os.replace(tmp, p)                      # 原子落盘,防半截文件被读到
+    return b
+
+
+def cached_ticks(cache, wn, syms, lo, hi, universe):
+    p, meta = _ckpath('tick', wn), _meta(universe)
+    meta = dict(meta, lo=lo, hi=hi, n_syms=len(syms))
+    if os.path.exists(p):
+        try:
+            d = json.load(open(p))
+            if d.get('meta') == meta:
+                return {s: ({pd.Timestamp(k).date(): v for k, v in m.items()}
+                            if m else None) for s, m in d['tk'].items()}
+        except Exception:
+            pass
+    tk = {s: G.daily_tick(cache, s, lo, hi) for s in syms}
+    tmp = p + '.tmp'
+    json.dump({'meta': meta,
+               'tk': {s: ({str(k): v for k, v in m.items()} if m else None)
+                      for s, m in tk.items()}}, open(tmp, 'w'))
+    os.replace(tmp, p)
+    return tk
+
+
 def emit(line):
     open(RESULTS, 'a').write(line + '\n')
     print(line, flush=True)
@@ -123,14 +178,12 @@ def main():
             emit('[%s] SKIP' % wn); continue
         pool = pd.read_parquet(S.pool_path(pool_wn))
         t0 = time.time()
-        blocked = blocked_rts(cache, universe, pd.Timestamp(s0),
-                              pd.Timestamp(e0) + pd.Timedelta(days=1), '1h', *SW.SHOCK,
-                              min_quote_volume=0.0, top_volume_pct=BT_UNIVERSE_TOP_PCT)
+        blocked = cached_blocked(cache, universe, s0, e0, wn)
         lo = str((pd.Timestamp(s0) - pd.Timedelta(days=4)).date())
         hi = str((pd.Timestamp(e0) + pd.Timedelta(days=1)).date())
         raw = S.make_picks(pool, 'K1', pool_wn)
-        tk = {sym: G.daily_tick(cache, sym, lo, hi)
-              for sym in sorted({r['symbol'] for _, _, r in raw})}
+        tk = cached_ticks(cache, wn, sorted({r['symbol'] for _, _, r in raw}),
+                          lo, hi, universe)
         if wn.startswith('IS-'):                   # 按段切轮
             ws, we = pd.Timestamp(s0), pd.Timestamp(e0) + pd.Timedelta(days=1)
             raw = [p for p in raw if ws <= p[0] < we]
