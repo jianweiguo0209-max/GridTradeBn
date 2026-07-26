@@ -141,7 +141,12 @@ def _simulate_grid_task(payload):
     # 网格线按该币 tickSize 量化(同 min_amount 的 per-symbol 模式)。缺表/缺币 → 0.0 = 关 =
     # 旧行为(fail-soft)。动机见 grid_order_info docstring:引擎原把价格当连续量,网格线可比
     # tickSize 还密 ⇒ 实盘挂不出来的线也被记了穿越。
-    price_tick = float(cfg.get('tick_by_sym', {}).get(sym, 0.0) or 0.0)
+    # ⚠ tickSize **会被交易所调整**(实证:FLOW 2026-01-28 从 0.001 改到 0.00001,细 100 倍),
+    #   故值可为 float(恒定)或 {'YYYY-MM-DD': tick}(逐日);逐日时按本格 run_time 当天取。
+    _tk = cfg.get('tick_by_sym', {}).get(sym, 0.0)
+    if isinstance(_tk, dict):
+        _tk = _tk.get(str(pd.Timestamp(rt).date()), 0.0)
+    price_tick = float(_tk or 0.0)
     sim = simulate_grid_engine(bars_df, gp, cap=1000.0, leverage=cfg['lev'], fee=cfg['fee_rate'],
                                c_rate_taker=cfg.get('taker_rate', 0.0005),
                                max_rate=cfg['max_rate'], min_amount=min_amount,
