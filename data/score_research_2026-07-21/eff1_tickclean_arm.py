@@ -146,7 +146,7 @@ def main():
                 tk[sym] = G.daily_tick(cache, sym, lo, hi)
         kept, drop = tick_filter(picks, tk, MIN_TICKS)
         # 复用 T.build_wd 的其余步骤:注入过滤后的 picks
-        wd = T.build_wd(cache, s0, e0, picks_override=kept)
+        wd = T.build_wd(cache, s0, e0, picks_override=kept, seg=(SEG in IS_SEGS))
         df = SW.run_arm(wd, SW.Arm('eff1', 'tickclean', dict(GEO)), {}, workers=WORKERS)
         if SEG in IS_SEGS:              # 分段只落逐格明细,指标留给 merge 按整窗 days 算
             df.to_parquet(seg_path(SEG))

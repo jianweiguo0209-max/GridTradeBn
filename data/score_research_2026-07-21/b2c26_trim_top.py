@@ -49,7 +49,7 @@ TRIM_G = [0, 1, 3, 5, 10, 20, 50, 100]
 TRIM_S = [0, 1, 2, 3, 5, 10, 20]
 
 
-def build_wd(cache, s0, e0, picks_override=None):
+def build_wd(cache, s0, e0, picks_override=None, seg=False):
     """s0/e0 可以是**整窗**或**其中一段**(分段跑省内存,口径见 rsp2_is_split.py:
     两段各自只落逐格明细,merge 后按整窗 days 调 SW.metrics ⇒ 与整窗跑逐位一致,
     因为 metrics 只依赖逐格 run_time/offset/pnl_ratio)。"""
@@ -58,8 +58,13 @@ def build_wd(cache, s0, e0, picks_override=None):
     else:
         pool = pd.read_parquet(S.pool_path(WN))
         picks = S.make_picks(pool, 'K1', WN)
-    ws, we = pd.Timestamp(s0), pd.Timestamp(e0) + pd.Timedelta(days=1)
-    picks = [p for p in picks if ws <= p[0] < we]      # 按段切轮(整窗时为 no-op)
+    # ⚠ 按段切轮**只在 seg=True 时生效**。整窗时它不是 no-op:每个窗的票池都含
+    #   `e0 + 1天 00:00` 那一轮(实测九窗无一例外,各 5 条候选),`rt < e0+1d` 会把它整轮切掉
+    #   ⇒ 每窗少 1 格、收益偏移约 0.15pp(HOLD-D 剔候选=0 却变了 −0.15,正是这个伪影)。
+    #   原 eff1_scan.preload 没有这行,故加了它就与锚不等价(2026-07-26 实错,用户发现)。
+    if seg:
+        ws, we = pd.Timestamp(s0), pd.Timestamp(e0) + pd.Timedelta(days=1)
+        picks = [p for p in picks if ws <= p[0] < we]
     universe = sorted(set(V.list_archive_symbols())
                       - set(effective_blacklist((), DEFAULT_TIER_POLICY)))
     blocked = blocked_rts(cache, universe, pd.Timestamp(s0),
