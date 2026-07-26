@@ -1,0 +1,21 @@
+=== MIN_TICKS=3 三窗 17:29:28 ===
+== eff1_tickclean MIN_TICKS=3 GEO=b3_c16 开跑 07-26 17:29 ==
+=== 开跑 17:33:04 WORKERS=4 ===
+--- 字节门:IS 分段合并必须复现整窗存档(MIN_TICKS=0) ---
+== eff1_tickclean MIN_TICKS=0 GEO=b3_c16 开跑 07-26 17:33 ==
+IS-seg1 格=1390 剔候选=0 4.7min → tickclean_IS_seg1_k0.parquet(段内指标仅监看,正式读数以 merge 为准)
+== eff1_tickclean MIN_TICKS=0 GEO=b3_c16 开跑 07-26 17:37 ==
+IS-seg2 格=1344 剔候选=0 5.4min → tickclean_IS_seg2_k0.parquet(段内指标仅监看,正式读数以 merge 为准)
+IS(merge) ret  +24.22 mdd -3.19 calmar   28.644 fills   5.5 格2734   (锚 ret+24.26/mdd3.19)  [字节门 **FAIL**]
+--- 正式:MIN_TICKS=3 ---
+== eff1_tickclean MIN_TICKS=3 GEO=b3_c16 开跑 07-26 17:43 ==
+W2       ret   +7.16 mdd -3.32 calmar   15.422 fills   5.1 格1205  剔候选512   5.0min  (锚 ret+6.81/mdd3.07)
+OOS      ret   +5.28 mdd -2.31 calmar   16.189 fills   4.3 格991   剔候选3356  4.7min  (锚 ret+20.79/mdd2.76)
+== eff1_tickclean MIN_TICKS=3 GEO=b3_c16 开跑 07-26 17:52 ==
+IS-seg1 格=1238 剔候选=2447 5.1min → tickclean_IS_seg1_k3.parquet(段内指标仅监看,正式读数以 merge 为准)
+== eff1_tickclean MIN_TICKS=3 GEO=b3_c16 开跑 07-26 17:58 ==
+IS-seg2 格=1344 剔候选=0 5.8min → tickclean_IS_seg2_k3.parquet(段内指标仅监看,正式读数以 merge 为准)
+IS(merge) ret   +5.81 mdd -3.65 calmar    5.037 fills   5.0 格2582   (锚 ret+24.26/mdd3.19)
+=== 全部完成 18:03:51 ===
+=== 补齐六个干净窗 18:17:32 WORKERS=4 ===
+== eff1_tickclean MIN_TICKS=3 GEO=b3_c16 开跑 07-26 18:17 ==
