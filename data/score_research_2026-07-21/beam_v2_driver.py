@@ -227,17 +227,24 @@ def main():
         log('S0 无点满足 ⇒ 保持现值,终止'); return
     for stage in ('S1', 'S2'):
         cfgs = expand(beam, res, reg)
-        gates = [('BASE_%d' % i, dict(c)) for i, (_n, c) in enumerate(beam)]
+        # ⚠ 基座门必须**按段命名**:两段都叫 BASE_0 会让 S2 的注册覆写 reg['BASE_0'],
+        #   于是 S1 的 BASE_0 读数被按 S2 的配置解释;且 res 以 (窗,臂名) 为键,
+        #   两段同名臂会互相覆盖。加段前缀彻底隔离。
+        gates = [('%sG%d' % (stage, i), dict(c)) for i, (_n, c) in enumerate(beam)]
         allc = gates + cfgs
         for n, c in allc:
             reg[n] = c
         json.dump(reg, open(REG, 'w'), indent=1, ensure_ascii=False)
         log('--- %s:束 %d 点扩出 %d 新配置(+%d 基座门)= %d 臂 ---'
             % (stage, len(beam), len(cfgs), len(gates), len(allc)))
-        if not cfgs:
-            log('%s 无新配置可扩 ⇒ 停' % stage); break
-        run(stage, allc)
-        res = all_results()
+        # ⚠ cfgs 为空**不等于**该段该跳过 —— 重启时该段可能已跑全,expand 把它们全去重掉了。
+        #   此时仍须选点(select 看的是全量读数,与段无关),只是不必再跑。
+        #   直接 break 会把整段的选点跳过并写出终局文件(2026-07-27 级联事故的同一个坑)。
+        if cfgs:
+            run(stage, allc)
+            res = all_results()
+        else:
+            log('%s 无新配置可扩(该段已跑全或已被覆盖)⇒ 跳过跑,直接选点' % stage)
         nb = select(res, reg, stage)
         if nb:
             beam = nb
