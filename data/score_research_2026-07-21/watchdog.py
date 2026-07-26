@@ -62,8 +62,12 @@ def stage_state(st):
     n = 0
     if os.path.exists(f):
         n = sum(1 for ln in open(f) if ln.startswith(st.upper() + '/'))
-    running = alive('K_STAGE=%s' % st.upper())
-    return n, STAGE_ARMS[st] * UNITS, running
+    # ⚠ 不能用 pgrep 匹配 K_STAGE —— **环境变量不在命令行里**,永远匹配不到,
+    #   会把正在跑的段误判成"结果残缺"并杀掉驱动器(2026-07-27 实错,引发三重级联)。
+    #   改用「结果文件最近 10 分钟内被写过」+「有扫描进程」双条件。
+    fresh = os.path.exists(f) and (time.time() - os.path.getmtime(f)) < 600
+    any_scan = alive('eff1_chain_scan')
+    return n, STAGE_ARMS[st] * UNITS, (fresh and any_scan)
 
 
 # ⚠ 只扫**本流水线**的日志:ablation/ 下有几周前旧战役的日志,里面的历史 traceback

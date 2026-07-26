@@ -177,8 +177,14 @@ def select(res, reg, tag):
 
 
 def expand(beam, res, reg):
-    """束内每点沿每轴取全部值,去重、去已跑。"""
-    seen = {json.dumps(c, sort_keys=True) for c in reg.values()}
+    """束内每点沿每轴取全部值,去重、去已跑。
+
+    ⚠ 去重必须对「**已有完整读数**的配置」,不能对注册表 —— 注册表在该段开跑**之前**就写好了,
+    对它去重会让重启后的驱动器把本段自己的配置当成"已完成",expand 返回空 ⇒ 直接跳过该段
+    写出终局文件(2026-07-27 实错:看门狗误杀驱动器后重启,S1 被整段跳过)。
+    """
+    seen = {json.dumps(reg[a], sort_keys=True)
+            for a in {x for _w, x in res} if a in reg and merged(res, a) is not None}
     out = []
     for bn, bc in beam:
         for ax, vals in AXES.items():
