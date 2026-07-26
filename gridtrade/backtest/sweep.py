@@ -269,8 +269,11 @@ def tasks_for(wd, params, pv_cache):
     return tasks
 
 
-def run_arm(wd, arm, pv_cache, *, workers=1):
-    """跑一个臂 → 明细 DataFrame。"""
+def run_arm(wd, arm, pv_cache, *, workers=1, tick_by_sym=None, tick_mode='stack'):
+    """跑一个臂 → 明细 DataFrame。
+
+    tick_by_sym: {symbol: tickSize} —— 按该币最小报价单位量化网格线并合并同价线。
+    默认 None ⇒ 关闭 ⇒ 与历史逐位一致。见 grid_engine.grid_order_info docstring。"""
     p = arm.params()
     tasks = tasks_for(wd, p, pv_cache)
     stop_cfg = {'stop_loss': p['stop_loss'], 'trailing_k': p['trailing_k'],
@@ -287,6 +290,7 @@ def run_arm(wd, arm, pv_cache, *, workers=1):
                           max_rate=MAX_RATE, stop_cfg=stop_cfg,
                           active_stop_mode=p['active_stop_mode'], pv_cfg=pv_cfg,
                           workers=workers,
+                          tick_by_sym=tick_by_sym, tick_mode=tick_mode,
                           pv_idio_thr=(p['pv_idio_thr']
                                        if (float(p.get('pv_idio_drop') or 0.0) > 0
                                            or float(p.get('pv_idio_k') or 0.0) > 0)
