@@ -65,7 +65,11 @@ def build_wd(cache, s0, e0):
     picks = [p for p in picks if p[0] not in blocked]
     picks, _ = allocate_with_tiers(picks, DEFAULT_TIER_POLICY, period=SW._S['period'])
     syms = sorted({row['symbol'] for _, _, row in picks})
-    lo = str(pd.Timestamp(s0).date())
+    # ⚠ 前置必须留够:raw 的第 6 元素是整条 series,pv 尖峰要 **27h 前置历史**
+    #   (backtest_run.assemble_grid_tasks)。只从 s0 读会让窗口开头那批格拿不到前置 ⇒
+    #   pv 信号不同 ⇒ 退出不同 ⇒ pnl 不同。实错:b2.5_c16 +56.15 vs 存档 +56.09
+    #   (b2_c26 因 +35932% 由后段复利主导而"巧合"对上,更险)。后缘留 2 天供末轮持仓跨天。
+    lo = str((pd.Timestamp(s0) - pd.Timedelta(days=3)).date())
     hi = str((pd.Timestamp(e0) + pd.Timedelta(days=2)).date())
     series = {}
     for s in syms:                                    # 只读窗内天
