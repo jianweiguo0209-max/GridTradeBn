@@ -19,3 +19,10 @@ IS(merge) ret   +5.81 mdd -3.65 calmar    5.037 fills   5.0 格2582   (锚 ret+2
 === 全部完成 18:03:51 ===
 === 补齐六个干净窗 18:17:32 WORKERS=4 ===
 == eff1_tickclean MIN_TICKS=3 GEO=b3_c16 开跑 07-26 18:17 ==
+W1       ret   +3.11 mdd -3.25 calmar    6.184 fills   5.3 格1291  剔候选33    6.2min  (锚 ret+3.77/mdd3.26)
+HOLD-A   ret   -1.55 mdd -4.73 calmar   -1.955 fills   4.7 格1108  剔候选36    4.8min  (锚 ret-2.71/mdd5.69)
+HOLD-B   ret   +5.39 mdd -2.72 calmar   13.571 fills   4.6 格1168  剔候选60    4.9min  (锚 ret+5.33/mdd2.86)
+HOLD-C   ret   +1.64 mdd -3.59 calmar    2.855 fills   4.8 格1184  剔候选47    5.1min  (锚 ret+1.99/mdd3.58)
+HOLD-D   ret   -2.14 mdd -5.31 calmar   -2.250 fills   4.6 格1031  剔候选0     5.0min  (锚 ret-1.99/mdd5.31)
+HOLD-E   ret   +3.52 mdd -4.01 calmar    4.567 fills   4.6 格1517  剔候选44    5.4min  (锚 ret+2.99/mdd4.38)
+=== 六窗完成 18:48:50 退出码 0 ===
