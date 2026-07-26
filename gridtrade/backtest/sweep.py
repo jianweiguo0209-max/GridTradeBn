@@ -37,14 +37,15 @@ _STOP = _S['stop_loss_config']
 _V2 = _S['grid_v2_config']
 
 # 断言钉死现值：config 一改本模块立刻炸（spec §6 防口径漂移）。
-# 2026-07-22 s030 冠军配置(geo_final 战役,诚实引擎六窗Σ+7.1pp+双留出全过)——
-# band 2→3、cmin 10→16、stop 0.045→0.03、trailing_floor 0.00618→0.02、pv_thr +0.005→−0.01。
-# ⚠今后战役的锚=此配置;旧锚(2026-07-19 现值)存档见 data/score_research_2026-07-21/。
-assert abs(_STOP['stop_loss'] - 0.03) < 1e-12, 'stop_loss 现值漂移，扫参网格须同步复核'
+# 2026-07-27 S2G0(用户令部署,链轴束搜索终局;⚠处女双窗裁决 0/4 未过,系违反裁决结论的
+# 部署决定,记档 spec 2026-07-27-chain-beam-prereg §9/§10)——
+# stop 0.03→0.025、pv_mult 3→5、funding 0.0015→0.003;pv_thr/trailing 保持 s030。
+# ⚠今后战役的锚=此配置;s030 锚九窗读数存档 data/score_research_2026-07-21/(eff1_s*_results)。
+assert abs(_STOP['stop_loss'] - 0.025) < 1e-12, 'stop_loss 现值漂移，扫参网格须同步复核'
 assert abs(_STOP['trailing_k'] - 0.3) < 1e-12 and abs(_STOP['trailing_floor'] - 0.02) < 1e-12, \
     'trailing 应为开(0.3/0.02)'
-assert abs(_STOP['fundingRate_stop_loss'] - 0.0015) < 1e-12
-assert abs(_STOP['pv_pnl_thr'] + 0.01) < 1e-12 and _STOP['pv_mult'] == 3 and _STOP['pv_n'] == 100
+assert abs(_STOP['fundingRate_stop_loss'] - 0.003) < 1e-12
+assert abs(_STOP['pv_pnl_thr'] + 0.01) < 1e-12 and _STOP['pv_mult'] == 5 and _STOP['pv_n'] == 100
 assert _V2['atr_range_multiplier'] == 3 and abs(_V2['grid_spacing_max'] - 0.04) < 1e-12
 assert _V2['grid_count_min'] == 16 and _S['leverage'] == 5
 

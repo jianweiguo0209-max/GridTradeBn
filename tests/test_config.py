@@ -132,12 +132,14 @@ def test_strategy_defaults_mirror_legacy():
     # 详 config 注释与 memory grid-fitness-score-research)。联动五值,非单改。
     assert DEFAULT_STRATEGY_CONFIG['grid_v2_config']['atr_range_multiplier'] == 3
     assert DEFAULT_STRATEGY_CONFIG['grid_v2_config']['grid_count_min'] == 16
-    assert DEFAULT_STOP_CFG['stop_loss'] == 0.03      # pv 让位后固损任亏损主挡板,SWEEP4 内点
+    # 2026-07-27 S2G0(用户令,违反裁决结论的部署决定——处女双窗 0/4,记档 prereg §9/§10):
+    # stop0.025+mult5+funding0.003 三值联动,pv_thr/trailing 保持 s030 不动。
+    assert DEFAULT_STOP_CFG['stop_loss'] == 0.025     # S2G0:pv 开火减半后固损接管的内点
     assert DEFAULT_STOP_CFG['trailing_k'] == 0.3      # 连续回撤止盈保留(全关每窗非最优)
     assert DEFAULT_STOP_CFG['trailing_floor'] == 0.02  # 锁盈门槛 2%,治锁小利没收燃料溢价
-    assert DEFAULT_STOP_CFG['fundingRate_stop_loss'] == 0.0015
+    assert DEFAULT_STOP_CFG['fundingRate_stop_loss'] == 0.003   # S2G0 联动值(已知小额负贡献)
     assert DEFAULT_STOP_CFG['pv_pnl_thr'] == -0.01    # 亏≥1%才认尖峰(+0.005 磨涨窗系统性自伤)
-    assert DEFAULT_STOP_CFG['pv_mult'] == 3
+    assert DEFAULT_STOP_CFG['pv_mult'] == 5           # S2G0 主刀:尖峰门槛 3→5
     assert DEFAULT_STOP_CFG['pv_n'] == 100            # 量能基线 25h 真滚动窗(n 扫描甜点档)
     assert DEFAULT_STOP_CFG['pv_period'] == '15min'   # 非 '15m'（pandas 会当成月）
 

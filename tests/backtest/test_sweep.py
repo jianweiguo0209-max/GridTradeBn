@@ -172,13 +172,16 @@ def test_parse_coord_roundtrips_every_arm_label(family):
 
 
 def test_expand_extends_below_when_winner_at_lower_edge():
-    """stop 赢家在下界 0.030 → 沿下方外推（步长=最外两点间距 0.005）。"""
-    df = _res('stop', [('BASE(现值)', 20.0, 0.05), ('sl=0.030', 41.8, 0.067),
-                       ('sl=0.035', 39.6, 0.070), ('sl=0.040', 27.7, 0.060),
-                       ('sl=0.055', 21.2, 0.050), ('sl=0.080', 11.1, 0.033)])
+    """stop 赢家在下界 0.025 → 沿下方外推（步长=最外两点间距 0.005）。
+
+    2026-07-27 S2G0 上线后 BASE(现值)=0.025:赢家须与 BASE 同座标才真在网格下界
+    (原 fixture 赢家 0.030 会因 BASE 0.025 在其下方而被判内部——判定是对的,fixture 得跟着现值走)。"""
+    df = _res('stop', [('BASE(现值)', 20.0, 0.05), ('sl=0.025', 41.8, 0.067),
+                       ('sl=0.030', 39.6, 0.070), ('sl=0.035', 27.7, 0.060),
+                       ('sl=0.050', 21.2, 0.050), ('sl=0.080', 11.1, 0.033)])
     arms, note = SW.expand_arms('stop', df, n_new=3)
     got = sorted(round(a.overrides['stop_loss'], 4) for a in arms)
-    assert got == [0.015, 0.020, 0.025], got
+    assert got == [0.010, 0.015, 0.020], got
     assert '下界' in note
 
 
@@ -267,14 +270,16 @@ def test_arms_missing_window_backfills_incomplete_arms():
     """
     rows = [{'family': 'pv', 'window': w, 'arm': 'BASE(现值)', 'calmar': 20.0, 'ret': 0.05,
              'mdd': 0.02, 'n_broke': 0, 'n_blown': 0} for w in ('OOS', 'W1', 'W2', 'IS')]
-    rows.append({'family': 'pv', 'window': 'OOS', 'arm': 'mult=5', 'calmar': 50.0,
+    # mult=6 刻意取**非规范网格值**(build_arms 只有 2/3/4)且 ≠ 现值(S2G0 后 baseline=5),
+    # 逼 arms_missing_window 走 parse_coord 重建路径——死锁实证里死的正是扩边产生的非规范臂。
+    rows.append({'family': 'pv', 'window': 'OOS', 'arm': 'mult=6', 'calmar': 50.0,
                  'ret': 0.09, 'mdd': 0.02, 'n_broke': 0, 'n_blown': 0})   # 只跑了 OOS
     df = pd.DataFrame(rows)
     assert [a.label for a in SW.arms_missing_window('pv', df, 'OOS')] == []
     for w in ('W1', 'W2', 'IS'):
         miss = SW.arms_missing_window('pv', df, w)
-        assert [a.label for a in miss] == ['mult=5'], w
-        assert miss[0].overrides == {'pv_mult': 5}, '补跑臂须还原出正确的覆盖项'
+        assert [a.label for a in miss] == ['mult=6'], w
+        assert miss[0].overrides == {'pv_mult': 6}, '补跑臂须还原出正确的覆盖项'
 
 
 def test_arms_missing_window_recovers_off_arms():
