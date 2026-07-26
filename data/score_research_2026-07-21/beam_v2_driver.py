@@ -34,7 +34,12 @@ _d.loader.exec_module(DC)
 
 LOG = A + '/beam_v2.log'
 REG = A + '/beam_v2_registry.json'          # 臂名 → 配置
-BEAM = 3
+# ⚠ 束宽 3→4 是**对冻结预注册的偏离**(用户令 2026-07-27 07:2x,写于 S2 出任何新读数之前,
+#   但在 S1 全部读数已知之后)。加入的是 S1 第 4 名 s2.5_m5+pvthr-5(九窗 +37.79、
+#   留出5 +11.44 全场第二)。代价:搜索预算 53→60 点、终局候选可能 4 个
+#   ⇒ 裁决 §3(ii) 的 Bonferroni 门槛须从 t≥2.5 提到 **t≥2.6**(精确 2.531)。
+#   偏离已记入 docs/superpowers/specs/2026-07-27-chain-beam-prereg.md §7。
+BEAM = 4
 J4 = ['W1', 'W2', 'OOS', 'IS']
 H5 = ['HOLD-A', 'HOLD-B', 'HOLD-C', 'HOLD-D', 'HOLD-E']
 DAYS = {'W1': 61, 'W2': 61, 'OOS': 59, 'IS': 122,
