@@ -9,6 +9,6 @@ for st in s1 s2; do
   echo "$S ${t}/$((arms*10))  唯一$u $([ "$t" = "$u" ] && echo ✓ || echo '✗重复!')"
   grep -oE "^$S/[A-Z0-9-]+" $f | cut -d/ -f2 | sort | uniq -c | awk -v a=$arms '{printf "   %-8s %2d/%s\n",$2,$1,a}'
 done
-echo "进程: $(ps -eo command|grep -c '[e]ff1_chain_scan.py')扫描 $(pgrep -cf beam_v2_driver)驱动 $(pgrep -cf relay.py)接力 $(pgrep -cf 'watchdog.py')看门狗"
-n=$(grep -cE 'RED|FATAL|ERR' $A/ALERTS.log 2>/dev/null)
-echo "告警: $n 条累计"; grep -E 'RED|FATAL|ERR' $A/ALERTS.log 2>/dev/null | tail -3 | sed 's/^/   /'
+echo "进程: $(ps -eo command|grep -c '[e]ff1_chain_scan.py')扫描 $(pgrep -f beam_v2_driver|wc -l|tr -d " ")驱动 $(pgrep -f relay.py|wc -l|tr -d " ")接力 $(pgrep -f watchdog.py|wc -l|tr -d " ")看门狗"
+new=$(awk '/MARK/{f=1;next} f' $A/ALERTS.log 2>/dev/null | grep -E 'RED|FATAL|ERR')
+echo "新增告警: $(echo -n "$new" | grep -c . ) 条"; [ -n "$new" ] && echo "$new" | tail -4 || true | sed 's/^/   /'
