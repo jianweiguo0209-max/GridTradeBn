@@ -67,18 +67,36 @@ def stage_state(st):
     return n, STAGE_ARMS[st] * UNITS, running
 
 
+# ⚠ 只扫**本流水线**的日志:ablation/ 下有几周前旧战役的日志,里面的历史 traceback
+#   会淹掉真告警(实测一启动就冒 6 条假告警)。且只看**启动之后新增**的内容。
+LOG_PAT = re.compile(r'^(k[1-4]_[ab]\.log|greedy_driver\.(log|out))$')
+_pos = {}
+
+
 def scan_logs():
-    """在各日志里找 Traceback / Error / assert 失败。"""
+    """只在本流水线日志的**新增部分**里找异常。"""
     hits = []
     for f in os.listdir(A):
-        if not f.endswith('.log') or f == os.path.basename(ALERT):
+        if not LOG_PAT.match(f):
             continue
+        fp = os.path.join(A, f)
         try:
-            txt = open(os.path.join(A, f), errors='ignore').read()[-40000:]
+            sz = os.path.getsize(fp)
+            start = _pos.get(f)
+            if start is None:                  # 首轮:记录当前位置,不回溯历史
+                _pos[f] = sz
+                continue
+            if sz <= start:
+                _pos[f] = sz
+                continue
+            with open(fp, errors='ignore') as fh:
+                fh.seek(start)
+                txt = fh.read()
+            _pos[f] = sz
         except Exception:
             continue
         for pat in ('Traceback (most recent call last)', 'AssertionError',
-                    'MemoryError', 'BrokenProcessPool', 'Killed'):
+                    'MemoryError', 'BrokenProcessPool', 'Killed', 'FAIL'):
             if pat in txt:
                 hits.append((f, pat))
     return hits
