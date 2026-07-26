@@ -23,11 +23,36 @@ FUNDING_STOP_LOOKBACK_H = 9.0
 
 
 def grid_order_info(cap, leverage, low, high, grid_num, stop_low, stop_high,
-                    min_amount=0.0, max_rate=0.68):
-    """等比网格 + 等量挂单。stop_low/stop_high 为显式终止价。返回 None 表示保证金太低无法建网。"""
+                    min_amount=0.0, max_rate=0.68,
+                    price_tick=0.0, tick_mode='stack'):
+    """等比网格 + 等量挂单。stop_low/stop_high 为显式终止价。返回 None 表示保证金太低无法建网。
+
+    price_tick>0 时按交易所最小报价单位量化网格线并合并同价线(**默认 0=关,行为逐位不变**)。
+    动机(2026-07-26):本函数原把价格当连续量,网格线可以比 tickSize 还密——实测 FLOW 某格
+    间距/tick=0.726,价格游走区间内 4 条线里 3 条在交易所根本不存在、挂不上单;而 eff1 密格臂
+    **98.6% 的 Σpnl 落在间距<2tick 区**。实盘 `ccxt_adapter.create_limit_order` 内部
+    `quantize_price` 会量化 ⇒ 多条线坍缩到同一价位,realized 几何 ≠ nominal 几何。
+
+    tick_mode(仅 price_tick>0 时生效):
+      'stack'(默认) 贴近实盘——executor 仍逐线挂 N 张单,坍缩处同价位堆 k×order_num,
+                 **总名义不变**。注意 `order_num = cap·lev·max_rate/Σprice` 本身就锁总名义,
+                 故合并后不需再乘系数(乘了会把名义多算 42%,2026-07-26 实错)。
+      'thin'     每线量固定为**未量化时**的值 ⇒ 合并后总名义变小,作**下界**对照。
+    """
     q = (high / low) ** (1.0 / grid_num)
     price_array = np.array([low * (q ** i) for i in range(grid_num + 1)]).round(8)
     order_num = cap * leverage * max_rate / price_array.sum()
+    if price_tick and price_tick > 0:
+        raw_qty = order_num
+        # 量化到 tick 栅格后去重:同价线在实盘是同一个价位,穿越只应记一次
+        price_array = np.unique(np.round(price_array / price_tick) * price_tick).round(8)
+        # 四舍五入会把端点推出 [low, high];tick 粗到这个程度时网格本就不可实现,判建网失败
+        price_array = price_array[(price_array >= low * (1 - 1e-9))
+                                  & (price_array <= high * (1 + 1e-9))]
+        if len(price_array) < 3:              # 少于 2 个区间 ⇒ 不成其为网格
+            return None
+        order_num = (raw_qty if tick_mode == 'thin'
+                     else cap * leverage * max_rate / price_array.sum())
     if min_amount and min_amount > 0:
         order_num = order_num - order_num % min_amount
     if order_num <= 0:
@@ -442,7 +467,8 @@ def simulate_grid_engine(bars_df, grid_params, cap=10000.0, leverage=5.0, fee=0.
                          funding_df=None, neutral_init=False, pv_spike_df=None,
                          active_stop_mode='pv', pv_pnl_thr=-0.015,
                          pv_mult=3, pv_n=233, pv_period='15min', pv_body_ratio=0.0,
-                         pv_idio_df=None, pv_idio_thr=None):
+                         pv_idio_df=None, pv_idio_thr=None,
+                         price_tick=0.0, tick_mode='stack'):
     """
     端到端封装：bars(本项目 1m df) + 布网参数 → 资金曲线终值。
     grid_params: dict(low_price, high_price, grid_count, stop_high_price, stop_low_price)
@@ -465,7 +491,8 @@ def simulate_grid_engine(bars_df, grid_params, cap=10000.0, leverage=5.0, fee=0.
         bars['symbol'] = bars_df['symbol'].values
     gi = grid_order_info(cap, leverage, grid_params['low_price'], grid_params['high_price'],
                          int(grid_params['grid_count']), grid_params['stop_low_price'],
-                         grid_params['stop_high_price'], min_amount=min_amount, max_rate=max_rate)
+                         grid_params['stop_high_price'], min_amount=min_amount, max_rate=max_rate,
+                         price_tick=price_tick, tick_mode=tick_mode)
     if gi is None:
         return {'pnl_ratio': 0.0, 'net_value_final': 1.0, 'terminated': False,
                 'exit_reason': '建网失败', 'blown_up': False, 'n_trades': 0, 'broke': False}
