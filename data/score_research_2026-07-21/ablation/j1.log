@@ -1,0 +1,264 @@
+=== J1 开跑 22:40:58 压力=1 ===
+== J1 几何×pv MIN_TICKS=3 workers=4 开跑 07-26 22:41 (54组合×4窗) ==
+[W1] blocked=173 tick表=418币 3.7min
+[W1] b2_c16 preload 1.2min 格=1291 剔候选=571
+J1/W1: b2_c16_pv-5_m3         ret    +0.58 mdd -4.14 calmar    0.8434 fills    8.7 格1291 破0 0.3min | 窗口结束:862, pv主动:317
+J1/W1: b2_c16_pv-5_m5         ret    +2.56 mdd -4.36 calmar     3.743 fills    8.7 格1291 破0 0.3min | 窗口结束:984, pv主动:147
+J1/W1: b2_c16_pv-10_m3        ret    +0.88 mdd -4.65 calmar     1.154 fills    8.7 格1291 破0 0.3min | 窗口结束:949, pv主动:221  [现值pv,须对上T1重扫 geo_b2_c16]
+J1/W1: b2_c16_pv-10_m5        ret    +2.48 mdd -5.80 calmar     2.723 fills    8.7 格1291 破0 0.3min | 窗口结束:1011, pv主动:115
+J1/W1: b2_c16_pv-20_m3        ret    +1.08 mdd -5.71 calmar     1.158 fills    8.7 格1291 破0 0.3min | 窗口结束:1024, pv主动:118
+J1/W1: b2_c16_pv-20_m5        ret    +3.76 mdd -6.42 calmar     3.854 fills    8.7 格1291 破0 0.3min | 窗口结束:1050, 固定止损:120
+[W1] b2_c22 preload 1.0min 格=1280 剔候选=1512
+J1/W1: b2_c22_pv-5_m3         ret    +1.09 mdd -3.07 calmar     2.182 fills   14.4 格1280 破0 0.4min | 窗口结束:853, pv主动:319
+J1/W1: b2_c22_pv-5_m5         ret    +0.78 mdd -4.95 calmar     0.963 fills   14.4 格1280 破0 0.4min | 窗口结束:959, pv主动:158
+J1/W1: b2_c22_pv-10_m3        ret    +0.36 mdd -4.40 calmar    0.4886 fills   14.4 格1280 破0 0.3min | 窗口结束:937, pv主动:223  [现值pv,须对上T1重扫 geo_b2_c22]
+J1/W1: b2_c22_pv-10_m5        ret    +1.21 mdd -5.04 calmar      1.48 fills   14.4 格1280 破0 0.3min | 窗口结束:1006, 固定止损:111
+J1/W1: b2_c22_pv-20_m3        ret    -1.90 mdd -6.03 calmar    -1.801 fills   14.4 格1280 破0 0.3min | 窗口结束:1007, pv主动:116
+J1/W1: b2_c22_pv-20_m5        ret    -0.72 mdd -6.76 calmar   -0.6249 fills   14.4 格1280 破0 0.3min | 窗口结束:1030, 固定止损:134
+[W1] b2_c26 preload 1.0min 格=1272 剔候选=1855
+J1/W1: b2_c26_pv-5_m3         ret    +1.42 mdd -4.23 calmar     2.088 fills   19.2 格1272 破0 0.4min | 窗口结束:842, pv主动:319
+J1/W1: b2_c26_pv-5_m5         ret    +2.26 mdd -6.26 calmar     2.286 fills   19.2 格1272 破0 0.4min | 窗口结束:948, pv主动:158
+J1/W1: b2_c26_pv-10_m3        ret    -0.02 mdd -5.00 calmar  -0.02038 fills   19.2 格1272 破0 0.3min | 窗口结束:922, pv主动:228  [现值pv,须对上T1重扫 geo_b2_c26]
+J1/W1: b2_c26_pv-10_m5        ret    +2.48 mdd -6.38 calmar      2.47 fills   19.2 格1272 破0 0.3min | 窗口结束:988, pv主动:111
+J1/W1: b2_c26_pv-20_m3        ret    -0.13 mdd -8.13 calmar  -0.09884 fills   19.2 格1272 破0 0.3min | 窗口结束:1002, pv主动:113
+J1/W1: b2_c26_pv-20_m5        ret    +0.64 mdd -8.46 calmar    0.4563 fills   19.2 格1272 破0 0.3min | 窗口结束:1018, 固定止损:116
+[W1] b2.5_c16 preload 0.8min 格=1292 剔候选=151
+J1/W1: b2.5_c16_pv-5_m3       ret    +6.29 mdd -2.29 calmar     19.26 fills    6.5 格1292 破0 0.4min | 窗口结束:918, pv主动:292
+J1/W1: b2.5_c16_pv-5_m5       ret    +6.09 mdd -3.86 calmar        11 fills    6.5 格1292 破0 0.3min | 窗口结束:1024, pv主动:137
+J1/W1: b2.5_c16_pv-10_m3      ret    +4.24 mdd -3.07 calmar     9.185 fills    6.5 格1292 破0 0.3min | 窗口结束:995, pv主动:202  [现值pv,须对上T1重扫 geo_b2.5_c16]
+J1/W1: b2.5_c16_pv-10_m5      ret    +6.20 mdd -3.40 calmar     12.74 fills    6.5 格1292 破0 0.3min | 窗口结束:1060, pv主动:94
+J1/W1: b2.5_c16_pv-20_m3      ret    +2.38 mdd -4.46 calmar     3.393 fills    6.5 格1292 破0 0.3min | 窗口结束:1069, pv主动:92
+J1/W1: b2.5_c16_pv-20_m5      ret    +4.84 mdd -4.50 calmar     7.258 fills    6.5 格1292 破0 0.3min | 窗口结束:1088, 固定止损:104
+[W1] b2.5_c22 preload 0.9min 格=1289 剔候选=831
+J1/W1: b2.5_c22_pv-5_m3       ret    +7.40 mdd -2.63 calmar     20.26 fills   10.4 格1289 破0 0.4min | 窗口结束:914, pv主动:298
+J1/W1: b2.5_c22_pv-5_m5       ret    +6.96 mdd -4.39 calmar     11.29 fills   10.4 格1289 破0 0.4min | 窗口结束:1017, pv主动:149
+J1/W1: b2.5_c22_pv-10_m3      ret    +6.20 mdd -3.54 calmar     12.24 fills   10.4 格1289 破0 0.3min | 窗口结束:998, pv主动:202  [现值pv,须对上T1重扫 geo_b2.5_c22]
+J1/W1: b2.5_c22_pv-10_m5      ret    +7.13 mdd -4.59 calmar     11.11 fills   10.4 格1289 破0 0.3min | 窗口结束:1053, pv主动:107
+J1/W1: b2.5_c22_pv-20_m3      ret    +6.32 mdd -4.81 calmar     9.215 fills   10.4 格1289 破0 0.3min | 窗口结束:1080, pv主动:91
+J1/W1: b2.5_c22_pv-20_m5      ret    +5.53 mdd -5.61 calmar     6.773 fills   10.4 格1289 破0 0.3min | 窗口结束:1093, 固定止损:99
+[W1] b2.5_c26 preload 0.9min 格=1283 剔候选=1368
+J1/W1: b2.5_c26_pv-5_m3       ret    +2.90 mdd -3.80 calmar     4.911 fills   13.6 格1283 破0 0.4min | 窗口结束:896, pv主动:302
+J1/W1: b2.5_c26_pv-5_m5       ret    +1.48 mdd -5.98 calmar      1.54 fills   13.6 格1283 破0 0.4min | 窗口结束:994, pv主动:160
+J1/W1: b2.5_c26_pv-10_m3      ret    +0.09 mdd -5.30 calmar    0.1021 fills   13.6 格1283 破0 0.3min | 窗口结束:979, pv主动:203  [现值pv,须对上T1重扫 geo_b2.5_c26]
+J1/W1: b2.5_c26_pv-10_m5      ret    +0.84 mdd -7.42 calmar    0.6953 fills   13.6 格1283 破0 0.3min | 窗口结束:1036, pv主动:107
+J1/W1: b2.5_c26_pv-20_m3      ret    +1.48 mdd -7.07 calmar     1.297 fills   13.6 格1283 破0 0.3min | 窗口结束:1048, pv主动:98
+J1/W1: b2.5_c26_pv-20_m5      ret    +3.81 mdd -6.55 calmar     3.828 fills   13.6 格1283 破0 0.3min | 窗口结束:1071, 固定止损:99
+[W1] b3_c16 preload 0.8min 格=1292 剔候选=33
+J1/W1: b3_c16_pv-5_m3         ret    +5.23 mdd -1.95 calmar     18.28 fills    5.3 格1292 破0 0.3min | 窗口结束:931, pv主动:285
+J1/W1: b3_c16_pv-5_m5         ret    +4.08 mdd -3.67 calmar     7.352 fills    5.3 格1292 破0 0.3min | 窗口结束:1029, pv主动:151
+J1/W1: b3_c16_pv-10_m3        ret    +3.31 mdd -3.25 calmar     6.621 fills    5.3 格1292 破0 0.3min | 窗口结束:1014, pv主动:196  [现值pv,须对上T1重扫 geo_b3_c16]
+J1/W1: b3_c16_pv-10_m5        ret    +5.97 mdd -3.81 calmar     10.87 fills    5.3 格1292 破0 0.3min | 窗口结束:1079, pv主动:99
+J1/W1: b3_c16_pv-20_m3        ret    +3.59 mdd -5.18 calmar     4.539 fills    5.3 格1292 破0 0.3min | 窗口结束:1097, pv主动:95
+J1/W1: b3_c16_pv-20_m5        ret    +4.77 mdd -4.66 calmar     6.895 fills    5.3 格1292 破0 0.3min | 窗口结束:1112, 固定止损:76
+[W1] b3_c22 preload 0.8min 格=1292 剔候选=378
+J1/W1: b3_c22_pv-5_m3         ret    +3.06 mdd -3.56 calmar     5.555 fills    7.9 格1292 破0 0.4min | 窗口结束:947, pv主动:272
+J1/W1: b3_c22_pv-5_m5         ret    +3.22 mdd -4.42 calmar     4.724 fills    7.9 格1292 破0 0.4min | 窗口结束:1039, pv主动:145
+J1/W1: b3_c22_pv-10_m3        ret    +1.41 mdd -4.95 calmar     1.767 fills    7.9 格1292 破0 0.3min | 窗口结束:1023, pv主动:182  [现值pv,须对上T1重扫 geo_b3_c22]
+J1/W1: b3_c22_pv-10_m5        ret    +3.57 mdd -4.82 calmar      4.85 fills    7.9 格1292 破0 0.3min | 窗口结束:1081, pv主动:94
+J1/W1: b3_c22_pv-20_m3        ret    +2.57 mdd -5.41 calmar     3.027 fills    7.9 格1292 破0 0.3min | 窗口结束:1101, pv主动:83
+J1/W1: b3_c22_pv-20_m5        ret    +3.69 mdd -4.79 calmar     5.055 fills    7.9 格1292 破0 0.3min | 窗口结束:1117, 固定止损:81
+[W1] b3_c26 preload 0.9min 格=1289 剔候选=786
+J1/W1: b3_c26_pv-5_m3         ret    +3.75 mdd -3.09 calmar     7.979 fills   10.3 格1289 破0 0.4min | 窗口结束:941, pv主动:283
+J1/W1: b3_c26_pv-5_m5         ret    +3.91 mdd -4.07 calmar     6.351 fills   10.3 格1289 破0 0.4min | 窗口结束:1042, pv主动:144
+J1/W1: b3_c26_pv-10_m3        ret    +1.62 mdd -4.10 calmar     2.456 fills   10.3 格1289 破0 0.3min | 窗口结束:1018, pv主动:194  [现值pv,须对上T1重扫 geo_b3_c26]
+J1/W1: b3_c26_pv-10_m5        ret    +2.55 mdd -5.04 calmar      3.22 fills   10.3 格1289 破0 0.3min | 窗口结束:1079, pv主动:98
+J1/W1: b3_c26_pv-20_m3        ret    +1.82 mdd -5.54 calmar      2.05 fills   10.3 格1289 破0 0.3min | 窗口结束:1094, pv主动:89
+J1/W1: b3_c26_pv-20_m5        ret    +2.34 mdd -5.49 calmar     2.708 fills   10.3 格1289 破0 0.3min | 窗口结束:1110, 固定止损:81
+[W1] DONE
+[W2] blocked=235 tick表=407币 3.7min
+[W2] b2_c16 preload 1.0min 格=1117 剔候选=1926
+J1/W2: b2_c16_pv-5_m3         ret    +9.69 mdd -3.07 calmar     24.07 fills    8.5 格1117 破0 0.3min | 窗口结束:730, pv主动:259
+J1/W2: b2_c16_pv-5_m5         ret   +11.38 mdd -4.02 calmar     22.55 fills    8.5 格1117 破0 0.3min | 窗口结束:820, pv主动:123
+J1/W2: b2_c16_pv-10_m3        ret    +7.94 mdd -3.44 calmar     16.87 fills    8.5 格1117 破0 0.3min | 窗口结束:783, pv主动:197  [现值pv,须对上T1重扫 geo_b2_c16]
+J1/W2: b2_c16_pv-10_m5        ret    +9.33 mdd -4.03 calmar     17.51 fills    8.5 格1117 破0 0.3min | 窗口结束:838, pv主动:97
+J1/W2: b2_c16_pv-20_m3        ret    +6.44 mdd -4.42 calmar     10.26 fills    8.5 格1117 破0 0.3min | 窗口结束:850, pv主动:105
+J1/W2: b2_c16_pv-20_m5        ret    +7.77 mdd -4.61 calmar     12.25 fills    8.5 格1117 破0 0.3min | 窗口结束:867, 固定止损:121
+[W2] b2_c22 preload 0.9min 格=1034 剔候选=3126
+J1/W2: b2_c22_pv-5_m3         ret   +12.31 mdd -2.64 calmar     37.93 fills   14.4 格1034 破0 0.3min | 窗口结束:652, pv主动:251
+J1/W2: b2_c22_pv-5_m5         ret   +18.85 mdd -3.11 calmar     58.19 fills   14.4 格1034 破0 0.3min | 窗口结束:749, pv主动:109
+J1/W2: b2_c22_pv-10_m3        ret   +12.42 mdd -2.80 calmar     36.28 fills   14.4 格1034 破0 0.3min | 窗口结束:706, pv主动:185  [现值pv,须对上T1重扫 geo_b2_c22]
+J1/W2: b2_c22_pv-10_m5        ret   +16.61 mdd -3.17 calmar     47.55 fills   14.4 格1034 破0 0.3min | 窗口结束:761, 固定止损:89
+J1/W2: b2_c22_pv-20_m3        ret   +11.50 mdd -4.01 calmar     22.87 fills   14.4 格1034 破0 0.3min | 窗口结束:764, pv主动:103
+J1/W2: b2_c22_pv-20_m5        ret   +15.22 mdd -3.55 calmar     37.56 fills   14.4 格1034 破0 0.3min | 窗口结束:784, 固定止损:102
+[W2] b2_c26 preload 0.9min 格=986 剔候选=3565
+J1/W2: b2_c26_pv-5_m3         ret   +11.61 mdd -3.08 calmar     30.14 fills   19.2 格986 破0 0.3min | 窗口结束:606, pv主动:250
+J1/W2: b2_c26_pv-5_m5         ret   +18.49 mdd -3.22 calmar     54.68 fills   19.2 格986 破0 0.3min | 窗口结束:701, pv主动:110
+J1/W2: b2_c26_pv-10_m3        ret   +15.10 mdd -2.86 calmar      46.2 fills   19.2 格986 破0 0.3min | 窗口结束:671, pv主动:179  [现值pv,须对上T1重扫 geo_b2_c26]
+J1/W2: b2_c26_pv-10_m5        ret   +18.14 mdd -2.98 calmar     57.51 fills   19.2 格986 破0 0.3min | 窗口结束:723, 固定止损:85
+J1/W2: b2_c26_pv-20_m3        ret   +16.22 mdd -2.87 calmar     50.79 fills   19.2 格986 破0 0.3min | 窗口结束:736, pv主动:89
+J1/W2: b2_c26_pv-20_m5        ret   +15.84 mdd -3.17 calmar     44.44 fills   19.2 格986 破0 0.3min | 窗口结束:747, 固定止损:96
+[W2] b2.5_c16 preload 0.7min 格=1166 剔候选=1027
+J1/W2: b2.5_c16_pv-5_m3       ret   +10.00 mdd -2.25 calmar     34.17 fills    6.3 格1166 破0 0.3min | 窗口结束:792, pv主动:285
+J1/W2: b2.5_c16_pv-5_m5       ret   +12.31 mdd -4.75 calmar     21.12 fills    6.3 格1166 破0 0.3min | 窗口结束:903, pv主动:137
+J1/W2: b2.5_c16_pv-10_m3      ret    +8.47 mdd -3.67 calmar     17.06 fills    6.3 格1166 破0 0.3min | 窗口结束:870, pv主动:203  [现值pv,须对上T1重扫 geo_b2.5_c16]
+J1/W2: b2.5_c16_pv-10_m5      ret   +10.07 mdd -5.42 calmar      14.3 fills    6.3 格1166 破0 0.3min | 窗口结束:926, pv主动:108
+J1/W2: b2.5_c16_pv-20_m3      ret    +5.18 mdd -6.58 calmar     5.365 fills    6.3 格1166 破0 0.3min | 窗口结束:939, pv主动:105
+J1/W2: b2.5_c16_pv-20_m5      ret    +8.35 mdd -6.89 calmar      8.94 fills    6.3 格1166 破0 0.3min | 窗口结束:966, 固定止损:96
+[W2] b2.5_c22 preload 0.8min 格=1096 剔候选=2331
+J1/W2: b2.5_c22_pv-5_m3       ret   +12.07 mdd -2.17 calmar        45 fills   10.3 格1096 破0 0.3min | 窗口结束:744, pv主动:251
+J1/W2: b2.5_c22_pv-5_m5       ret   +15.48 mdd -2.00 calmar     68.17 fills   10.3 格1096 破0 0.3min | 窗口结束:843, pv主动:115
+J1/W2: b2.5_c22_pv-10_m3      ret   +12.39 mdd -1.98 calmar     51.21 fills   10.3 格1096 破0 0.3min | 窗口结束:812, pv主动:176  [现值pv,须对上T1重扫 geo_b2.5_c22]
+J1/W2: b2.5_c22_pv-10_m5      ret   +15.72 mdd -2.10 calmar     66.37 fills   10.3 格1096 破0 0.3min | 窗口结束:868, pv主动:86
+J1/W2: b2.5_c22_pv-20_m3      ret   +11.76 mdd -3.46 calmar     27.32 fills   10.3 格1096 破0 0.3min | 窗口结束:878, pv主动:85
+J1/W2: b2.5_c22_pv-20_m5      ret   +12.79 mdd -3.19 calmar     33.09 fills   10.3 格1096 破0 0.3min | 窗口结束:895, 固定止损:83
+[W2] b2.5_c26 preload 0.8min 格=1048 剔候选=2929
+J1/W2: b2.5_c26_pv-5_m3       ret    +9.16 mdd -2.36 calmar     29.26 fills   13.6 格1048 破0 0.3min | 窗口结束:689, pv主动:257
+J1/W2: b2.5_c26_pv-5_m5       ret   +14.73 mdd -3.30 calmar     38.68 fills   13.6 格1048 破0 0.3min | 窗口结束:788, pv主动:118
+J1/W2: b2.5_c26_pv-10_m3      ret   +10.12 mdd -2.84 calmar     27.51 fills   13.6 格1048 破0 0.3min | 窗口结束:757, pv主动:180  [现值pv,须对上T1重扫 geo_b2.5_c26]
+J1/W2: b2.5_c26_pv-10_m5      ret   +14.53 mdd -3.14 calmar     39.89 fills   13.6 格1048 破0 0.3min | 窗口结束:817, pv主动:84
+J1/W2: b2.5_c26_pv-20_m3      ret   +10.61 mdd -3.04 calmar     27.29 fills   13.6 格1048 破0 0.3min | 窗口结束:827, pv主动:91
+J1/W2: b2.5_c26_pv-20_m5      ret   +13.01 mdd -2.71 calmar     39.77 fills   13.6 格1048 破0 0.3min | 窗口结束:846, 固定止损:83
+[W2] b3_c16 preload 0.7min 格=1206 剔候选=512
+J1/W2: b3_c16_pv-5_m3         ret    +9.31 mdd -2.27 calmar     31.03 fills    5.1 格1206 破0 0.3min | 窗口结束:838, pv主动:288
+J1/W2: b3_c16_pv-5_m5         ret   +12.32 mdd -2.24 calmar     44.87 fills    5.1 格1206 破0 0.3min | 窗口结束:944, pv主动:145
+J1/W2: b3_c16_pv-10_m3        ret    +7.13 mdd -3.32 calmar     15.34 fills    5.1 格1206 破0 0.3min | 窗口结束:919, pv主动:202  [现值pv,须对上T1重扫 geo_b3_c16]
+J1/W2: b3_c16_pv-10_m5        ret   +10.59 mdd -3.23 calmar      25.6 fills    5.1 格1206 破0 0.3min | 窗口结束:981, pv主动:101
+J1/W2: b3_c16_pv-20_m3        ret    +8.27 mdd -3.83 calmar     15.89 fills    5.1 格1206 破0 0.3min | 窗口结束:998, pv主动:102
+J1/W2: b3_c16_pv-20_m5        ret   +10.41 mdd -4.13 calmar     19.58 fills    5.1 格1206 破0 0.3min | 窗口结束:1019, 固定止损:75
+[W2] b3_c22 preload 0.7min 格=1142 剔候选=1551
+J1/W2: b3_c22_pv-5_m3         ret    +9.20 mdd -3.07 calmar     22.59 fills    7.9 格1142 破0 0.3min | 窗口结束:798, pv主动:267
+J1/W2: b3_c22_pv-5_m5         ret   +14.59 mdd -2.64 calmar     47.77 fills    7.9 格1142 破0 0.3min | 窗口结束:901, pv主动:137
+J1/W2: b3_c22_pv-10_m3        ret   +10.41 mdd -2.74 calmar     29.54 fills    7.9 格1142 破0 0.3min | 窗口结束:884, pv主动:176  [现值pv,须对上T1重扫 geo_b3_c22]
+J1/W2: b3_c22_pv-10_m5        ret   +14.75 mdd -2.65 calmar     48.22 fills    7.9 格1142 破0 0.3min | 窗口结束:936, pv主动:97
+J1/W2: b3_c22_pv-20_m3        ret    +9.61 mdd -2.70 calmar     27.07 fills    7.9 格1142 破0 0.3min | 窗口结束:954, pv主动:88
+J1/W2: b3_c22_pv-20_m5        ret   +13.62 mdd -2.51 calmar     45.76 fills    7.9 格1142 破0 0.3min | 窗口结束:978, 固定止损:61
+[W2] b3_c26 preload 0.8min 格=1101 剔候选=2255
+J1/W2: b3_c26_pv-5_m3         ret    +8.08 mdd -1.99 calmar     29.76 fills   10.3 格1101 破0 0.3min | 窗口结束:754, pv主动:267
+J1/W2: b3_c26_pv-5_m5         ret   +11.87 mdd -2.80 calmar     34.22 fills   10.3 格1101 破0 0.3min | 窗口结束:853, pv主动:138
+J1/W2: b3_c26_pv-10_m3        ret    +7.45 mdd -2.65 calmar     20.29 fills   10.3 格1101 破0 0.3min | 窗口结束:837, pv主动:179  [现值pv,须对上T1重扫 geo_b3_c26]
+J1/W2: b3_c26_pv-10_m5        ret   +11.59 mdd -2.48 calmar     37.31 fills   10.3 格1101 破0 0.3min | 窗口结束:891, pv主动:96
+J1/W2: b3_c26_pv-20_m3        ret    +9.58 mdd -2.38 calmar     30.63 fills   10.3 格1101 破0 0.3min | 窗口结束:911, pv主动:78
+J1/W2: b3_c26_pv-20_m5        ret    +9.80 mdd -3.02 calmar     24.83 fills   10.3 格1101 破0 0.3min | 窗口结束:924, 固定止损:73
+[W2] DONE
+[OOS] blocked=169 tick表=289币 3.7min
+[OOS] b2_c16 preload 0.9min 格=818 剔候选=4794
+J1/OOS: b2_c16_pv-5_m3         ret    +7.12 mdd -1.75 calmar     30.39 fills    8.2 格818 破0 0.2min | 窗口结束:517, pv主动:220
+J1/OOS: b2_c16_pv-5_m5         ret    +8.65 mdd -2.07 calmar     32.48 fills    8.2 格818 破0 0.2min | 窗口结束:605, pv主动:110
+J1/OOS: b2_c16_pv-10_m3        ret    +8.40 mdd -2.03 calmar     31.97 fills    8.2 格818 破0 0.2min | 窗口结束:591, pv主动:143  [现值pv,须对上T1重扫 geo_b2_c16]
+J1/OOS: b2_c16_pv-10_m5        ret   +10.15 mdd -2.25 calmar     36.42 fills    8.2 格818 破0 0.2min | 窗口结束:633, pv主动:80
+J1/OOS: b2_c16_pv-20_m3        ret   +10.64 mdd -2.90 calmar     29.99 fills    8.2 格818 破0 0.2min | 窗口结束:652, pv主动:67
+J1/OOS: b2_c16_pv-20_m5        ret   +11.12 mdd -3.08 calmar     29.91 fills    8.2 格818 破0 0.2min | 窗口结束:662, 固定止损:48
+[OOS] b2_c22 preload 0.7min 格=692 剔候选=5366
+J1/OOS: b2_c22_pv-5_m3         ret    +9.70 mdd -1.20 calmar     64.26 fills   15.7 格692 破0 0.2min | 窗口结束:449, pv主动:168
+J1/OOS: b2_c22_pv-5_m5         ret   +10.52 mdd -1.31 calmar     65.47 fills   15.7 格692 破0 0.2min | 窗口结束:509, pv主动:89
+J1/OOS: b2_c22_pv-10_m3        ret   +10.59 mdd -1.52 calmar     56.87 fills   15.7 格692 破0 0.2min | 窗口结束:497, pv主动:116  [现值pv,须对上T1重扫 geo_b2_c22]
+J1/OOS: b2_c22_pv-10_m5        ret    +9.32 mdd -1.73 calmar     42.54 fills   15.7 格692 破0 0.2min | 窗口结束:527, pv主动:64
+J1/OOS: b2_c22_pv-20_m3        ret    +7.68 mdd -2.27 calmar     25.59 fills   15.7 格692 破0 0.2min | 窗口结束:535, pv主动:55
+J1/OOS: b2_c22_pv-20_m5        ret    +8.90 mdd -2.16 calmar     32.13 fills   15.7 格692 破0 0.2min | 窗口结束:544, 固定止损:51
+[OOS] b2_c26 preload 0.7min 格=636 剔候选=5527
+J1/OOS: b2_c26_pv-5_m3         ret   +35.13 mdd -1.46 calmar     371.6 fills   32.2 格636 破1 0.2min | 窗口结束:382, pv主动:173
+J1/OOS: b2_c26_pv-5_m5         ret   +42.40 mdd -1.58 calmar     500.6 fills   32.2 格636 破1 0.2min | 窗口结束:450, pv主动:84
+J1/OOS: b2_c26_pv-10_m3        ret   +37.96 mdd -1.52 calmar     415.3 fills   32.2 格636 破1 0.2min | 窗口结束:442, pv主动:111  [现值pv,须对上T1重扫 geo_b2_c26]
+J1/OOS: b2_c26_pv-10_m5        ret   +40.28 mdd -1.75 calmar     407.1 fills   32.2 格636 破1 0.2min | 窗口结束:467, pv主动:62
+J1/OOS: b2_c26_pv-20_m3        ret   +40.39 mdd -2.14 calmar     333.8 fills   32.2 格636 破1 0.2min | 窗口结束:482, pv主动:53
+J1/OOS: b2_c26_pv-20_m5        ret   +40.01 mdd -2.21 calmar       318 fills   32.2 格636 破1 0.2min | 窗口结束:490, 固定止损:52
+[OOS] b2.5_c16 preload 0.6min 格=910 剔候选=4123
+J1/OOS: b2.5_c16_pv-5_m3       ret    +5.57 mdd -1.67 calmar      23.9 fills    5.6 格910 破0 0.3min | 窗口结束:604, pv主动:228
+J1/OOS: b2.5_c16_pv-5_m5       ret    +8.45 mdd -2.31 calmar     28.24 fills    5.6 格910 破0 0.2min | 窗口结束:696, pv主动:119
+J1/OOS: b2.5_c16_pv-10_m3      ret    +5.36 mdd -2.24 calmar     17.04 fills    5.6 格910 破0 0.2min | 窗口结束:686, pv主动:143  [现值pv,须对上T1重扫 geo_b2.5_c16]
+J1/OOS: b2.5_c16_pv-10_m5      ret    +8.45 mdd -2.40 calmar     27.14 fills    5.6 格910 破0 0.2min | 窗口结束:732, pv主动:78
+J1/OOS: b2.5_c16_pv-20_m3      ret    +8.30 mdd -3.22 calmar     19.81 fills    5.6 格910 破0 0.2min | 窗口结束:756, pv主动:52
+J1/OOS: b2.5_c16_pv-20_m5      ret    +9.66 mdd -3.22 calmar     23.85 fills    5.6 格910 破0 0.2min | 窗口结束:767, 固定止损:46
+[OOS] b2.5_c22 preload 0.7min 格=787 剔候选=5010
+J1/OOS: b2.5_c22_pv-5_m3       ret    +4.93 mdd -1.62 calmar     21.39 fills   10.4 格787 破0 0.2min | 窗口结束:511, pv主动:207
+J1/OOS: b2.5_c22_pv-5_m5       ret    +7.94 mdd -1.83 calmar     33.09 fills   10.4 格787 破0 0.2min | 窗口结束:596, pv主动:107
+J1/OOS: b2.5_c22_pv-10_m3      ret    +6.11 mdd -1.83 calmar     24.14 fills   10.4 格787 破0 0.2min | 窗口结束:587, pv主动:125  [现值pv,须对上T1重扫 geo_b2.5_c22]
+J1/OOS: b2.5_c22_pv-10_m5      ret    +7.97 mdd -1.87 calmar     32.36 fills   10.4 格787 破0 0.2min | 窗口结束:630, pv主动:67
+J1/OOS: b2.5_c22_pv-20_m3      ret    +6.51 mdd -1.83 calmar     26.11 fills   10.4 格787 破0 0.2min | 窗口结束:641, pv主动:52
+J1/OOS: b2.5_c22_pv-20_m5      ret    +8.97 mdd -1.78 calmar      39.5 fills   10.4 格787 破0 0.2min | 窗口结束:654, 固定止损:40
+[OOS] b2.5_c26 preload 0.7min 格=716 剔候选=5280
+J1/OOS: b2.5_c26_pv-5_m3       ret   +37.05 mdd -1.30 calmar     462.3 fills   20.9 格716 破0 0.2min | 窗口结束:470, pv主动:177
+J1/OOS: b2.5_c26_pv-5_m5       ret   +35.35 mdd -2.26 calmar     243.3 fills   20.9 格716 破0 0.2min | 窗口结束:534, pv主动:94
+J1/OOS: b2.5_c26_pv-10_m3      ret   +36.28 mdd -2.24 calmar     258.1 fills   20.9 格716 破0 0.2min | 窗口结束:531, pv主动:113  [现值pv,须对上T1重扫 geo_b2.5_c26]
+J1/OOS: b2.5_c26_pv-10_m5      ret   +35.77 mdd -2.18 calmar     258.6 fills   20.9 格716 破0 0.2min | 窗口结束:560, pv主动:66
+J1/OOS: b2.5_c26_pv-20_m3      ret   +37.02 mdd -1.97 calmar     304.8 fills   20.9 格716 破0 0.2min | 窗口结束:579, pv主动:47
+J1/OOS: b2.5_c26_pv-20_m5      ret   +36.07 mdd -2.06 calmar     277.7 fills   20.9 格716 破0 0.2min | 窗口结束:584, 固定止损:42
+[OOS] b3_c16 preload 0.6min 格=991 剔候选=3356
+J1/OOS: b3_c16_pv-5_m3         ret    +5.14 mdd -1.88 calmar     19.35 fills    4.3 格991 破0 0.3min | 窗口结束:686, pv主动:235
+J1/OOS: b3_c16_pv-5_m5         ret    +7.03 mdd -2.39 calmar     21.89 fills    4.3 格991 破0 0.3min | 窗口结束:775, pv主动:129
+J1/OOS: b3_c16_pv-10_m3        ret    +5.28 mdd -2.31 calmar     16.19 fills    4.3 格991 破0 0.2min | 窗口结束:776, pv主动:141  [现值pv,须对上T1重扫 geo_b3_c16]
+J1/OOS: b3_c16_pv-10_m5        ret    +6.35 mdd -2.32 calmar     19.95 fills    4.3 格991 破0 0.2min | 窗口结束:814, pv主动:85
+J1/OOS: b3_c16_pv-20_m3        ret    +7.25 mdd -2.83 calmar     19.15 fills    4.3 格991 破0 0.2min | 窗口结束:848, pv主动:49
+J1/OOS: b3_c16_pv-20_m5        ret    +7.30 mdd -2.83 calmar     19.29 fills    4.3 格991 破0 0.2min | 窗口结束:853, 固定止损:46
+[OOS] b3_c22 preload 0.7min 格=854 剔候选=4566
+J1/OOS: b3_c22_pv-5_m3         ret    +2.71 mdd -1.71 calmar     10.51 fills    7.1 格854 破0 0.3min | 窗口结束:579, pv主动:211
+J1/OOS: b3_c22_pv-5_m5         ret    +4.61 mdd -1.82 calmar     17.64 fills    7.1 格854 破0 0.3min | 窗口结束:665, pv主动:109
+J1/OOS: b3_c22_pv-10_m3        ret    +4.34 mdd -2.31 calmar     12.98 fills    7.1 格854 破0 0.2min | 窗口结束:667, pv主动:120  [现值pv,须对上T1重扫 geo_b3_c22]
+J1/OOS: b3_c22_pv-10_m5        ret    +4.86 mdd -2.30 calmar     14.79 fills    7.1 格854 破0 0.2min | 窗口结束:699, pv主动:68
+J1/OOS: b3_c22_pv-20_m3        ret    +6.80 mdd -2.48 calmar     20.27 fills    7.1 格854 破0 0.2min | 窗口结束:724, pv主动:44
+J1/OOS: b3_c22_pv-20_m5        ret    +7.95 mdd -2.48 calmar     24.45 fills    7.1 格854 破0 0.2min | 窗口结束:732, 资金费率:39
+[OOS] b3_c26 preload 0.7min 格=790 剔候选=4975
+J1/OOS: b3_c26_pv-5_m3         ret    +6.09 mdd -1.43 calmar     30.88 fills    9.9 格790 破0 0.3min | 窗口结束:553, pv主动:168
+J1/OOS: b3_c26_pv-5_m5         ret    +6.32 mdd -1.55 calmar      29.7 fills    9.9 格790 破0 0.3min | 窗口结束:619, pv主动:88
+J1/OOS: b3_c26_pv-10_m3        ret    +5.13 mdd -1.89 calmar     19.25 fills    9.9 格790 破0 0.2min | 窗口结束:601, pv主动:117  [现值pv,须对上T1重扫 geo_b3_c26]
+J1/OOS: b3_c26_pv-10_m5        ret    +7.06 mdd -2.23 calmar     23.58 fills    9.9 格790 破0 0.2min | 窗口结束:644, pv主动:60
+J1/OOS: b3_c26_pv-20_m3        ret    +6.93 mdd -2.40 calmar     21.41 fills    9.9 格790 破0 0.2min | 窗口结束:659, pv主动:45
+J1/OOS: b3_c26_pv-20_m5        ret    +6.82 mdd -2.43 calmar     20.77 fills    9.9 格790 破0 0.2min | 窗口结束:668, 资金费率:40
+[OOS] DONE
+[IS] blocked=177 tick表=571币 4.1min
+[IS] b2_c16 preload 2.3min 格=2381 剔候选=4017
+J1/IS: b2_c16_pv-5_m3         ret   +16.68 mdd -8.64 calmar     6.784 fills    9.2 格2381 破1 0.6min | 窗口结束:1537, pv主动:607
+J1/IS: b2_c16_pv-5_m5         ret   +16.83 mdd -9.15 calmar     6.475 fills    9.2 格2381 破1 0.6min | 窗口结束:1703, pv主动:345
+J1/IS: b2_c16_pv-10_m3        ret   +15.94 mdd -8.88 calmar     6.273 fills    9.2 格2381 破1 0.5min | 窗口结束:1694, pv主动:418  [现值pv,须对上T1重扫 geo_b2_c16]
+J1/IS: b2_c16_pv-10_m5        ret   +16.78 mdd -9.69 calmar     6.096 fills    9.2 格2381 破1 0.5min | 窗口结束:1803, pv主动:227
+J1/IS: b2_c16_pv-20_m3        ret   +21.68 mdd -7.57 calmar     10.55 fills    9.2 格2381 破1 0.5min | 窗口结束:1869, pv主动:207
+J1/IS: b2_c16_pv-20_m5        ret   +24.30 mdd -7.27 calmar     12.61 fills    9.2 格2381 破1 0.5min | 窗口结束:1902, 固定止损:185
+[IS] b2_c22 preload 1.5min 格=2182 剔候选=4945
+J1/IS: b2_c22_pv-5_m3         ret   +45.38 mdd -6.88 calmar        30 fills   17.8 格2182 破0 0.6min | 窗口结束:1411, pv主动:562
+J1/IS: b2_c22_pv-5_m5         ret   +45.26 mdd-11.48 calmar      17.9 fills   17.8 格2182 破0 0.6min | 窗口结束:1576, pv主动:314
+J1/IS: b2_c22_pv-10_m3        ret   +41.00 mdd -8.59 calmar      20.9 fills   17.8 格2182 破0 0.5min | 窗口结束:1549, pv主动:399  [现值pv,须对上T1重扫 geo_b2_c22]
+J1/IS: b2_c22_pv-10_m5        ret   +41.41 mdd-13.02 calmar     13.98 fills   17.8 格2182 破0 0.5min | 窗口结束:1647, pv主动:221
+J1/IS: b2_c22_pv-20_m3        ret   +43.60 mdd-11.24 calmar     17.37 fills   17.8 格2182 破0 0.5min | 窗口结束:1714, pv主动:185
+J1/IS: b2_c22_pv-20_m5        ret   +46.27 mdd-12.36 calmar     17.15 fills   17.8 格2182 破0 0.5min | 窗口结束:1737, 固定止损:187
+[IS] b2_c26 preload 1.5min 格=2121 剔候选=5251
+J1/IS: b2_c26_pv-5_m3         ret   +90.50 mdd -9.12 calmar     64.44 fills   27.5 格2121 破1 0.7min | 窗口结束:1375, pv主动:544
+J1/IS: b2_c26_pv-5_m5         ret   +97.79 mdd -9.78 calmar     68.42 fills   27.5 格2121 破1 0.7min | 窗口结束:1541, pv主动:310
+J1/IS: b2_c26_pv-10_m3        ret   +89.86 mdd-10.81 calmar     53.74 fills   27.5 格2121 破1 0.6min | 窗口结束:1506, pv主动:398  [现值pv,须对上T1重扫 geo_b2_c26]
+J1/IS: b2_c26_pv-10_m5        ret   +95.79 mdd-11.17 calmar     57.89 fills   27.5 格2121 破1 0.5min | 窗口结束:1609, pv主动:224
+J1/IS: b2_c26_pv-20_m3        ret   +87.52 mdd-13.33 calmar     41.71 fills   27.5 格2121 破1 0.5min | 窗口结束:1660, pv主动:204
+J1/IS: b2_c26_pv-20_m5        ret   +96.34 mdd-12.99 calmar     50.24 fills   27.5 格2121 破1 0.5min | 窗口结束:1690, 固定止损:171
+[IS] b2.5_c16 preload 1.5min 格=2528 剔候选=2982
+J1/IS: b2.5_c16_pv-5_m3       ret    +8.55 mdd -4.04 calmar     6.891 fills    6.4 格2528 破1 0.7min | 窗口结束:1698, pv主动:615
+J1/IS: b2.5_c16_pv-5_m5       ret   +13.04 mdd -5.72 calmar      7.75 fills    6.4 格2528 破1 0.7min | 窗口结束:1903, pv主动:349
+J1/IS: b2.5_c16_pv-10_m3      ret   +10.49 mdd -4.32 calmar     8.043 fills    6.4 格2528 破1 0.5min | 窗口结束:1890, pv主动:406  [现值pv,须对上T1重扫 geo_b2.5_c16]
+J1/IS: b2.5_c16_pv-10_m5      ret   +10.74 mdd -6.01 calmar     5.937 fills    6.4 格2528 破2 0.5min | 窗口结束:2002, pv主动:233
+J1/IS: b2.5_c16_pv-20_m3      ret   +11.48 mdd -4.69 calmar     8.186 fills    6.4 格2528 破2 0.5min | 窗口结束:2075, pv主动:184
+J1/IS: b2.5_c16_pv-20_m5      ret   +11.95 mdd -5.93 calmar      6.77 fills    6.4 格2528 破2 0.5min | 窗口结束:2102, 固定止损:145
+[IS] b2.5_c22 preload 1.5min 格=2295 剔候选=4438
+J1/IS: b2.5_c22_pv-5_m3       ret   +10.82 mdd -4.94 calmar     7.282 fills   11.3 格2295 破0 0.7min | 窗口结束:1513, pv主动:569
+J1/IS: b2.5_c22_pv-5_m5       ret   +14.19 mdd -6.10 calmar     7.994 fills   11.3 格2295 破0 0.7min | 窗口结束:1684, pv主动:334
+J1/IS: b2.5_c22_pv-10_m3      ret   +13.25 mdd -5.90 calmar     7.641 fills   11.3 格2295 破0 0.5min | 窗口结束:1681, pv主动:383  [现值pv,须对上T1重扫 geo_b2.5_c22]
+J1/IS: b2.5_c22_pv-10_m5      ret   +12.34 mdd -8.18 calmar     5.091 fills   11.3 格2295 破0 0.5min | 窗口结束:1775, pv主动:224
+J1/IS: b2.5_c22_pv-20_m3      ret   +16.17 mdd -6.78 calmar     8.351 fills   11.3 格2295 破0 0.5min | 窗口结束:1855, pv主动:171
+J1/IS: b2.5_c22_pv-20_m5      ret   +13.60 mdd -8.34 calmar     5.567 fills   11.3 格2295 破0 0.5min | 窗口结束:1873, 固定止损:155
+[IS] b2.5_c26 preload 1.5min 格=2216 剔候选=4810
+J1/IS: b2.5_c26_pv-5_m3       ret   +39.01 mdd -4.26 calmar     39.37 fills   16.6 格2216 破1 0.7min | 窗口结束:1488, pv主动:548
+J1/IS: b2.5_c26_pv-5_m5       ret   +38.92 mdd -6.75 calmar     24.81 fills   16.6 格2216 破1 0.7min | 窗口结束:1647, pv主动:319
+J1/IS: b2.5_c26_pv-10_m3      ret   +36.87 mdd -5.21 calmar     29.87 fills   16.6 格2216 破1 0.6min | 窗口结束:1649, pv主动:365  [现值pv,须对上T1重扫 geo_b2.5_c26]
+J1/IS: b2.5_c26_pv-10_m5      ret   +36.15 mdd -8.34 calmar     18.21 fills   16.6 格2216 破1 0.6min | 窗口结束:1731, pv主动:220
+J1/IS: b2.5_c26_pv-20_m3      ret   +36.11 mdd -9.96 calmar     15.21 fills   16.6 格2216 破1 0.6min | 窗口结束:1802, pv主动:172
+J1/IS: b2.5_c26_pv-20_m5      ret   +36.76 mdd-10.21 calmar      15.2 fills   16.6 格2216 破1 0.6min | 窗口结束:1822, 固定止损:153
+[IS] b3_c16 preload 1.5min 格=2583 剔候选=2447
+J1/IS: b3_c16_pv-5_m3         ret    +4.24 mdd -3.63 calmar      3.65 fills    5.0 格2583 破0 0.7min | 窗口结束:1754, pv主动:617
+J1/IS: b3_c16_pv-5_m5         ret    +5.10 mdd -3.56 calmar     4.509 fills    5.0 格2583 破0 0.7min | 窗口结束:1955, pv主动:376
+J1/IS: b3_c16_pv-10_m3        ret    +5.84 mdd -3.65 calmar     5.067 fills    5.0 格2583 破0 0.6min | 窗口结束:1976, pv主动:385  [现值pv,须对上T1重扫 geo_b3_c16]
+J1/IS: b3_c16_pv-10_m5        ret    +6.10 mdd -4.23 calmar      4.58 fills    5.0 格2583 破0 0.5min | 窗口结束:2081, pv主动:238
+J1/IS: b3_c16_pv-20_m3        ret    +6.78 mdd -4.16 calmar     5.211 fills    5.0 格2583 破0 0.5min | 窗口结束:2163, pv主动:168
+J1/IS: b3_c16_pv-20_m5        ret    +6.08 mdd -4.67 calmar     4.134 fills    5.0 格2583 破0 0.5min | 窗口结束:2182, 固定止损:121
+[IS] b3_c22 preload 1.5min 格=2441 剔候选=3577
+J1/IS: b3_c22_pv-5_m3         ret    +6.98 mdd -5.48 calmar     4.082 fills    8.4 格2441 破0 0.7min | 窗口结束:1658, pv主动:588
+J1/IS: b3_c22_pv-5_m5         ret    +9.73 mdd -6.30 calmar     5.084 fills    8.4 格2441 破0 0.7min | 窗口结束:1853, pv主动:341
+J1/IS: b3_c22_pv-10_m3        ret   +10.75 mdd -4.82 calmar      7.42 fills    8.4 格2441 破0 0.6min | 窗口结束:1871, pv主动:365  [现值pv,须对上T1重扫 geo_b3_c22]
+J1/IS: b3_c22_pv-10_m5        ret    +8.86 mdd -6.01 calmar     4.813 fills    8.4 格2441 破0 0.6min | 窗口结束:1951, pv主动:234
+J1/IS: b3_c22_pv-20_m3        ret   +10.27 mdd -6.96 calmar     4.884 fills    8.4 格2441 破0 0.6min | 窗口结束:2029, pv主动:177
+J1/IS: b3_c22_pv-20_m5        ret    +8.86 mdd -7.34 calmar     3.941 fills    8.4 格2441 破0 0.6min | 窗口结束:2052, 固定止损:125
+[IS] b3_c26 preload 1.5min 格=2302 剔候选=4391
+J1/IS: b3_c26_pv-5_m3         ret   +12.84 mdd -5.89 calmar     7.392 fills   11.3 格2302 破0 0.7min | 窗口结束:1584, pv主动:535
+J1/IS: b3_c26_pv-5_m5         ret   +13.70 mdd -7.49 calmar     6.252 fills   11.3 格2302 破0 0.7min | 窗口结束:1748, pv主动:318
+J1/IS: b3_c26_pv-10_m3        ret   +14.61 mdd -4.97 calmar     10.13 fills   11.3 格2302 破0 0.6min | 窗口结束:1765, pv主动:342  [现值pv,须对上T1重扫 geo_b3_c26]
+J1/IS: b3_c26_pv-10_m5        ret   +13.28 mdd -6.57 calmar     6.884 fills   11.3 格2302 破0 0.6min | 窗口结束:1844, pv主动:206
+J1/IS: b3_c26_pv-20_m3        ret   +16.09 mdd -6.32 calmar     8.899 fills   11.3 格2302 破0 0.6min | 窗口结束:1914, pv主动:169
+J1/IS: b3_c26_pv-20_m5        ret   +15.50 mdd -7.28 calmar     7.399 fills   11.3 格2302 破0 0.6min | 窗口结束:1937, 固定止损:119
+[IS] DONE
+J1_DONE
+=== J1 完成 00:49:28 退出码 0 ===
