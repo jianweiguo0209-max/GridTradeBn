@@ -15,7 +15,14 @@
 **9/9 命中权威值**,且能正确捕捉 FLOW 2026-01-28 的 0.001→0.00001 变更 ⇒ 可信。
 ⚠ 必须逐日而非逐窗常数:tickSize 会被交易所调整。
 
-用法: [WN=OOS] tick_quantize_compare.py
+**IS 窗分段跑**(122 天 / 2735 格,整窗预热会撞爆 16GB 机器):
+口径照 rsp2_is_split.py —— 两段各自只落**逐格明细**,merge 时合并明细后按**整窗 days**
+调 SW.metrics ⇒ 与整窗跑逐位一致(metrics 只依赖逐格 run_time/offset/pnl_ratio)。
+merge 阶段先用 b3_c16×off 对整窗存档自检,不过关就停手。
+
+用法: [WN=OOS] tick_quantize_compare.py          # 整窗
+      WN=IS SEG=1|2 tick_quantize_compare.py     # 跑一段
+      WN=IS SEG=merge tick_quantize_compare.py   # 合并 + 自检 + 出表
 """
 import importlib.util
 import os
@@ -37,8 +44,16 @@ T = importlib.util.module_from_spec(_s)
 _s.loader.exec_module(T)
 
 WN = os.environ.get('WN', 'OOS')
+SEG = os.environ.get('SEG', '')
 ARMS = [(2, 26, 'b2_c26'), (2.5, 16, 'b2.5_c16'), (3, 16, 'b3_c16')]
 MODES = ['off', 'stack', 'thin']
+IS_SEGS = {'1': ('2026-03-01', '2026-04-30'), '2': ('2026-05-01', '2026-06-30')}
+# merge 自检:整窗存档读数(eff1_scan_results.txt 的 P1/IS,off 模式即现状)
+SELF_CHECK = ('b3_c16', 24.26, 3.19, 28.71)          # ret% / MDD% / Calmar
+
+
+def seg_path(i):
+    return '%s/ablation/tick_cmp_%s_seg%s.parquet' % (RD, WN, i)
 
 
 def daily_ticks(cache, syms, s0, e0):
@@ -65,16 +80,69 @@ def daily_ticks(cache, syms, s0, e0):
     return out
 
 
+def emit(r, days, tag):
+    r.to_parquet('%s/ablation/tick_compare_%s.parquet' % (RD, tag))
+    print('\n===== 汇总(%s) =====' % tag)
+    print(r.to_string(index=False, float_format=lambda x: '%.4g' % x))
+    print('\n===== 相对 off 的留存率 =====')
+    for lab in [a[2] for a in ARMS]:
+        b = r[(r['arm'] == lab) & (r['mode'] == 'off')]
+        if b.empty:
+            continue
+        base = b['ret%'].iloc[0]
+        line = []
+        for mode in MODES[1:]:
+            v = r[(r['arm'] == lab) & (r['mode'] == mode)]
+            if v.empty:
+                continue
+            v = v['ret%'].iloc[0]
+            line.append('%s: %+.2f%% (留存 %.1f%%)'
+                        % (mode, v, v / base * 100 if base else float('nan')))
+        print('  %-10s off %+.2f%%  →  %s' % (lab, base, '  |  '.join(line)))
+
+
+def merge():
+    parts = []
+    for i in IS_SEGS:
+        if not os.path.exists(seg_path(i)):
+            print('缺 %s,先跑 SEG=%s' % (seg_path(i), i))
+            return
+        parts.append(pd.read_parquet(seg_path(i)))
+    d = pd.concat(parts, ignore_index=True)
+    full = T.S.WD9[WN]
+    days = int((pd.Timestamp(full[1]) - pd.Timestamp(full[0])).days) + 1
+    nm, r0, m0, c0 = SELF_CHECK
+    sc = d[(d['_arm'] == nm) & (d['_mode'] == 'off')]
+    m = SW.metrics(sc.drop(columns=['_arm', '_mode']), days)
+    ok = (abs(m['ret'] * 100 - r0) <= 0.02 and abs(m['mdd'] * 100 - m0) <= 0.02
+          and abs(m['calmar'] - c0) <= 0.15)
+    print('[自检] %s×off 分段合并 ret%+.2f/MDD%.2f/C%.2f vs 整窗存档 ret%+.2f/MDD%.2f/C%.2f → %s'
+          % (nm, m['ret'] * 100, m['mdd'] * 100, m['calmar'], r0, m0, c0,
+             'PASS 口径等价' if ok else '**FAIL 停手,分段口径不等价**'), flush=True)
+    if not ok:
+        return
+    rows = []
+    for (lab, mode), g in d.groupby(['_arm', '_mode'], sort=False):
+        mm = SW.metrics(g.drop(columns=['_arm', '_mode']), days)
+        rows.append({'arm': lab, 'mode': mode, 'n_grids': len(g),
+                     '建网失败': int((g['exit_reason'] == '建网失败').sum()),
+                     'ret%': mm['ret'] * 100, 'MDD%': mm['mdd'] * 100,
+                     'Calmar': mm['calmar'], 'fills': mm['n_fills']})
+    emit(pd.DataFrame(rows), days, WN)
+
+
 def main():
+    if SEG == 'merge':
+        return merge()
     SW.set_baseline({})
-    s0, e0 = T.S.WD9[WN]
+    s0, e0 = IS_SEGS[SEG] if SEG else T.S.WD9[WN]
     cache = ParquetCache(V.default_cache_root())
     wd = T.build_wd(cache, s0, e0)
     syms = sorted({row['symbol'] for _rt, _o, row in
                    [(a, b, c) for a, b, c, *_ in wd.raw]})
     print('[wd] %s 格=%d 币=%d 天=%d' % (WN, len(wd.raw), wd.n_symbols, wd.days), flush=True)
     tbs = daily_ticks(cache, syms, s0, e0)
-    rows = []
+    rows, details = [], []
     for band, cnt, lab in ARMS:
         for mode in MODES:
             kw = {} if mode == 'off' else {'tick_by_sym': tbs, 'tick_mode': mode}
@@ -90,18 +158,16 @@ def main():
             print('  %-10s %-6s 格=%-5d 失败=%-4d ret%+12.2f%% MDD%5.2f%% C=%-11.4g fills=%.1f'
                   % (lab, mode, len(df), nfail, m['ret'] * 100, m['mdd'] * 100,
                      m['calmar'], m['n_fills']), flush=True)
-    r = pd.DataFrame(rows)
-    r.to_parquet('%s/ablation/tick_compare_%s.parquet' % (RD, WN))
-    print('\n===== 汇总(%s) =====' % WN)
-    print(r.to_string(index=False, float_format=lambda x: '%.4g' % x))
-    print('\n===== 相对 off 的留存率 =====')
-    for lab in [a[2] for a in ARMS]:
-        base = r[(r['arm'] == lab) & (r['mode'] == 'off')]['ret%'].iloc[0]
-        line = []
-        for mode in MODES[1:]:
-            v = r[(r['arm'] == lab) & (r['mode'] == mode)]['ret%'].iloc[0]
-            line.append('%s: %+.2f%% (留存 %.1f%%)' % (mode, v, v / base * 100 if base else float('nan')))
-        print('  %-10s off %+.2f%%  →  %s' % (lab, base, '  |  '.join(line)))
+            if SEG:
+                d2 = df.copy()
+                d2['_arm'], d2['_mode'] = lab, mode
+                details.append(d2)
+    if SEG:                      # 分段:只落逐格明细,指标留给 merge 按整窗 days 算
+        pd.concat(details, ignore_index=True).to_parquet(seg_path(SEG))
+        print('[seg%s] DONE 落盘 %s(段内指标仅供监看,正式读数以 merge 为准)'
+              % (SEG, seg_path(SEG)))
+        return
+    emit(pd.DataFrame(rows), wd.days, WN)
 
 
 if __name__ == '__main__':

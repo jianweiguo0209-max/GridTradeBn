@@ -50,8 +50,13 @@ TRIM_S = [0, 1, 2, 3, 5, 10, 20]
 
 
 def build_wd(cache, s0, e0):
+    """s0/e0 可以是**整窗**或**其中一段**(分段跑省内存,口径见 rsp2_is_split.py:
+    两段各自只落逐格明细,merge 后按整窗 days 调 SW.metrics ⇒ 与整窗跑逐位一致,
+    因为 metrics 只依赖逐格 run_time/offset/pnl_ratio)。"""
     pool = pd.read_parquet(S.pool_path(WN))
     picks = S.make_picks(pool, 'K1', WN)
+    ws, we = pd.Timestamp(s0), pd.Timestamp(e0) + pd.Timedelta(days=1)
+    picks = [p for p in picks if ws <= p[0] < we]      # 按段切轮(整窗时为 no-op)
     universe = sorted(set(V.list_archive_symbols())
                       - set(effective_blacklist((), DEFAULT_TIER_POLICY)))
     blocked = blocked_rts(cache, universe, pd.Timestamp(s0),
