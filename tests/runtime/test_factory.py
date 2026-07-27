@@ -58,6 +58,24 @@ def test_build_runtime_creates_tables_and_trigger_uses_engine():
                for t in rt.trigger_engine.triggers)
 
 
+def test_build_runtime_default_ranker_has_no_label_feed():
+    # SELECTION_RANKER 默认 'rank'（生产默认）→ 不装 LabelFeed（零改变现有选币线）。
+    from gridtrade.runtime.factory import build_runtime
+    rt = build_runtime(_cfg())
+    assert rt.label_feed is None
+
+
+def test_build_runtime_eff1_ranker_wires_label_feed_and_p12_trigger():
+    # SELECTION_RANKER=eff1 → 装 LabelFeed + ScheduledSelectionTrigger 换用 p12 三因子
+    # （factors 只是选币轮排序序列，真正筛选逻辑在 build_eff1_select_fn 内）。
+    from gridtrade.runtime.factory import build_runtime
+    from gridtrade.runtime.label_feed import LabelFeed
+    rt = build_runtime(_cfg(SELECTION_RANKER='eff1'))
+    assert isinstance(rt.label_feed, LabelFeed)
+    trigger = rt.trigger_engine.triggers[0]
+    assert trigger.factors == ('p12_eff', 'p12_cross1', 'p12_mae')
+
+
 def test_build_runtime_threads_quote_currency_override():
     from gridtrade.runtime.factory import build_runtime
     rt = build_runtime(_cfg(EXCHANGE='binance', BINANCE_API_KEY='k',

@@ -55,6 +55,7 @@ class Runtime:
     audit: object = None
     equity: object = None
     notifier: object = None
+    label_feed: object = None
 
 
 def build_runtime(config) -> Runtime:
@@ -104,7 +105,33 @@ def build_runtime(config) -> Runtime:
                           event_bus=bus, signal_provider=signals)
 
     sc = DEFAULT_STRATEGY_CONFIG
-    trigger = ScheduledSelectionTrigger(sc, sc['factors'], sc['weight_list'])
+    label_feed = None
+    # tickSize 表：读 inner（未经 ResilientAdapter 包装）——ResilientAdapter 逐方法显式
+    # 转发、无 __getattr__（同文件注释：漏转发会静默落到基类默认，2026-07-12 mainnet
+    # 实证过 fetch_max_leverages 同款坑）；fetch_tick_sizes 目前未被转发，若在
+    # ResilientAdapter 包装后的 `adapter` 上 getattr，生产 ccxt 也会拿到 None，整个
+    # tick 过滤在实盘形同虚设。直接读 inner：Fake/HL 遗留没有此方法 → None（过滤
+    # 自动关，fail-open）；ccxt 有 → 命中真实实现（本地缓存 markets，零 REST 权重，
+    # 不需要重试/熔断，同 quantize_amount/assert_account_mode 的旁路先例）。
+    _tick_fn = getattr(inner, 'fetch_tick_sizes', None)
+    if getattr(config, 'selection_ranker', 'rank') == 'eff1':
+        from gridtrade.runtime.label_feed import LabelFeed
+        from gridtrade.execution.triggers import build_eff1_select_fn
+        label_feed = LabelFeed(adapter, pace_ms=config.label_fetch_pace_ms,
+                               log=_flush_log)
+        _sel = build_eff1_select_fn(sc, label_feed, tick_map_fn=_tick_fn,
+                                    min_ticks=config.selection_min_ticks,
+                                    log=_flush_log)
+        trigger = ScheduledSelectionTrigger(
+            sc, ('p12_eff', 'p12_cross1', 'p12_mae'), (), select_fn=_sel)
+    else:
+        from gridtrade.execution.triggers import _default_select_fn
+        _sel = _default_select_fn(sc, sc['factors'], sc['weight_list'],
+                                  tick_map_fn=_tick_fn,
+                                  min_ticks=config.selection_min_ticks,
+                                  log=_flush_log)
+        trigger = ScheduledSelectionTrigger(sc, sc['factors'], sc['weight_list'],
+                                            select_fn=_sel)
     trigger_engine = TriggerEngine([trigger])
 
     from gridtrade.state.control import (ControlFlagRepository, CommandRepository,
@@ -124,4 +151,5 @@ def build_runtime(config) -> Runtime:
         audit=AuditRepository(store),
         equity=EquitySnapshotRepository(store),
         notifier=notifier,
+        label_feed=label_feed,
     )
