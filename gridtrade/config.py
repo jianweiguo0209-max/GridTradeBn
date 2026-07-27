@@ -99,7 +99,7 @@ class DeployConfig:
     min_order_notional: float = 0.0     # >0 → 开仓预检单笔名义额下限（币安按币 5/20/50，与 Instrument.min_cost 取 max）；0=停用
     scheduler_fetch_pace_ms: float = 250.0    # 选币取数币间间隔（币安权重实测重校，见 scheduler.py）；0=关
     # 选币排名器：'eff1'（生产默认，2026-07-27 用户令写死）或 'rank'（rank_sum 加权名次，回退档）
-    selection_ranker: str = 'eff1'
+    selection_ranker: str = 'rank'
     selection_min_ticks: float = 3.0    # 最小 tick 档过滤（>0 启用；0=关）
     label_fetch_pace_ms: float = 300.0  # label 取数节流（ms）；0=关
     monitor_parallel: int = 4           # monitor per-grid 并行 worker 数；1=退回全串行（保底开关）
@@ -289,7 +289,7 @@ DEFAULT_STRATEGY_CONFIG = {
     'max_candle_num': 160,
     # ⚠ factors/weight_list 只服务**回退档 ranker='rank'**(rank_sum 加权名次)。
     #   2026-07-27 起默认 ranker='eff1'，走的是 DEFAULT_EFF1_CFG 那套，不读这两项。
-    'factors': {'Reg_v2_5': True, 'Sgcz_5': True, 'Er_2': True},
+    'factors': {'MarketPl_5': True, 'Dc_5': False, 'Er_2': True},
     'weight_list': [1, 1, 1],
     'leverage': 5,
     'price_limit': [0.25, 0.25],
@@ -304,12 +304,12 @@ DEFAULT_STRATEGY_CONFIG = {
         # 71%期望税买尾部,3×ATR 带以库存∝漂移/带宽的几何学买到同款保护)。与 2026-07-09
         # "窄带胜出"不矛盾——当年是单改带宽于旧止损链底座;s030 是联动配置(宽带+密格+
         # pv让位+紧固损),六窗对锚Σ+7.1pp、双留出全过(HOLD-A 三指标胜/HOLD-B Calmar 4.1v3.0)。
-        'atr_range_multiplier': 3,
+        'atr_range_multiplier': 5,
         'range_pct_min': 0.05,
-        'range_pct_max': 0.50,
+        'range_pct_max': 0.25,
         'grid_spacing_atr_ratio': 0.5,
         'grid_spacing_min': 0.003,
-        'grid_spacing_max': 0.04,      # ←0.02:放宽间距上限,修 band2 的 OOS 软肋(3.46→5.05)
+        'grid_spacing_max': 0.02,      # ←0.02:放宽间距上限,修 band2 的 OOS 软肋(3.46→5.05)
         # 回滚 20→10(2026-07-19 重扫v2):候选A 的 cmin=20 系带引擎保真度 bug(首触丢弃/pv前视等,
         # commits 69754cf..bd5f2ac)的回测选出;诚实引擎四窗实测 cmin20 在 IS 崩至 Calmar 2.1(基线
         # 14.4)、仅 W1/W2 占优,regime 依赖不稳。首触丢弃 bug 恰偏袒密网(线密→最近线离 entry 近→
@@ -319,7 +319,7 @@ DEFAULT_STRATEGY_CONFIG = {
         # 的单改(诚实引擎 IS 崩至 2.1);此次全程诚实引擎(69754cf 后)且为联动配置的一环
         # (带宽 3×ATR 下 flex≡12,cmin16 兜底≈恒 16 格,步距 0.375×ATR 与现役几乎同,
         # 实质是"同资金摊宽摊薄":单格 −37.5%、同漂移库存 ×0.62)。低波 clamp 区自动更密(至33格)。
-        'grid_count_min': 16,
+        'grid_count_min': 10,
         'grid_count_max': 149,
         'stop_buffer_ratio': 0.01,     # 回测零敏感(破网 0);纯实盘丝距旋钮,留观察
     },
@@ -338,7 +338,7 @@ DEFAULT_STOP_CFG = {
     # 中唯一九窗 MDD 全≤锚×1.3 且平台轴内点者)。属**违反裁决结论的用户部署决定**,
     # 记录 spec 2026-07-27-chain-beam-prereg §9/§10。机制:pv 开火减半(mult5)后固损接管
     # (2.5% 为该底座内点,退出结构 pv:固损 从 621:82 变 288:260,净值两抵)。
-    'stop_loss': 0.025,
+    'stop_loss': 0.02,
     # 连续回撤止盈恢复开启(2026-07-19 重扫v2,推翻 2026-07-15 候选A 的"关"):当年"关掉四窗更优"
     # 是 pv 前视幻觉下的适应——带前视的 pv 料事如神先砍亏损,trailing 显得多余。诚实引擎(pv 去前视,
     # 9199503)实测 trailing 是真保护:关掉则 W1 7.3→0.8、OOS −3.0→−4.2(少亏 3.5pp 没了)、
@@ -359,11 +359,11 @@ DEFAULT_STOP_CFG = {
     # IS 窗 45% 格死于"浮盈<0.5%遇尖峰即砍",全是准赢家;−0.01=亏≥1%才认尖峰。SWEEP P 阶梯
     # 四窗 Σ 单峰于 −0.01(W1 单调向紧/IS 单调向关的 regime 镜像平衡点);pv 全关在每窗均非
     # 最优(崩盘窗保命价值真实,判别器两代参数化均未过线,见 memory grid-fitness-score-research)。
-    'pv_pnl_thr': -0.01,               # pv 触发门槛：pv_spike && pnlRatio<thr（evaluate_exit 读此值）
+    'pv_pnl_thr': 0.005,               # pv 触发门槛：pv_spike && pnlRatio<thr（evaluate_exit 读此值）
     # 3→5(2026-07-27 S2G0 联动值,链轴主刀):尖峰门槛提高⇒pv 开火 621→288 次(四窗),
     # 单次深度不变(−138→−143bp);SWEEP3 当年 mult5 劣于冠军系旧底座(stop0.045)单改,
     # 本次与 stop0.025 联动。pv_thr 保持 −0.01 不动(s030 最大单点发现,S2G0 未回退)。
-    'pv_mult': 5,                      # 量能尖峰倍数（LiveSignalProvider 算 pv_spike 用）
+    'pv_mult': 3,                      # 量能尖峰倍数（LiveSignalProvider 算 pv_spike 用）
     'pv_period': '15min',              # 量能重采样周期（'15min' 非 '15m'——后者被 pandas 当月）
     'pv_n': 100,                       # 量能基线滚动窗口（15m×100≈25h 真滚动；signals 取 n+8 根前置历史）
 }
