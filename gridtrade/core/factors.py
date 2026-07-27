@@ -601,8 +601,9 @@ def _reg_v2_vec(s, n):
 def cal_factor_batch(df, needed=None):
     """向量化版 cal_factor(回测提速):df 为多币**堆叠帧**(须含 'symbol' 列),按 symbol
     分组一次算完,与逐币 cal_factor 逐位一致(parity 见 tests/core/test_factor_batch.py)——
-    省掉每(币,rt)重建小帧的 pandas 对象开销。needed 语义同 cal_factor。仅回测 batch 路径用;
-    live/研究直调 cal_factor 走逐币路(proceed_calc_symbol_factor batch=False 默认)。"""
+    省掉每(币,rt)重建小帧的 pandas 对象开销。needed 语义同 cal_factor。回测走此路;
+    eff1 live 选币(build_eff1_select_fn)也走 batch=True(与回测 eff1_scan 同源,有意为之);
+    legacy live 选币(_default_select_fn)仍走逐币路(proceed_calc_symbol_factor batch=False 默认)。"""
     g = df.groupby('symbol', sort=False)
     close, high, low = df['close'], df['high'], df['low']
 

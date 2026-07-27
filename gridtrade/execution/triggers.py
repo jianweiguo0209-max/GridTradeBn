@@ -85,9 +85,14 @@ def build_eff1_select_fn(strategy_config, label_feed, *,
             return all_df
         all_df = all_df[np.isfinite(all_df['close']) & np.isfinite(all_df['Atr_5'])
                         & np.isfinite(all_df['middle_5'])]
-        if tick_map_fn is not None and min_ticks > 0:
-            all_df, _ = filter_tick_fit(all_df, tick_map_fn(), strategy_config,
-                                        min_ticks, log=log)
+        if min_ticks > 0:
+            tick_map = tick_map_fn() if tick_map_fn is not None else None
+            if not tick_map:
+                log('[eff1] WARN tick 表为空,MIN_TICKS=%g 过滤失效——'
+                    'eff1 回测有效性前提被关闭' % min_ticks)
+            else:
+                all_df, _ = filter_tick_fit(all_df, tick_map, strategy_config,
+                                            min_ticks, log=log)
         lab = label_feed.labels(run_time)
         if all_df.empty or not lab:
             log('[eff1] 本轮无候选(候选=%d 标签=%d)' % (len(all_df), len(lab)))

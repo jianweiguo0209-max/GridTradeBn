@@ -5,7 +5,9 @@
   冷启动(进程首轮):limit≈780 ⇒ weight 5/币;pace 800ms 摊 ~226s ≈ +375/min。
 每次取数前调 adapter.report_weight()(遥测归因,同 scheduler._fetch_pass)。
 缓冲 13h、标签窗 12h:1h 余量保证窗首根的 positional 前驱在场(p12_labels docstring)。
-fail-open:单币取数失败只跳过 ⇒ 该币本轮缺标签不参选,绝不阻塞选币轮。
+新鲜度守卫(不是 fail-open):单币取数失败只跳过 ⇒ 该币缓冲尾停在旧值不再前进;update
+整体异常同理全池停进。labels() 只对缓冲尾 ts ≥ run_time − STALE_TOL_MS(5min)的币出
+标签——尾陈旧(取数失败/停牌/整体异常)一律不出表,绝不用残窗数据参选、也绝不阻塞选币轮。
 """
 import time
 
@@ -15,6 +17,7 @@ from gridtrade.core.p12_labels import p12_eff, window_label
 
 BUFFER_HOURS = 13
 REFETCH_TAIL_MS = 120_000        # 尾部回拉 2min:治「上轮末根未定型」的陈旧半根
+STALE_TOL_MS = 300_000           # 新鲜度容差 5min:健康 fetch 后尾恒≈rt-1min,零误杀
 
 
 class LabelFeed:
@@ -63,8 +66,11 @@ class LabelFeed:
     def labels(self, run_time):
         w1 = pd.Timestamp(run_time)
         w0 = w1 - pd.Timedelta(hours=12)
+        stale_before_ms = int(w1.value // 1_000_000) - STALE_TOL_MS
         out = {}
         for sym, df in self._buf.items():
+            if df.empty or int(df['ts'].iloc[-1]) < stale_before_ms:
+                continue                          # 缓冲尾陈旧(新鲜度守卫)⇒ 不出标签
             r = window_label(df, w0, w1)
             if r is not None:
                 out[sym] = {'p12_cross1': r[0], 'p12_mae': r[1],

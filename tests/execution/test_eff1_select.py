@@ -45,6 +45,22 @@ def test_eff1_ranks_by_eff_desc_symbol_tiebreak_and_truncates():
     assert {'p12_eff', 'p12_cross1', 'p12_mae', 'rank'} <= set(out.columns)
 
 
+def test_eff1_warns_when_tick_table_empty_but_selection_unaffected():
+    """Important #2:tick_map_fn() 返回空表时,MIN_TICKS 过滤静默失效是 eff1 回测有效性
+    前提(3.9x 虚高)被关闭——必须每轮 WARN 一次;同时选币行为不变(空表 ⇒ 不剔)。"""
+    rt = pd.Timestamp('2026-07-27 03:00:00')
+    lab = {'TOP/USDT': dict(p12_cross1=9.0, p12_mae=0.01, p12_eff=4.5),
+           'SECOND/USDT': dict(p12_cross1=5.0, p12_mae=0.01, p12_eff=2.5)}
+    logs = []
+    fn = build_eff1_select_fn(DEFAULT_STRATEGY_CONFIG, FeedStub(lab),
+                              tick_map_fn=lambda: {}, min_ticks=3.0,
+                              log=lambda msg: logs.append(msg))
+    out = fn(_candles(['TOP/USDT', 'SECOND/USDT'], rt), rt, 3)
+    assert len(out) >= 1
+    assert set(out['symbol']) == {'TOP/USDT'}       # 空表未过滤 ⇒ 排名不变,TOP 照常胜出
+    assert any('WARN' in m for m in logs)
+
+
 def test_eff1_tick_filter_promotes_next():
     rt = pd.Timestamp('2026-07-27 03:00:00')
     lab = {'TOP/USDT': dict(p12_cross1=9.0, p12_mae=0.01, p12_eff=4.5),

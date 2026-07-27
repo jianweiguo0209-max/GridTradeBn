@@ -101,6 +101,60 @@ def test_pace_ms_and_cold_pace_ms_respected():
     assert sleep_calls == [0.3, 0.3], f"incremental sleep calls: {sleep_calls}"
 
 
+def test_stale_tail_after_fetch_failure_excludes_symbol():
+    """新鲜度守卫(Important #1):暖币第二轮取数异常 ⇒ 缓冲尾停在上一轮 rt(此刻已 1h 陈旧,
+    超出 STALE_TOL_MS=5min)⇒ labels() 剔除该币,即使第一轮它曾正常出过标签。"""
+    class FlakyAdapter(FakeAdapter):
+        def __init__(self):
+            super().__init__()
+            self.fail_next = set()
+
+        def fetch_ohlcv(self, sym, tf, s, e):
+            if sym in self.fail_next:
+                raise RuntimeError('boom')
+            return super().fetch_ohlcv(sym, tf, s, e)
+
+    ad = FlakyAdapter()
+    feed = LabelFeed(ad, pace_ms=0, cold_pace_ms=0, sleep=lambda s: None)
+    rt = pd.Timestamp('2026-07-27 03:00:00')
+    feed.update(['WARM/USDT', 'FLAT/USDT'], rt)
+    assert 'WARM/USDT' in feed.labels(rt)              # 第一轮:新鲜缓冲,正常出标签
+
+    rt2 = rt + pd.Timedelta(hours=1)
+    ad.fail_next.add('WARM/USDT')
+    feed.update(['WARM/USDT', 'FLAT/USDT'], rt2)
+    lab2 = feed.labels(rt2)
+    assert 'WARM/USDT' not in lab2                     # 缓冲尾陈旧(~1h)⇒ 不出标签不参选
+    assert 'FLAT/USDT' in lab2                          # 健康币不受连累
+
+
+def test_manually_stale_buffer_tail_excluded():
+    """新鲜度守卫(Important #1):不经异常路径,直接把某币缓冲尾截到 rt-1h(模拟 update
+    整体异常/降级场景下的残窗)⇒ labels() 仍应剔除,不出残窗标签。"""
+    ad = FakeAdapter()
+    feed = LabelFeed(ad, pace_ms=0, cold_pace_ms=0, sleep=lambda s: None)
+    rt = pd.Timestamp('2026-07-27 03:00:00')
+    feed.update(['FLAT/USDT'], rt)
+    assert 'FLAT/USDT' in feed.labels(rt)
+
+    buf = feed._buf['FLAT/USDT']
+    cutoff_ms = int(rt.value // 1_000_000) - 3_600_000  # 尾截到 rt-1h
+    feed._buf['FLAT/USDT'] = buf[buf['ts'] <= cutoff_ms].reset_index(drop=True)
+    assert 'FLAT/USDT' not in feed.labels(rt)
+
+
+def test_fresh_incremental_round_labels_normally():
+    """新鲜度守卫(Important #1)不误杀:正常增量轮缓冲尾恒 ≈ rt-1min,远在 5min 容差内,
+    照常出标签。"""
+    ad = FakeAdapter()
+    feed = LabelFeed(ad, pace_ms=0, cold_pace_ms=0, sleep=lambda s: None)
+    rt = pd.Timestamp('2026-07-27 03:00:00')
+    feed.update(['FLAT/USDT'], rt)
+    rt2 = rt + pd.Timedelta(hours=1)
+    feed.update(['FLAT/USDT'], rt2)
+    assert 'FLAT/USDT' in feed.labels(rt2)
+
+
 def test_pool_trim_evicts_populated_entries():
     """回归测试:掉出票池的符号,其缓冲即使populated也被删除。"""
     ad = FakeAdapter()
