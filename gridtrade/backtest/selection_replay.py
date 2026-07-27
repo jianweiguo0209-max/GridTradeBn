@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 
 from gridtrade.core.grid_params import GRID_ROW_FACTORS
-from gridtrade.core.selection import (compute_offset, needed_factors,
+from gridtrade.core.selection import (compute_offset, needed_factors, validate_factor_support,
                                       proceed_calc_symbol_factor, select_grid_coin)
 from gridtrade.core.tick_fit import filter_tick_fit
 from gridtrade.exchanges.base import CANDLE_COLS
@@ -97,9 +97,13 @@ def _select_over_run_times(series, run_times, period, weight_list, factors,
     min_ticks>0 且给了 tick_map 时在排名前做 tick 过滤（与实盘同位置）。"""
     out = []
     # 只算被引用的因子列(选中结果与全算 diff==0):选币读的 ∪ 布网几何读的(Atr_5/middle_5)
-    # eff1 不读打分因子,只需布网列(与实盘 build_eff1_select_fn 的 needed 一致)。
-    needed = (set(GRID_ROW_FACTORS) if ranker == 'eff1'
-              else needed_factors(factors) | set(GRID_ROW_FACTORS))
+    if ranker == 'eff1':
+        # eff1 不读打分因子,只需布网列(与实盘 build_eff1_select_fn 的 needed 一致);
+        # GRID_ROW_FACTORS(Atr_5/middle_5)恒在 BATCH_FACTOR_NAMES 内,不经 validate 也安全。
+        needed = set(GRID_ROW_FACTORS)
+    else:
+        # rank 路径带 fork 的 fail-fast:任一会读的因子缺 batch 实现即启动前报错(非子进程 KeyError)。
+        needed = validate_factor_support(factors, GRID_ROW_FACTORS)
     devnull = open(os.devnull, 'w')
     try:
         for run_time in run_times:

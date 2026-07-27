@@ -153,12 +153,26 @@ def _list_page(session, prefix, marker=None):
 
 def list_archive_symbols(quote='USDT', *, session=None):
     """归档目录全量合约（含退市）→ canonical 列表。marker 翻页（MaxKeys 1000）。"""
+    injected_session = session is not None
     session = session or _default_session()
     prefix = 'data/futures/um/monthly/klines/'
     out, marker = [], None
     while True:
         root = _list_page(session, prefix, marker)
         if root is None:
+            # AWS S3 列举域名在部分网络会被 TLS/路由阻断，而 data.binance.vision 文件下载
+            # 仍正常。本地 1h namespace 是此前全量归档枚举后逐币预热形成（含退市币与空
+            # 哨兵），可作为无幸存者偏差的离线清单快照。仅真实默认 session 回退；测试注入
+            # session 仍保持 fail-loud，避免 mock 失败意外读取开发机缓存。
+            if not injected_session:
+                from gridtrade.backtest.cache import ParquetCache
+                cache = ParquetCache(default_cache_root())
+                suffix = '/%s:%s' % (quote, quote)
+                cached = sorted(s for s in cache.list_symbols('1h') if s.endswith(suffix))
+                if cached:
+                    print('[vision] 警告: S3 归档目录列举失败，使用本地 1h 全量归档清单快照 '
+                          '(%d 合约，含退市/空哨兵)' % len(cached), flush=True)
+                    return cached
             raise RuntimeError('data.binance.vision 目录列举失败: %s' % prefix)
         prefixes = [p.find(_S3NS + 'Prefix').text
                     for p in root.findall(_S3NS + 'CommonPrefixes')]

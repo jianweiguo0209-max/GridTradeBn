@@ -187,6 +187,11 @@ def select_grids(cache, universe, window_start, window_end, strategy_config, fac
     结果按选币参数 + 每币缓存天范围数据指纹磁盘缓存（BT_SELECT_CACHE=off 旁路）。
     candidates_per_rt>1：三档递补用 top-K 候选——放宽选币截断为 rank<=K（经
     strategy_config.choose_symbols 覆盖，天然进缓存 key、不同 K 不串）；K=1 逐位恒等现状。"""
+    # 必须在 select-cache 查询之前验证：否则旧缓存会掩盖“config 引用了 batch 未实现因子”，
+    # 直到另一个窗口 cache miss 才在子进程晚报 KeyError。
+    from gridtrade.core.selection import validate_factor_support
+    from gridtrade.core.grid_params import GRID_ROW_FACTORS
+    validate_factor_support(factors, GRID_ROW_FACTORS)
     if candidates_per_rt and int(candidates_per_rt) > 1:
         strategy_config = dict(strategy_config, choose_symbols=int(candidates_per_rt))
     # 选币器/tick 过滤默认**跟随实盘 config**(2026-07-27 起 = eff1 + MIN_TICKS 3.0):
@@ -512,8 +517,14 @@ def _binance_datasource_1h(cache):
                 except (ccxt.ExchangeNotAvailable, ccxt.NetworkError,
                         ccxt.RequestTimeout) as e:
                     last = e
+                    print('[BT] 币安只读接口超时，重试 %d/12: %s' %
+                          (i + 1, type(e).__name__), flush=True)
                     time.sleep(min(2.0 * (i + 1), 8.0))
             raise last
+
+        def retry_read(self, fn, *a, **k):
+            """票池构建使用的 exchangeInfo/杠杆档位也共享预热退避。"""
+            return self._retry(fn, *a, **k)
 
         def fetch_ohlcv(self, symbol, timeframe, start_ms, end_ms):
             return self._retry(super().fetch_ohlcv, symbol, timeframe,
@@ -525,6 +536,14 @@ def _binance_datasource_1h(cache):
 
     adapter = _RetryBinance(ccxt.binanceusdm({'enableRateLimit': True,
                                               'timeout': 30000,
+                                              # ccxt 默认 trust_env=False，会无视终端已验证可用的
+                                              # HTTP(S)_PROXY；Vision/requests 却会继承，造成同一
+                                              # Python 中 requests=200、ccxt TLS 超时。显式对齐。
+                                              'trust_env': True,
+                                              # load_markets 只需期货 exchangeInfo。ccxt 在有 key 时
+                                              # 默认额外取现货钱包 currencies(SAPI capital/getall)，
+                                              # 与回测无关且该私有端点超时会阻断历史数据预热。
+                                              'options': {'fetchCurrencies': False},
                                               # 杠杆档位为私有签名端点(票池 min-leverage 过滤用,
                                               # 2026-07-18);无 key 时公共取数路径不受影响
                                               'apiKey': os.environ.get('BINANCE_API_KEY', ''),
@@ -540,7 +559,11 @@ def exclude_non_coin(symbols, adapter):
     fail-loud:load_markets 降级返回空(未抛异常)不得静默 fail-open 为"保留全量归档"
     (等于放行 TradFi)——此为回测唯一可能与实盘 fail-closed 背离之处,宁可整跑失败。
     返回 (kept: sorted list[str], removed: int)。"""
-    adapter.client.load_markets()
+    retry_read = getattr(adapter, 'retry_read', None)
+    if retry_read is None:                 # 测试桩/非预热适配器保持既有直接调用语义
+        adapter.client.load_markets()
+    else:
+        retry_read(adapter.client.load_markets)
     markets = adapter.client.markets
     if not markets:
         raise RuntimeError('load_markets 返回空 markets,无法做 COIN-only 过滤;'
@@ -596,8 +619,12 @@ def resolve_bt_universe(adapter, blacklist, *, archive_symbols=None, min_lev=Non
     # notional/gearing 与回测 sizing 同源:cap=1000(simulate 硬编)× gearing(旧lev×0.68=3.4)
     # →$3400,与实盘当前 $2555 同档位区间(档界多为 5k/10k+)。
     _gear = BT_STRATEGY['leverage'] * 0.68
+    tiers_fetch = adapter.client.fetch_leverage_tiers
+    retry_read = getattr(adapter, 'retry_read', None)
+    if retry_read is not None:
+        tiers_fetch = lambda: retry_read(adapter.client.fetch_leverage_tiers)
     universe, _n_lowlev = exclude_low_leverage(
-        universe, adapter.client.fetch_leverage_tiers,
+        universe, tiers_fetch,
         notional=1000.0 * _gear, gearing=_gear, min_lev=_minlev)
     # n_blacklist=黑名单原始长度——与原 main() 打印 len(bt_blacklist) 逐字节等价;
     # 交集口径在黑名单含不在归档符号时会少报,破坏统计行语义不变。

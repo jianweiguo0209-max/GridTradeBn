@@ -218,6 +218,61 @@ def test_default_fee_rates_binance_vip0():
         assert sig.parameters['taker_rate'].default == 0.0005
 
 
+def test_backtest_client_disables_irrelevant_private_currency_fetch(monkeypatch, tmp_path):
+    """有 API key 时 load_markets 也不能请求 SAPI 钱包币种端点；回测只需 futures markets。"""
+    import ccxt
+    from gridtrade.backtest.backtest_run import _binance_datasource_1h
+    from gridtrade.backtest.cache import ParquetCache
+
+    captured = {}
+
+    class FakeClient:
+        def __init__(self, config):
+            captured.update(config)
+
+    monkeypatch.setattr(ccxt, 'binanceusdm', FakeClient)
+    _binance_datasource_1h(ParquetCache(str(tmp_path)))
+    assert captured['options']['fetchCurrencies'] is False
+    assert captured['trust_env'] is True
+
+
+def test_exclude_non_coin_uses_adapter_read_retry():
+    """exchangeInfo 是必要公共接口，瞬时超时须经预热适配器重试而非直接穿透。"""
+    from gridtrade.backtest.backtest_run import exclude_non_coin
+    from gridtrade.exchanges.binance import BinanceAdapter
+
+    class Client:
+        markets = {'BTC/USDT:USDT': {
+            'symbol': 'BTC/USDT:USDT', 'swap': True, 'settle': 'USDT',
+            'info': {'underlyingType': 'COIN'}}}
+
+        def load_markets(self):
+            raise AssertionError('必须由 retry_read 桩代执行')
+
+    adapter = BinanceAdapter(Client())
+    called = []
+    adapter.retry_read = lambda fn: called.append(fn) or Client.markets
+    kept, removed = exclude_non_coin({'BTC/USDT:USDT'}, adapter)
+    assert called == [adapter.client.load_markets]
+    assert kept == ['BTC/USDT:USDT'] and removed == 0
+
+
+def test_resolve_bt_universe_retries_leverage_tiers():
+    """杠杆档位是紧随 exchangeInfo 的必要只读接口，也必须复用相同退避。"""
+    from gridtrade.backtest.backtest_run import resolve_bt_universe
+    adapter = _uni_adapter()
+    calls = []
+
+    def retry_read(fn):
+        calls.append(fn.__name__)
+        return fn()
+
+    adapter.retry_read = retry_read
+    resolve_bt_universe(adapter, (), archive_symbols=['AAA/USDT:USDT'], min_lev=10,
+                        log=lambda *a: None)
+    assert calls == ['load_markets', 'fetch_leverage_tiers']
+
+
 def test_exclude_non_coin_drops_tradfi_keeps_delisted_coin():
     from gridtrade.backtest.backtest_run import exclude_non_coin
     from gridtrade.exchanges.binance import BinanceAdapter

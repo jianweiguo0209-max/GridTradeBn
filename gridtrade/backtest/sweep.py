@@ -186,8 +186,23 @@ def preload_window(cache, universe, name, start, end, *, workers=1, log=print):
                       n_blocked=len(blocked), n_symbols=len(syms))
 
 
-def _pv_key(p):
-    return (p['pv_mult'], p['pv_n'], p['pv_period'])
+def _pv_key(p, wd):
+    """PV 缓存键必须同时绑定窗口数据身份。
+
+    旧键只有(mult,n,period)，跨窗共用 dict 时 W1 的短 pv_list 会被 IS 复用，随后按
+    IS 的更长 wd.raw 索引触发 IndexError。不能只用 id(wd)：对象释放后 id 可被复用；
+    用窗口边界、长度和首尾格身份形成稳定轻量指纹，同一 wd 的多参数臂仍可复用。
+    """
+    def edge(item):
+        if item is None:
+            return None
+        rt, off, row = item[0], item[1], item[2]
+        return (str(pd.Timestamp(rt)), int(off), str(row['symbol']))
+    first = wd.raw[0] if wd.raw else None
+    last = wd.raw[-1] if wd.raw else None
+    window_key = (str(wd.name), str(pd.Timestamp(wd.start)), str(pd.Timestamp(wd.end)),
+                  len(wd.raw), edge(first), edge(last))
+    return window_key + (p['pv_mult'], p['pv_n'], p['pv_period'])
 
 
 _MKT_R15 = None      # 市场中位15m收益指数(懒加载;scripts/build_market_r15.py 预构建)
@@ -246,8 +261,8 @@ def tasks_for(wd, params, pv_cache):
     v2 = dict(_V2, atr_range_multiplier=params['band'],
               grid_count_min=params['count_min'], grid_spacing_max=params['spacing_max'],
               stop_buffer_ratio=params.get('stop_buffer', _V2['stop_buffer_ratio']))
-    key = _pv_key(params)
-    if key not in pv_cache:
+    key = _pv_key(params, wd)
+    if key not in pv_cache or len(pv_cache[key]) != len(wd.raw):
         pv_cfg = {'mult': params['pv_mult'], 'n': params['pv_n'], 'period': params['pv_period']}
         pv_cache[key] = [pv_spike_for_window(series, bars, pv_cfg)
                          for _rt, _off, _row, bars, _fd, series in wd.raw]

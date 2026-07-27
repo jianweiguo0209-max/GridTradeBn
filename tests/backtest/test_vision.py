@@ -141,6 +141,34 @@ def test_list_archive_symbols_paginates_and_filters():
     assert syms == ['BTC/USDT:USDT', 'ETH/USDT:USDT']   # USDC 目录被 quote 过滤
 
 
+def test_list_archive_symbols_falls_back_to_local_full_snapshot(monkeypatch, tmp_path,
+                                                               capsys):
+    """S3 列举不可达时复用既有 1h 全量清单；不能退化成当前活跃市场幸存者票池。"""
+    from gridtrade.backtest import vision as V
+    from gridtrade.backtest.cache import ParquetCache
+    cache = ParquetCache(str(tmp_path))
+    cols = ['candle_begin_time', 'symbol']
+    cache.write_empty('1h', 'BTC/USDT:USDT', '2025-01-01', cols)
+    cache.write_empty('1h', 'DELISTED/USDT:USDT', '2025-01-01', cols)
+    cache.write_empty('1h', 'BTC/USDC:USDC', '2025-01-01', cols)
+    monkeypatch.setattr(V, 'default_cache_root', lambda: str(tmp_path))
+    monkeypatch.setattr(V, '_default_session', lambda: _FakeSession({}))
+
+    assert V.list_archive_symbols() == [
+        'BTC/USDT:USDT', 'DELISTED/USDT:USDT']
+    assert '本地 1h 全量归档清单快照 (2 合约' in capsys.readouterr().out
+
+
+def test_list_archive_symbols_still_fails_when_remote_and_local_are_empty(monkeypatch,
+                                                                         tmp_path):
+    import pytest
+    from gridtrade.backtest import vision as V
+    monkeypatch.setattr(V, 'default_cache_root', lambda: str(tmp_path))
+    monkeypatch.setattr(V, '_default_session', lambda: _FakeSession({}))
+    with pytest.raises(RuntimeError, match='目录列举失败'):
+        V.list_archive_symbols()
+
+
 MONTHS_XML = """<?xml version="1.0" encoding="UTF-8"?>
 <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
 <IsTruncated>false</IsTruncated>
