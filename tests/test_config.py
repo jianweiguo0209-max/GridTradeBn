@@ -128,18 +128,15 @@ def test_strategy_defaults_mirror_legacy():
     assert DEFAULT_STRATEGY_CONFIG['price_limit'] == [0.25, 0.25]
     assert DEFAULT_STRATEGY_CONFIG['stop_limit'] == 0.01
     assert DEFAULT_STRATEGY_CONFIG['grid_v2_config']['grid_count_max'] == 149
-    # 2026-07-22 s030 冠军配置(geo_final 战役:诚实引擎六窗对锚Σ+7.1pp、双留出全过;
-    # 详 config 注释与 memory grid-fitness-score-research)。联动五值,非单改。
-    assert DEFAULT_STRATEGY_CONFIG['grid_v2_config']['atr_range_multiplier'] == 3
-    assert DEFAULT_STRATEGY_CONFIG['grid_v2_config']['grid_count_min'] == 16
-    # 2026-07-27 S2G0(用户令,违反裁决结论的部署决定——处女双窗 0/4,记档 prereg §9/§10):
-    # stop0.025+mult5+funding0.003 三值联动,pv_thr/trailing 保持 s030 不动。
-    assert DEFAULT_STOP_CFG['stop_loss'] == 0.025     # S2G0:pv 开火减半后固损接管的内点
+    # 2026-07-28 策略切换后的部署默认：rank + band5/cmin10 + stop2%/pv+0.5%×3。
+    assert DEFAULT_STRATEGY_CONFIG['grid_v2_config']['atr_range_multiplier'] == 5
+    assert DEFAULT_STRATEGY_CONFIG['grid_v2_config']['grid_count_min'] == 10
+    assert DEFAULT_STOP_CFG['stop_loss'] == 0.02
     assert DEFAULT_STOP_CFG['trailing_k'] == 0.3      # 连续回撤止盈保留(全关每窗非最优)
     assert DEFAULT_STOP_CFG['trailing_floor'] == 0.02  # 锁盈门槛 2%,治锁小利没收燃料溢价
     assert DEFAULT_STOP_CFG['fundingRate_stop_loss'] == 0.003   # S2G0 联动值(已知小额负贡献)
-    assert DEFAULT_STOP_CFG['pv_pnl_thr'] == -0.01    # 亏≥1%才认尖峰(+0.005 磨涨窗系统性自伤)
-    assert DEFAULT_STOP_CFG['pv_mult'] == 5           # S2G0 主刀:尖峰门槛 3→5
+    assert DEFAULT_STOP_CFG['pv_pnl_thr'] == 0.005
+    assert DEFAULT_STOP_CFG['pv_mult'] == 3
     assert DEFAULT_STOP_CFG['pv_n'] == 100            # 量能基线 25h 真滚动窗(n 扫描甜点档)
     assert DEFAULT_STOP_CFG['pv_period'] == '15min'   # 非 '15m'（pandas 会当成月）
 
@@ -317,9 +314,9 @@ def test_snapshot_ttl_env_parsing_and_defaults():
 def test_selection_ranker_and_tick_knobs():
     from gridtrade.config import load_deploy_config
     c = load_deploy_config(env={'EXCHANGE': 'fake'})
-    # 默认 eff1(2026-07-27 用户令写死);回退档 rank 仍可经 secret 取到,故两向都钉。
-    assert c.selection_ranker == 'eff1'
-    assert c.selection_min_ticks == 3.0          # tick 过滤默认开(eff1 回测有效性前提)
+    # 2026-07-28 策略切换：部署默认回退到 rank；tick 仍可显式开启。
+    assert c.selection_ranker == 'rank'
+    assert c.selection_min_ticks == 3.0
     assert c.label_fetch_pace_ms == 300.0
     c2 = load_deploy_config(env={'EXCHANGE': 'fake', 'SELECTION_RANKER': 'rank',
                                  'SELECTION_MIN_TICKS': '0', 'LABEL_FETCH_PACE_MS': '500'})

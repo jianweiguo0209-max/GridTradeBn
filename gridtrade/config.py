@@ -185,7 +185,8 @@ def load_deploy_config(env=None) -> DeployConfig:
     # 默认 'eff1'（2026-07-27 用户令「prod 实盘用 eff1 选币，在代码里写死」）——testnet 全项
     # 验收通过(274币标签/tick过滤/真开格/权重峰值 438 of 2400/零429)后写死，不再依赖 secret。
     # 回退仍是一条命令：`fly secrets set SELECTION_RANKER=rank`（无需回代码）。
-    _sr = _s(env, 'SELECTION_RANKER', 'eff1')
+    # 默认跟随 DeployConfig 的部署态；2026-07-28 策略切换后回退到 rank。
+    _sr = _s(env, 'SELECTION_RANKER', DeployConfig.__dataclass_fields__['selection_ranker'].default)
     if _sr not in ('rank', 'eff1'):
         raise RuntimeError('SELECTION_RANKER=%s 无效：须为 "rank" 或 "eff1"' % _sr)
     return DeployConfig(

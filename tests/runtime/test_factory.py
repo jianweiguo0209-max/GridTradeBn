@@ -67,13 +67,12 @@ def test_build_runtime_rank_ranker_has_no_label_feed():
     assert rt.label_feed is None
 
 
-def test_build_runtime_default_ranker_is_eff1_and_wires_label_feed():
-    # 默认档（不传 SELECTION_RANKER）= eff1 ⇒ 必须装出 LabelFeed。钉死默认值本身。
+def test_build_runtime_default_ranker_is_rank_without_label_feed():
+    # 2026-07-28 策略切换：默认档回到 rank；eff1 仍由显式配置测试覆盖。
     from gridtrade.runtime.factory import build_runtime
-    from gridtrade.runtime.label_feed import LabelFeed
     rt = build_runtime(_cfg())
-    assert rt.config.selection_ranker == 'eff1'
-    assert isinstance(rt.label_feed, LabelFeed)
+    assert rt.config.selection_ranker == 'rank'
+    assert rt.label_feed is None
 
 
 def test_build_runtime_eff1_ranker_wires_label_feed_and_p12_trigger():

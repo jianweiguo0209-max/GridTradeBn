@@ -52,6 +52,10 @@ def main(argv=None):
                          '不同基线下同名臂含义不同，混写会串味')
     args = ap.parse_args(argv)
 
+    # 仅真正启动参数扫描时执行锚点保护；不能放在 sweep 模块 import 顶层，
+    # 否则部署 pytest 会因用户切换策略而在 collection 阶段整体失败。
+    SW.assert_sweep_anchor()
+
     families = SW.FAMILIES if args.family == 'all' else tuple(
         f.strip() for f in args.family.split(',') if f.strip())
     for f in families:

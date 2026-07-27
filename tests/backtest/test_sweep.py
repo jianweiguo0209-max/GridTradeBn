@@ -125,7 +125,7 @@ def test_geometry_arm_changes_grid_params():
     wd = _fake_wd(1)
     pv_cache = {}
     base_task = SW.tasks_for(wd, SW.baseline(), pv_cache)[0]
-    wide_task = SW.tasks_for(wd, dict(SW.baseline(), band=5), pv_cache)[0]
+    wide_task = SW.tasks_for(wd, dict(SW.baseline(), band=6), pv_cache)[0]
     base_gp, wide_gp = base_task[4], wide_task[4]
     assert wide_gp['high_price'] > base_gp['high_price'], '带宽↑ → 网格区间应变宽'
     assert wide_gp['low_price'] < base_gp['low_price']
@@ -194,16 +194,13 @@ def test_parse_coord_roundtrips_every_arm_label(family):
 
 
 def test_expand_extends_below_when_winner_at_lower_edge():
-    """stop 赢家在下界 0.025 → 沿下方外推（步长=最外两点间距 0.005）。
-
-    2026-07-27 S2G0 上线后 BASE(现值)=0.025:赢家须与 BASE 同座标才真在网格下界
-    (原 fixture 赢家 0.030 会因 BASE 0.025 在其下方而被判内部——判定是对的,fixture 得跟着现值走)。"""
-    df = _res('stop', [('BASE(现值)', 20.0, 0.05), ('sl=0.025', 41.8, 0.067),
-                       ('sl=0.030', 39.6, 0.070), ('sl=0.035', 27.7, 0.060),
+    """stop 赢家在当前部署下界 0.02 → 沿下方外推（步长=最外两点间距 0.005）。"""
+    df = _res('stop', [('BASE(现值)', 20.0, 0.05), ('sl=0.020', 41.8, 0.067),
+                       ('sl=0.025', 39.6, 0.070), ('sl=0.030', 27.7, 0.060),
                        ('sl=0.050', 21.2, 0.050), ('sl=0.080', 11.1, 0.033)])
     arms, note = SW.expand_arms('stop', df, n_new=3)
     got = sorted(round(a.overrides['stop_loss'], 4) for a in arms)
-    assert got == [0.010, 0.015, 0.020], got
+    assert got == [0.005, 0.010, 0.015], got
     assert '下界' in note
 
 
