@@ -312,3 +312,22 @@ def test_snapshot_ttl_env_parsing_and_defaults():
     cfg2 = load_deploy_config(env={})
     assert cfg2.snapshot_income_ttl_sec == 300.0
     assert cfg2.snapshot_algo_book_ttl_sec == 60.0
+
+
+def test_selection_ranker_and_tick_knobs():
+    from gridtrade.config import load_deploy_config
+    c = load_deploy_config(env={'EXCHANGE': 'fake'})
+    assert c.selection_ranker == 'rank'          # 默认生产 rank(eff1 须显式开)
+    assert c.selection_min_ticks == 3.0          # tick 过滤默认开(rank 人群空转保险)
+    assert c.label_fetch_pace_ms == 300.0
+    c2 = load_deploy_config(env={'EXCHANGE': 'fake', 'SELECTION_RANKER': 'eff1',
+                                 'SELECTION_MIN_TICKS': '0', 'LABEL_FETCH_PACE_MS': '500'})
+    assert (c2.selection_ranker, c2.selection_min_ticks, c2.label_fetch_pace_ms) \
+        == ('eff1', 0.0, 500.0)
+
+
+def test_selection_ranker_invalid_value_raises():
+    import pytest
+    from gridtrade.config import load_deploy_config
+    with pytest.raises(RuntimeError, match="SELECTION_RANKER"):
+        load_deploy_config({'SELECTION_RANKER': 'foo'})

@@ -98,6 +98,9 @@ class DeployConfig:
     fuse_min_coverage: float = 1.0  # 保险丝覆盖率门槛（spec 2026-07-15）：<该值即降 cap 护全额；0=停用（仅审计）。合法区间 (0, 1.0]——>1 无意义（覆盖率>1 只是余量，护栏已 clamp 成只降不升）
     min_order_notional: float = 0.0     # >0 → 开仓预检单笔名义额下限（币安按币 5/20/50，与 Instrument.min_cost 取 max）；0=停用
     scheduler_fetch_pace_ms: float = 250.0    # 选币取数币间间隔（币安权重实测重校，见 scheduler.py）；0=关
+    selection_ranker: str = 'rank'      # 选币排名器：'rank'（生产默认）或 'eff1'（显式开启）
+    selection_min_ticks: float = 3.0    # 最小 tick 档过滤（>0 启用；0=关）
+    label_fetch_pace_ms: float = 300.0  # label 取数节流（ms）；0=关
     monitor_parallel: int = 4           # monitor per-grid 并行 worker 数；1=退回全串行（保底开关）
     monitor_unit_warn_sec: float = 30.0  # 单网格监控单元耗时告警阈值（病态格日志指名道姓）
     signal_refresh_sec: float = 60.0    # pv/funding 每格复算节流(s);默认60=每分钟(对齐回测逐1m);900=旧节奏
@@ -177,6 +180,10 @@ def load_deploy_config(env=None) -> DeployConfig:
     _mgk = _f(env, 'MARGIN_GATE_K', 1.25)
     if _mgk < 1.0:
         raise RuntimeError('MARGIN_GATE_K=%s 无效：余量系数须 ≥1（=1 即零余量贴边）' % _mgk)
+    # 选币排名器校验（spec Task 5）：只接受 'rank' 或 'eff1'，其他值响亮报错。
+    _sr = _s(env, 'SELECTION_RANKER', 'rank')
+    if _sr not in ('rank', 'eff1'):
+        raise RuntimeError('SELECTION_RANKER=%s 无效：须为 "rank" 或 "eff1"' % _sr)
     return DeployConfig(
         exchange=_s(env, 'EXCHANGE', 'binance'),
         api_key=_s(env, 'BINANCE_API_KEY', ''),
@@ -224,6 +231,9 @@ def load_deploy_config(env=None) -> DeployConfig:
         fuse_min_coverage=_fmc,
         min_order_notional=_f(env, 'MIN_ORDER_NOTIONAL', 0.0),
         scheduler_fetch_pace_ms=_f(env, 'SCHEDULER_FETCH_PACE_MS', 250.0),
+        selection_ranker=_sr,
+        selection_min_ticks=_f(env, 'SELECTION_MIN_TICKS', 3.0),
+        label_fetch_pace_ms=_f(env, 'LABEL_FETCH_PACE_MS', 300.0),
         monitor_parallel=_i(env, 'MONITOR_PARALLEL', 4),
         monitor_unit_warn_sec=_f(env, 'MONITOR_UNIT_WARN_SEC', 30.0),
         shock_thr=_f(env, 'SHOCK_THR', 0.025),
