@@ -185,6 +185,35 @@ class CcxtAdapter(ExchangeAdapter):
             self._maxlev_cache = cache
         return cache
 
+    def fetch_tick_sizes(self) -> dict:
+        """{统一symbol: tickSize} —— 读 ccxt 缓存 markets(零 REST 权重)。
+
+        选币 tick 过滤用(core.tick_fit);解析不出的币不入表 ⇒ 下游 fail-open 保留。
+        优先 info.filters PRICE_FILTER.tickSize(币安权威),缺则回退 precision.price
+        (ccxt binanceusdm 为 TICK_SIZE 模式,该值即 tick)。键用 to_canonical(现行统一
+        映射,与 list_instruments/fetch_24h_quote_volumes 同一口径)。"""
+        self.client.load_markets()
+        out = {}
+        for m in self.client.markets.values():
+            if not m.get('swap') or m.get('quote') != 'USDT':
+                continue
+            tick = None
+            for f in ((m.get('info') or {}).get('filters') or []):
+                if f.get('filterType') == 'PRICE_FILTER':
+                    try:
+                        tick = float(f.get('tickSize') or 0) or None
+                    except (TypeError, ValueError):
+                        tick = None
+            if tick is None:
+                p = (m.get('precision') or {}).get('price')
+                try:
+                    tick = float(p) if p else None
+                except (TypeError, ValueError):
+                    tick = None
+            if tick:
+                out[self.to_canonical(m['symbol'])] = tick
+        return out
+
     def fetch_leverage_tiers(self, symbol: str) -> list:
         """自 ccxt fetch_leverage_tiers([symbol]) 归一化为 [{'maxLeverage':int,'maxNotional':float}]；
         按币实例缓存（档位表稳定）；取数/归一化任何异常 → []（fail-open，调用方不设杠杆）。"""

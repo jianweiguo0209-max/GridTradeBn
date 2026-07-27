@@ -349,3 +349,34 @@ def test_fetch_bid_ask_falls_back_to_last_when_book_empty():
     c = FakeCcxtClient()
     c.fetch_order_book = lambda sym, limit=5: {'bids': [], 'asks': []}
     assert CcxtAdapter(c, name='x').fetch_bid_ask('BTC/USDT:USDT') == (2.0, 2.0)
+
+
+def test_fetch_tick_sizes_price_filter_precedence_and_skip_bad():
+    # 选币 tick 过滤(core.tick_fit)用：PRICE_FILTER.tickSize 优先(币安权威)，缺则回退
+    # precision.price(ccxt binanceusdm TICK_SIZE 模式)；双缺 ⇒ 不入表(下游 fail-open 保留该币)。
+    # 键用现行统一 canonical——ccxt 原生 symbol 本身即 canonical(CcxtAdapter.to_canonical 恒等
+    # 映射，BinanceAdapter 未覆写；见 config.py tier0 黑名单 'BTC/USDT:USDT' 与
+    # test_fetch_24h_quote_volumes_maps_quotevolume 同一口径)，不是 'BTC/USDT'。
+    from gridtrade.exchanges.ccxt_adapter import CcxtAdapter
+
+    class _TickClient:
+        markets = {
+            'BTC/USDT:USDT': {'symbol': 'BTC/USDT:USDT', 'swap': True, 'quote': 'USDT',
+                              'info': {'filters': [{'filterType': 'PRICE_FILTER',
+                                                    'tickSize': '0.10'}]},
+                              'precision': {'price': 0.1}},
+            'ETH/USDT:USDT': {'symbol': 'ETH/USDT:USDT', 'swap': True, 'quote': 'USDT',
+                              'info': {}, 'precision': {'price': 0.01}},   # 无 filters ⇒ 回退 precision
+            'XYZ/USDT:USDT': {'symbol': 'XYZ/USDT:USDT', 'swap': True, 'quote': 'USDT',
+                              'info': {}, 'precision': {}},   # 双缺 ⇒ 不入表
+        }
+        def load_markets(self):
+            return self.markets
+
+    a = CcxtAdapter(_TickClient(), name='x')
+    out = a.fetch_tick_sizes()
+    assert out == {'BTC/USDT:USDT': 0.10, 'ETH/USDT:USDT': 0.01}
+    assert 'XYZ/USDT:USDT' not in out
+    # Task3 评审的下游硬要求：spacing<min_ticks*tick 比较在 try/except 外，Decimal/字符串
+    # tick 会直接崩掉选币轮——必须是纯 float。
+    assert all(type(v) is float for v in out.values())
