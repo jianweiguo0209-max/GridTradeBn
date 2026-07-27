@@ -113,6 +113,11 @@ def build_runtime(config) -> Runtime:
     # tick 过滤在实盘形同虚设。直接读 inner：Fake/HL 遗留没有此方法 → None（过滤
     # 自动关，fail-open）；ccxt 有 → 命中真实实现（本地缓存 markets，零 REST 权重，
     # 不需要重试/熔断，同 quantize_amount/assert_account_mode 的旁路先例）。
+    # ⚠ "零权重"这句话是有前提的：它依赖 scheduler 每轮先跑 resolve_live_universe→
+    # list_instruments()，把 ccxt markets 缓存暖好，fetch_tick_sizes 内部的
+    # load_markets() 才真正是缓存命中、零网络往返。若调度顺序被重排，或未来有人
+    # 绕开 scheduler 独立驱动 select_fn/_tick_fn（脱离本轮 universe 解析先跑一步的
+    # 前提），这个"零权重"假设不成立，第一次调用可能触发真实 load_markets() 网络请求。
     _tick_fn = getattr(inner, 'fetch_tick_sizes', None)
     if getattr(config, 'selection_ranker', 'rank') == 'eff1':
         from gridtrade.runtime.label_feed import LabelFeed

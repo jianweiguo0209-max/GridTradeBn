@@ -76,6 +76,29 @@ def test_build_runtime_eff1_ranker_wires_label_feed_and_p12_trigger():
     assert trigger.factors == ('p12_eff', 'p12_cross1', 'p12_mae')
 
 
+def test_build_runtime_tick_fn_sourced_from_inner_not_resilient_wrapper():
+    # 回归锁("包装器无此方法而 inner 有"这对事实):ResilientAdapter 逐方法显式转发、
+    # 无 __getattr__,fetch_tick_sizes 未在转发表里——若 factory 把 _tick_fn 改回读
+    # getattr(adapter, 'fetch_tick_sizes', None)(adapter=Resilient 包装后的实例),
+    # 生产 ccxt 也会拿到 None,tick 过滤在实盘静默熄灭。
+    #
+    # 光断言这对环境事实还不够:两条 assert 本身跟 factory 到底从哪个对象取 _tick_fn
+    # 无关(两个对象的能力差异是恒成立的独立事实,mutation 测试证实过——把 factory.py
+    # 的 getattr(inner, ...) 改回 getattr(adapter, ...),这两条照样绿)。真正锁回归的
+    # 是下面用 inspect.getclosurevars 探 select_fn 闭包里 tick_map_fn 实际绑的是谁:
+    # 若 factory 改回读 adapter,这里会变 None,断言炸。
+    import inspect
+    from gridtrade.runtime.factory import build_runtime
+    rt = build_runtime(_cfg(EXCHANGE='binance', BINANCE_API_KEY='k',
+                            BINANCE_API_SECRET='s'))
+    assert getattr(rt.adapter, 'fetch_tick_sizes', None) is None       # 锁 ResilientAdapter 缺口
+    assert getattr(rt.adapter._inner, 'fetch_tick_sizes', None) is not None
+    select_fn = rt.trigger_engine.triggers[0].select_fn
+    tick_map_fn = inspect.getclosurevars(select_fn).nonlocals.get('tick_map_fn')
+    assert tick_map_fn is not None                          # 锁实际生效的 wiring
+    assert tick_map_fn == rt.adapter._inner.fetch_tick_sizes
+
+
 def test_build_runtime_threads_quote_currency_override():
     from gridtrade.runtime.factory import build_runtime
     rt = build_runtime(_cfg(EXCHANGE='binance', BINANCE_API_KEY='k',
