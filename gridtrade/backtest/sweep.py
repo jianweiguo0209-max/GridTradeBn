@@ -37,14 +37,15 @@ _STOP = _S['stop_loss_config']
 _V2 = _S['grid_v2_config']
 
 # 断言钉死现值：config 一改本模块立刻炸（spec §6 防口径漂移）。
-# 2026-07-22 s030 冠军配置(geo_final 战役,诚实引擎六窗Σ+7.1pp+双留出全过)——
-# band 2→3、cmin 10→16、stop 0.045→0.03、trailing_floor 0.00618→0.02、pv_thr +0.005→−0.01。
-# ⚠今后战役的锚=此配置;旧锚(2026-07-19 现值)存档见 data/score_research_2026-07-21/。
-assert abs(_STOP['stop_loss'] - 0.03) < 1e-12, 'stop_loss 现值漂移，扫参网格须同步复核'
+# 2026-07-27 S2G0(用户令部署,链轴束搜索终局;⚠处女双窗裁决 0/4 未过,系违反裁决结论的
+# 部署决定,记档 spec 2026-07-27-chain-beam-prereg §9/§10)——
+# stop 0.03→0.025、pv_mult 3→5、funding 0.0015→0.003;pv_thr/trailing 保持 s030。
+# ⚠今后战役的锚=此配置;s030 锚九窗读数存档 data/score_research_2026-07-21/(eff1_s*_results)。
+assert abs(_STOP['stop_loss'] - 0.025) < 1e-12, 'stop_loss 现值漂移，扫参网格须同步复核'
 assert abs(_STOP['trailing_k'] - 0.3) < 1e-12 and abs(_STOP['trailing_floor'] - 0.02) < 1e-12, \
     'trailing 应为开(0.3/0.02)'
-assert abs(_STOP['fundingRate_stop_loss'] - 0.0015) < 1e-12
-assert abs(_STOP['pv_pnl_thr'] + 0.01) < 1e-12 and _STOP['pv_mult'] == 3 and _STOP['pv_n'] == 100
+assert abs(_STOP['fundingRate_stop_loss'] - 0.003) < 1e-12
+assert abs(_STOP['pv_pnl_thr'] + 0.01) < 1e-12 and _STOP['pv_mult'] == 5 and _STOP['pv_n'] == 100
 assert _V2['atr_range_multiplier'] == 3 and abs(_V2['grid_spacing_max'] - 0.04) < 1e-12
 assert _V2['grid_count_min'] == 16 and _S['leverage'] == 5
 
@@ -185,8 +186,23 @@ def preload_window(cache, universe, name, start, end, *, workers=1, log=print):
                       n_blocked=len(blocked), n_symbols=len(syms))
 
 
-def _pv_key(p):
-    return (p['pv_mult'], p['pv_n'], p['pv_period'])
+def _pv_key(p, wd):
+    """PV 缓存键必须同时绑定窗口数据身份。
+
+    旧键只有(mult,n,period)，跨窗共用 dict 时 W1 的短 pv_list 会被 IS 复用，随后按
+    IS 的更长 wd.raw 索引触发 IndexError。不能只用 id(wd)：对象释放后 id 可被复用；
+    用窗口边界、长度和首尾格身份形成稳定轻量指纹，同一 wd 的多参数臂仍可复用。
+    """
+    def edge(item):
+        if item is None:
+            return None
+        rt, off, row = item[0], item[1], item[2]
+        return (str(pd.Timestamp(rt)), int(off), str(row['symbol']))
+    first = wd.raw[0] if wd.raw else None
+    last = wd.raw[-1] if wd.raw else None
+    window_key = (str(wd.name), str(pd.Timestamp(wd.start)), str(pd.Timestamp(wd.end)),
+                  len(wd.raw), edge(first), edge(last))
+    return window_key + (p['pv_mult'], p['pv_n'], p['pv_period'])
 
 
 _MKT_R15 = None      # 市场中位15m收益指数(懒加载;scripts/build_market_r15.py 预构建)
@@ -245,8 +261,8 @@ def tasks_for(wd, params, pv_cache):
     v2 = dict(_V2, atr_range_multiplier=params['band'],
               grid_count_min=params['count_min'], grid_spacing_max=params['spacing_max'],
               stop_buffer_ratio=params.get('stop_buffer', _V2['stop_buffer_ratio']))
-    key = _pv_key(params)
-    if key not in pv_cache:
+    key = _pv_key(params, wd)
+    if key not in pv_cache or len(pv_cache[key]) != len(wd.raw):
         pv_cfg = {'mult': params['pv_mult'], 'n': params['pv_n'], 'period': params['pv_period']}
         pv_cache[key] = [pv_spike_for_window(series, bars, pv_cfg)
                          for _rt, _off, _row, bars, _fd, series in wd.raw]
@@ -269,8 +285,11 @@ def tasks_for(wd, params, pv_cache):
     return tasks
 
 
-def run_arm(wd, arm, pv_cache, *, workers=1):
-    """跑一个臂 → 明细 DataFrame。"""
+def run_arm(wd, arm, pv_cache, *, workers=1, tick_by_sym=None, tick_mode='stack'):
+    """跑一个臂 → 明细 DataFrame。
+
+    tick_by_sym: {symbol: tickSize} —— 按该币最小报价单位量化网格线并合并同价线。
+    默认 None ⇒ 关闭 ⇒ 与历史逐位一致。见 grid_engine.grid_order_info docstring。"""
     p = arm.params()
     tasks = tasks_for(wd, p, pv_cache)
     stop_cfg = {'stop_loss': p['stop_loss'], 'trailing_k': p['trailing_k'],
@@ -287,6 +306,7 @@ def run_arm(wd, arm, pv_cache, *, workers=1):
                           max_rate=MAX_RATE, stop_cfg=stop_cfg,
                           active_stop_mode=p['active_stop_mode'], pv_cfg=pv_cfg,
                           workers=workers,
+                          tick_by_sym=tick_by_sym, tick_mode=tick_mode,
                           pv_idio_thr=(p['pv_idio_thr']
                                        if (float(p.get('pv_idio_drop') or 0.0) > 0
                                            or float(p.get('pv_idio_k') or 0.0) > 0)

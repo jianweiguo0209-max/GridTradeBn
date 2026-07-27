@@ -1,4 +1,7 @@
-"""select_cache 断点续跑:按天 checkpoint,杀了从已完成的轮接着跑,续跑结果与整跑 diff==0。"""
+"""select_cache 断点续跑:按天 checkpoint,杀了从已完成的轮接着跑,续跑结果与整跑 diff==0。
+⚠ 显式 ranker='rank':本文件测断点续跑机制,合成 cache 只有 1h,
+默认 eff1(2026-07-27 起跟随实盘)需 1m 归档 ⇒ 不显式传会选不出币、变成真空通过。
+"""
 import pandas as pd
 
 from tests.backtest.test_selection_replay import _seed_cache, STRAT, FACTORS
@@ -30,7 +33,8 @@ def test_select_grids_resume_matches_full(tmp_path, monkeypatch):
     cache = _seed_cache(tmp_path, syms)
     ws, we = '2024-01-09', '2024-01-11'
 
-    full = select_grids(cache, syms, ws, we, STRAT, FACTORS, top_volume_pct=0.0)
+    full = select_grids(cache, syms, ws, we, STRAT, FACTORS, top_volume_pct=0.0,
+        ranker='rank', min_ticks=0.0)
 
     # 模拟"跑到一半被杀":删掉整窗成品,手写一个覆盖前半轮的 checkpoint
     key, params = SC.compute_key(cache, syms, ws, we, '1h', 0.0, (), STRAT, FACTORS,
@@ -51,7 +55,8 @@ def test_select_grids_resume_matches_full(tmp_path, monkeypatch):
         seen['n'] = len(list(run_times)); return real(cache_, universe, run_times, *a, **k)
 
     monkeypatch.setattr(BR.SR, 'replay_selection', spy)
-    resumed = select_grids(cache, syms, ws, we, STRAT, FACTORS, top_volume_pct=0.0)
+    resumed = select_grids(cache, syms, ws, we, STRAT, FACTORS, top_volume_pct=0.0,
+        ranker='rank', min_ticks=0.0)
 
     assert seen['n'] == len(rts) - len(done_half), '续跑该只算未完成的轮'
     key_of = lambda g: (str(g[0]), g[1], g[2]['symbol'], round(float(g[2]['close']), 8))
@@ -66,7 +71,8 @@ def test_crash_midrun_then_resume_completes(tmp_path, monkeypatch):
     syms = ['AAA/USDT:USDT', 'BBB/USDT:USDT', 'CCC/USDT:USDT']
     cache = _seed_cache(tmp_path, syms)
     ws, we = '2024-01-09', '2024-01-11'
-    full = select_grids(cache, syms, ws, we, STRAT, FACTORS, top_volume_pct=0.0)
+    full = select_grids(cache, syms, ws, we, STRAT, FACTORS, top_volume_pct=0.0,
+        ranker='rank', min_ticks=0.0)
     key, params = SC.compute_key(cache, syms, ws, we, '1h', 0.0, (), STRAT, FACTORS,
                                  top_volume_pct=0.0)
     SC.clear_final(cache, key)
@@ -83,7 +89,8 @@ def test_crash_midrun_then_resume_completes(tmp_path, monkeypatch):
 
     monkeypatch.setattr(BR.SR, 'build_pit_candidates', faulty)
     try:
-        select_grids(cache, syms, ws, we, STRAT, FACTORS, top_volume_pct=0.0)
+        select_grids(cache, syms, ws, we, STRAT, FACTORS, top_volume_pct=0.0,
+        ranker='rank', min_ticks=0.0)
         assert False, '本应崩溃'
     except RuntimeError:
         pass
@@ -91,7 +98,8 @@ def test_crash_midrun_then_resume_completes(tmp_path, monkeypatch):
     assert ck is not None and len(ck['done']) == 4     # flush 落在 rt2/rt4
 
     monkeypatch.setattr(BR.SR, 'build_pit_candidates', real_bpc)   # 修复后重跑
-    resumed = select_grids(cache, syms, ws, we, STRAT, FACTORS, top_volume_pct=0.0)
+    resumed = select_grids(cache, syms, ws, we, STRAT, FACTORS, top_volume_pct=0.0,
+        ranker='rank', min_ticks=0.0)
     key_of = lambda g: (str(g[0]), g[1], g[2]['symbol'], round(float(g[2]['close']), 8))
     assert sorted(map(key_of, resumed)) == sorted(map(key_of, full))
     assert SC.load_checkpoint(cache, key, params) is None          # 跑完清掉
@@ -103,7 +111,8 @@ def test_select_grids_clears_checkpoint_on_complete(tmp_path):
     syms = ['AAA/USDT:USDT', 'BBB/USDT:USDT', 'CCC/USDT:USDT']
     cache = _seed_cache(tmp_path, syms)
     ws, we = '2024-01-09', '2024-01-10'
-    select_grids(cache, syms, ws, we, STRAT, FACTORS, top_volume_pct=0.0)
+    select_grids(cache, syms, ws, we, STRAT, FACTORS, top_volume_pct=0.0,
+        ranker='rank', min_ticks=0.0)
     key, params = SC.compute_key(cache, syms, ws, we, '1h', 0.0, (), STRAT, FACTORS,
                                  top_volume_pct=0.0)
     assert SC.load_checkpoint(cache, key, params) is None    # 跑完清 checkpoint

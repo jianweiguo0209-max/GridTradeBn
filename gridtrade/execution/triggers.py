@@ -8,11 +8,13 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Iterable, List, Optional
 
+import numpy as np
 import pandas as pd
 
-from gridtrade.core.grid_params import calc_grid_params_v1, calc_grid_params_v2
+from gridtrade.core.grid_params import GRID_ROW_FACTORS, calc_grid_params_v1, calc_grid_params_v2
 from gridtrade.core.selection import (compute_offset, proceed_calc_symbol_factor,
                                       select_grid_coin)
+from gridtrade.core.tick_fit import filter_tick_fit
 from gridtrade.execution.gates import GridProposal
 
 
@@ -45,7 +47,8 @@ class TriggerEngine:
         return proposals
 
 
-def _default_select_fn(strategy_config, factors, weight_list):
+def _default_select_fn(strategy_config, factors, weight_list, *,
+                       tick_map_fn=None, min_ticks=0.0, log=print):
     period = strategy_config['period']
     choose_symbols = strategy_config['choose_symbols']
 
@@ -54,8 +57,52 @@ def _default_select_fn(strategy_config, factors, weight_list):
                                             period, offset)
         if all_df is None or all_df.empty:
             return all_df
+        if tick_map_fn is not None and min_ticks > 0:
+            # 排名前过滤 ⇒ 名次递补免费获得(与回测 pick_first_allowed 语义等价)
+            all_df, _ = filter_tick_fit(all_df, tick_map_fn(), strategy_config,
+                                        min_ticks, log=log)
+            if all_df.empty:
+                return all_df
         return select_grid_coin(all_df, factors, weight_list, choose_symbols,
                                 run_time)
+
+    return _fn
+
+
+def build_eff1_select_fn(strategy_config, label_feed, *,
+                         tick_map_fn=None, min_ticks=0.0, log=print):
+    """eff1 选币(与回测 eff1_scan.make_picks 同口径):
+    票池 = 布网列有限(**不走** rank_sum filter v1.0/因子 dropna,用户令 2026-07-25);
+    p12_eff 降序、symbol 升序 tiebreak;缺标签不参选(inner merge 同款)。"""
+    period = strategy_config['period']
+    choose_symbols = strategy_config['choose_symbols']
+
+    def _fn(symbol_candle_data, run_time, offset):
+        all_df = proceed_calc_symbol_factor(symbol_candle_data, run_time, period,
+                                            offset, needed=set(GRID_ROW_FACTORS),
+                                            batch=True)
+        if all_df is None or all_df.empty:
+            return all_df
+        all_df = all_df[np.isfinite(all_df['close']) & np.isfinite(all_df['Atr_5'])
+                        & np.isfinite(all_df['middle_5'])]
+        if min_ticks > 0:
+            tick_map = tick_map_fn() if tick_map_fn is not None else None
+            if not tick_map:
+                log('[eff1] WARN tick 表为空,MIN_TICKS=%g 过滤失效——'
+                    'eff1 回测有效性前提被关闭' % min_ticks)
+            else:
+                all_df, _ = filter_tick_fit(all_df, tick_map, strategy_config,
+                                            min_ticks, log=log)
+        lab = label_feed.labels(run_time)
+        if all_df.empty or not lab:
+            log('[eff1] 本轮无候选(候选=%d 标签=%d)' % (len(all_df), len(lab)))
+            return all_df.iloc[0:0]
+        ldf = pd.DataFrame([dict(symbol=s, **v) for s, v in lab.items()])
+        d = all_df.merge(ldf, on='symbol', how='inner')
+        d = d.sort_values(['time', 'p12_eff', 'symbol'],
+                          ascending=[True, False, True])
+        d['rank'] = d.groupby('time', sort=False).cumcount() + 1.0
+        return d[d['rank'] <= choose_symbols]
 
     return _fn
 

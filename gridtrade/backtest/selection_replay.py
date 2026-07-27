@@ -7,11 +7,13 @@ import math
 import os
 import time
 
+import numpy as np
 import pandas as pd
 
 from gridtrade.core.grid_params import GRID_ROW_FACTORS
-from gridtrade.core.selection import (compute_offset, needed_factors,
+from gridtrade.core.selection import (compute_offset, needed_factors, validate_factor_support,
                                       proceed_calc_symbol_factor, select_grid_coin)
+from gridtrade.core.tick_fit import filter_tick_fit
 from gridtrade.exchanges.base import CANDLE_COLS
 
 
@@ -55,16 +57,53 @@ def build_pit_candidates(series, run_time, *, max_candle_num,
     return {s: sub.tail(max_candle_num).copy() for s, (sub, _v) in eligible.items()}
 
 
+def _rank_eff1(all_df, run_time, choose_symbols, labels, strategy_config, min_ticks,
+               tick_map):
+    """eff1 排名 —— 与实盘 `triggers.build_eff1_select_fn` **同口径**(动一边必须同步另一边)。
+
+    ①票池只要布网列有限(不走 rank_sum 的 filter v1.0 / 因子 dropna,用户令 2026-07-25);
+    ②tick 过滤在排名截断**之前**(名次递补免费);
+    ③按 (p12_eff 降序, symbol 升序) 定序取前 choose_symbols —— tiebreak 与回测 make_picks 同。
+    缺标签的币直接不参选(实盘是 inner merge,这里是 map 取不到即跳过)。
+    """
+    d = all_df[np.isfinite(all_df['close']) & np.isfinite(all_df['Atr_5'])
+               & np.isfinite(all_df['middle_5'])]
+    if min_ticks > 0 and tick_map:
+        d, _dropped = filter_tick_fit(d, tick_map, strategy_config, min_ticks, log=None)
+    if d.empty or not labels:
+        return None
+    eff = [labels.get((run_time, s)) for s in d['symbol']]
+    d = d.assign(p12_eff=eff)
+    d = d[d['p12_eff'].notna()]
+    if d.empty:
+        return None
+    d = d.sort_values(['time', 'p12_eff', 'symbol'], ascending=[True, False, True])
+    d = d.assign(rank=d.groupby('time', sort=False).cumcount() + 1.0)
+    return d[d['rank'] <= choose_symbols]
+
+
 def _select_over_run_times(series, run_times, period, weight_list, factors,
                            choose_symbols, max_candle_num, min_quote_volume, blacklist,
-                           top_volume_pct=0.0, on_emit=None, on_rt_done=None):
+                           top_volume_pct=0.0, on_emit=None, on_rt_done=None,
+                           ranker='rank', labels=None, min_ticks=0.0, tick_map=None,
+                           strategy_config=None):
     """逐 run_time 选币的纯循环体（串行/并行共用）。返回 [(run_time, offset, row)]。
     内部 redirect_stdout 抑制 core 选币函数的诊断 print（no data/[警告] 等）。
     on_emit(rt,off,row) 每选中一条即回调（流式，供断点续跑落盘）；on_rt_done(rt) 每轮**处理完**
-    （含无选中的轮）回调一次，标记该轮已完成。默认 None 时行为同旧（仅积累返回）。"""
+    （含无选中的轮）回调一次，标记该轮已完成。默认 None 时行为同旧（仅积累返回）。
+
+    ranker='rank'（rank_sum 加权名次，历史口径逐位不变）或 'eff1'（p12_eff 降序，与实盘
+    SELECTION_RANKER 同名同义）。eff1 需 labels={(rt,symbol): p12_eff}（见 p12_replay）。
+    min_ticks>0 且给了 tick_map 时在排名前做 tick 过滤（与实盘同位置）。"""
     out = []
     # 只算被引用的因子列(选中结果与全算 diff==0):选币读的 ∪ 布网几何读的(Atr_5/middle_5)
-    needed = needed_factors(factors) | set(GRID_ROW_FACTORS)
+    if ranker == 'eff1':
+        # eff1 不读打分因子,只需布网列(与实盘 build_eff1_select_fn 的 needed 一致);
+        # GRID_ROW_FACTORS(Atr_5/middle_5)恒在 BATCH_FACTOR_NAMES 内,不经 validate 也安全。
+        needed = set(GRID_ROW_FACTORS)
+    else:
+        # rank 路径带 fork 的 fail-fast:任一会读的因子缺 batch 实现即启动前报错(非子进程 KeyError)。
+        needed = validate_factor_support(factors, GRID_ROW_FACTORS)
     devnull = open(os.devnull, 'w')
     try:
         for run_time in run_times:
@@ -80,8 +119,13 @@ def _select_over_run_times(series, run_times, period, weight_list, factors,
                                                         offset, needed=needed, batch=True)
                     factor_data = None
                     if all_df is not None and not all_df.empty:
-                        factor_data = select_grid_coin(all_df, factors, weight_list,
-                                                       choose_symbols, run_time)
+                        if ranker == 'eff1':
+                            factor_data = _rank_eff1(all_df, run_time, choose_symbols,
+                                                     labels or {}, strategy_config,
+                                                     min_ticks, tick_map)
+                        else:
+                            factor_data = select_grid_coin(all_df, factors, weight_list,
+                                                           choose_symbols, run_time)
                 if factor_data is not None:
                     factor_data = factor_data[
                         (factor_data['time'] + pd.to_timedelta(period)) >= run_time]
@@ -113,18 +157,30 @@ def _split_contiguous(items, n):
 
 
 def _replay_chunk(payload):
-    """进程池 worker（顶层、可 pickle）：各自从本地缓存载 series 后选自己那段 run_time。"""
+    """进程池 worker（顶层、可 pickle）：各自从本地缓存载 series 后选自己那段 run_time。
+
+    ⚠ payload 尾部是**一个 opts dict**,不是继续加位置项:位置元组每加一项就要在
+    「打包 / 解包 / 调用」三处同步改,漏一处就是静默串位(拿 min_ticks 当 top_volume_pct 用)。
+    新选项一律进 opts,位次永远冻结在前 12 位。
+    """
     (cache, symbols, run_times_chunk, timeframe, period, weight_list, factors,
-     choose_symbols, max_candle_num, min_quote_volume, blacklist, top_volume_pct) = payload
+     choose_symbols, max_candle_num, min_quote_volume, blacklist, top_volume_pct,
+     opts) = payload
     series = load_full_series(cache, symbols, timeframe)
     return _select_over_run_times(series, run_times_chunk, period, weight_list, factors,
                                   choose_symbols, max_candle_num, min_quote_volume, blacklist,
-                                  top_volume_pct=top_volume_pct)
+                                  top_volume_pct=top_volume_pct, **opts)
 
 
 def replay_selection(cache, symbols, run_times, strategy_config, factors, on_select, *,
                      timeframe='1h', min_quote_volume=0.0, top_volume_pct=0.0,
-                     blacklist=(), workers=1, log=print, on_rt_done=None):
+                     blacklist=(), workers=1, log=print, on_rt_done=None,
+                     ranker='rank', min_ticks=0.0, tick_map=None):
+    """ranker='rank'(历史口径)或 'eff1'(与实盘 SELECTION_RANKER 同名同义)。
+
+    eff1 时本函数**自己**按 run_times 从 1m 归档建标签(p12_replay.build_p12_labels),
+    调用方不必预先算——保证任何入口(sweep/backtest_run/研究脚本)拿到的都是同一套标签。
+    """
     period = strategy_config['period']
     weight_list = strategy_config['weight_list']
     choose_symbols = strategy_config['choose_symbols']
@@ -134,12 +190,25 @@ def replay_selection(cache, symbols, run_times, strategy_config, factors, on_sel
         weight_list = [1] * len(factors)
 
     run_times = list(run_times)
+    labels = None
+    if ranker == 'eff1':
+        from gridtrade.backtest.p12_replay import build_p12_labels
+        labels = build_p12_labels(cache, symbols, run_times, log=log)
+        if not labels:
+            log('[SR][WARN] eff1 标签为空 —— 本段无 1m 归档? 该段将选不出任何币')
+    if ranker == 'eff1' and min_ticks > 0 and not tick_map:
+        # 与实盘 build_eff1_select_fn 的 WARN 同义:eff1 的回测有效性前提是 MIN_TICKS=3,
+        # tick 表缺失=前提被静默关闭,必须响一声(见 memory tick-blindspot-is-eff1-edge)。
+        log('[SR][WARN] eff1 + min_ticks=%g 但无 tick 表 —— tick 过滤失效,回测口径与实盘不符'
+            % min_ticks)
+    opts = {'ranker': ranker, 'labels': labels, 'min_ticks': min_ticks,
+            'tick_map': tick_map, 'strategy_config': strategy_config}
     if workers and workers > 1 and len(run_times) > 1:
         from concurrent.futures import ProcessPoolExecutor
         chunks = _split_contiguous(run_times, workers)
         payloads = [(cache, symbols, chunk, timeframe, period, weight_list, factors,
                      choose_symbols, max_candle_num, min_quote_volume, blacklist,
-                     top_volume_pct)
+                     top_volume_pct, opts)
                     for chunk in chunks]
         with ProcessPoolExecutor(max_workers=len(payloads)) as ex:
             # map 保输入序 ⇒ 与串行逐位一致;每块回来后标记该块所有轮已完成(块粒度续跑)
@@ -155,5 +224,6 @@ def replay_selection(cache, symbols, run_times, strategy_config, factors, on_sel
         _select_over_run_times(
             series, run_times, period, weight_list, factors,
             choose_symbols, max_candle_num, min_quote_volume, blacklist,
-            top_volume_pct=top_volume_pct, on_emit=on_select, on_rt_done=on_rt_done)
+            top_volume_pct=top_volume_pct, on_emit=on_select, on_rt_done=on_rt_done,
+            **opts)
     return len(run_times)

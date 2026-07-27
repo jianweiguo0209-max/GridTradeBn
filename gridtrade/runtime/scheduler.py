@@ -233,6 +233,14 @@ def run_scheduler_once(runtime, *, now_fn=time.time,
             open_enabled = False
             if med is None or abs(med) < thr:
                 print('[shock] braked until %s(信号已回落,窗口内继续暂停)' % until, flush=True)
+    # eff1 标签供给:1m 增量缓冲先于选币更新(冷启动首轮 ~4min,12H 周期晚几分钟无影响,
+    # 先例 SALVAGE_COOLDOWN)。降级=本轮部分币缺标签不参选,绝不阻塞。
+    feed = getattr(rt, 'label_feed', None)
+    if feed is not None and open_enabled:
+        try:
+            feed.update(list(candles.keys()), run_time)
+        except Exception as exc:
+            print('[scheduler] label-feed degraded: %r' % exc, flush=True)
     ctx = TriggerContext(rt.config.exchange, run_time, candles)
     result = run_scheduler_cycle(rt.manager, rt.trigger_engine, rt.reconciler,
                                  ctx, close_tag=tag, open_enabled=open_enabled,

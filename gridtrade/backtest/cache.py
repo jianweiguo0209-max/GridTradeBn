@@ -83,6 +83,28 @@ class ParquetCache:
             return []
         return sorted(fn[:-len('.parquet')] for fn in os.listdir(d) if fn.endswith('.parquet'))
 
+    def read_days_range(self, namespace, symbol, day_lo, day_hi):
+        """读取 [day_lo, day_hi] 闭区间(均含, 'YYYY-MM-DD' 字符串, ISO 字典序=时序)
+        内已缓存天的数据,合并语义与 read_all_days 逐位一致;区间外的天完全不读不解析。
+
+        动机(2026-07-25 cf_run IS 窗实测):read_all_days 读全史再内存裁窗,对多年期
+        1m 归档是 ~10-50x 的冗余读+解析税(351 币/轮 × 全史 → 工作集远超页缓存,
+        磁盘持续 20-60MB/s);按窗读把长窗回放税砍到只剩窗内天数。"""
+        tables = []
+        for day in self.list_days(namespace, symbol):
+            if day < day_lo or day > day_hi:
+                continue
+            p = self._path(namespace, symbol, day)
+            if os.path.getsize(p) == 0:
+                continue
+            try:
+                tables.append(pq.read_table(p))
+            except BaseException:
+                continue
+        if not tables:
+            return None
+        return pa.concat_tables(tables, promote=True).to_pandas()
+
     def read_all_days(self, namespace, symbol):
         """读取某 symbol 在该 namespace 下所有已缓存天的数据，合并返回（按天排序）。
 

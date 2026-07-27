@@ -73,3 +73,33 @@ def test_list_days(tmp_path):
         c.write('1h', 'AAA/USDT:USDT', day, pd.DataFrame({'a': [1]}))
     assert c.list_days('1h', 'AAA/USDT:USDT') == \
         ['2024-01-01', '2024-01-02', '2024-01-03']                       # 去 .parquet + 排序
+
+
+def test_read_days_range_equals_read_all_days_on_full_span(tmp_path):
+    """范围读覆盖全部天时,与 read_all_days 输出逐位一致(byte-exact 锚)。"""
+    c = _cache(tmp_path)
+    for day, ts in [('2024-01-01', 10), ('2024-01-02', 20), ('2024-01-03', 30)]:
+        c.write('1m', 'X', day, pd.DataFrame({'ts': [ts], 'close': [float(ts)]}))
+    full = c.read_all_days('1m', 'X')
+    ranged = c.read_days_range('1m', 'X', '2024-01-01', '2024-01-03')
+    pd.testing.assert_frame_equal(ranged, full)
+
+
+def test_read_days_range_reads_only_window(tmp_path):
+    """区间外的天不读:闭区间 [lo,hi],ISO 字典序比较。"""
+    c = _cache(tmp_path)
+    for day, ts in [('2024-01-01', 10), ('2024-01-02', 20), ('2024-01-03', 30)]:
+        c.write('1m', 'X', day, pd.DataFrame({'ts': [ts], 'close': [float(ts)]}))
+    mid = c.read_days_range('1m', 'X', '2024-01-02', '2024-01-02')
+    assert list(mid['ts']) == [20]
+    assert c.read_days_range('1m', 'X', '2024-02-01', '2024-02-28') is None
+
+
+def test_read_days_range_skips_empty_sentinel_and_promotes(tmp_path):
+    """空哨兵天在区间内不致崩(promote 语义同 read_all_days)。"""
+    c = _cache(tmp_path)
+    c.write_empty('1m', 'X', '2024-01-01', columns=['ts', 'close'])
+    c.write('1m', 'X', '2024-01-02', pd.DataFrame({'ts': [2], 'close': [11.0]}))
+    d = c.read_days_range('1m', 'X', '2024-01-01', '2024-01-02')
+    real = d[d['ts'].notna()]
+    assert list(real['ts']) == [2]

@@ -94,10 +94,13 @@ def fetch_klines(sym, interval, start_ms, end_ms):
 
 
 def fetch_universe():
+    """与 live universe 同规则重建(终审修): +underlyingType==COIN(binance.py:19-23 同源,
+    剔非币本位标的~113个)。已知残差: live 的 UNIVERSE_MIN_LEVERAGE 预过滤依赖私有杠杆档
+    凭证,此处不可重建——池比 live 略宽(minlev<10 币混入),影响池基准非账本锚。"""
     info = _get('exchangeInfo')
     syms = ['%s/USDT:USDT' % s['baseAsset'] for s in info['symbols']
             if s.get('contractType') == 'PERPETUAL' and s.get('quoteAsset') == 'USDT'
-            and s.get('status') == 'TRADING']
+            and s.get('status') == 'TRADING' and s.get('underlyingType') == 'COIN']
     bl = set(effective_blacklist((), DEFAULT_TIER_POLICY))
     return sorted(set(syms) - bl)
 

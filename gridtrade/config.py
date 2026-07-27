@@ -98,6 +98,10 @@ class DeployConfig:
     fuse_min_coverage: float = 1.0  # 保险丝覆盖率门槛（spec 2026-07-15）：<该值即降 cap 护全额；0=停用（仅审计）。合法区间 (0, 1.0]——>1 无意义（覆盖率>1 只是余量，护栏已 clamp 成只降不升）
     min_order_notional: float = 0.0     # >0 → 开仓预检单笔名义额下限（币安按币 5/20/50，与 Instrument.min_cost 取 max）；0=停用
     scheduler_fetch_pace_ms: float = 250.0    # 选币取数币间间隔（币安权重实测重校，见 scheduler.py）；0=关
+    # 选币排名器：'eff1'（生产默认，2026-07-27 用户令写死）或 'rank'（rank_sum 加权名次，回退档）
+    selection_ranker: str = 'eff1'
+    selection_min_ticks: float = 3.0    # 最小 tick 档过滤（>0 启用；0=关）
+    label_fetch_pace_ms: float = 300.0  # label 取数节流（ms）；0=关
     monitor_parallel: int = 4           # monitor per-grid 并行 worker 数；1=退回全串行（保底开关）
     monitor_unit_warn_sec: float = 30.0  # 单网格监控单元耗时告警阈值（病态格日志指名道姓）
     signal_refresh_sec: float = 60.0    # pv/funding 每格复算节流(s);默认60=每分钟(对齐回测逐1m);900=旧节奏
@@ -177,6 +181,13 @@ def load_deploy_config(env=None) -> DeployConfig:
     _mgk = _f(env, 'MARGIN_GATE_K', 1.25)
     if _mgk < 1.0:
         raise RuntimeError('MARGIN_GATE_K=%s 无效：余量系数须 ≥1（=1 即零余量贴边）' % _mgk)
+    # 选币排名器校验（spec Task 5）：只接受 'rank' 或 'eff1'，其他值响亮报错。
+    # 默认 'eff1'（2026-07-27 用户令「prod 实盘用 eff1 选币，在代码里写死」）——testnet 全项
+    # 验收通过(274币标签/tick过滤/真开格/权重峰值 438 of 2400/零429)后写死，不再依赖 secret。
+    # 回退仍是一条命令：`fly secrets set SELECTION_RANKER=rank`（无需回代码）。
+    _sr = _s(env, 'SELECTION_RANKER', 'eff1')
+    if _sr not in ('rank', 'eff1'):
+        raise RuntimeError('SELECTION_RANKER=%s 无效：须为 "rank" 或 "eff1"' % _sr)
     return DeployConfig(
         exchange=_s(env, 'EXCHANGE', 'binance'),
         api_key=_s(env, 'BINANCE_API_KEY', ''),
@@ -224,6 +235,9 @@ def load_deploy_config(env=None) -> DeployConfig:
         fuse_min_coverage=_fmc,
         min_order_notional=_f(env, 'MIN_ORDER_NOTIONAL', 0.0),
         scheduler_fetch_pace_ms=_f(env, 'SCHEDULER_FETCH_PACE_MS', 250.0),
+        selection_ranker=_sr,
+        selection_min_ticks=_f(env, 'SELECTION_MIN_TICKS', 3.0),
+        label_fetch_pace_ms=_f(env, 'LABEL_FETCH_PACE_MS', 300.0),
         monitor_parallel=_i(env, 'MONITOR_PARALLEL', 4),
         monitor_unit_warn_sec=_f(env, 'MONITOR_UNIT_WARN_SEC', 30.0),
         shock_thr=_f(env, 'SHOCK_THR', 0.025),
@@ -233,7 +247,25 @@ def load_deploy_config(env=None) -> DeployConfig:
 
 
 # ---- 默认策略常量（镜像 account_0/config.py 已验证参数；可在构造触发器/执行器时覆盖）----
+from gridtrade.core.p12_labels import (LABEL_HOURS as _EFF1_HOURS, LADDER as _EFF1_LADDER,
+                                       MAE_COEF as _EFF1_MAE_COEF,
+                                       MIN_WINDOW_BARS as _EFF1_MIN_BARS)
 from gridtrade.core.tier_policy import TierPolicy
+
+# eff1 选币因子（默认 ranker，2026-07-27 起）的参数。
+# ⚠ **这是聚合视图，不是第二份定义**：值从 gridtrade/core/p12_labels.py 引入——那里是唯一
+#   定义处，实盘 runtime/label_feed 与回测 backtest/p12_replay 也都引用同一批常量。
+#   放在这里是为了让"策略参数看 config"这条约定继续成立、且改动可审计。
+#   想改因子定义 → 改 core/p12_labels.py 的常量（一处生效三处），别在这里覆写。
+#   不变式由 tests/core/test_eff1_single_source.py 钉死。
+#     p12_eff = cross1 / (1 + mae_coef × mae)，窗 = [rt − label_hours, rt)
+#     cross1  = 收盘价穿越 ladder(=1%) 对数阶梯的次数；mae = 窗内相对窗首收盘的最大单边逆行
+DEFAULT_EFF1_CFG = {
+    'ladder': _EFF1_LADDER,
+    'mae_coef': _EFF1_MAE_COEF,
+    'label_hours': _EFF1_HOURS,
+    'min_window_bars': _EFF1_MIN_BARS,
+}
 
 # 三档名单唯一事实源（spec 2026-07-06-tiered-*）：实盘默认与回测默认都取此处；
 # env（实盘 BLACKLIST_SYMBOLS / 回测 BT_TIER0 等）只作覆盖（运维紧急面/扫参面）。
@@ -255,6 +287,8 @@ DEFAULT_STRATEGY_CONFIG = {
     'strategy_tag': 'gt0',          # 不含中文/下划线/特殊字符
     'period': '12H',
     'max_candle_num': 160,
+    # ⚠ factors/weight_list 只服务**回退档 ranker='rank'**(rank_sum 加权名次)。
+    #   2026-07-27 起默认 ranker='eff1'，走的是 DEFAULT_EFF1_CFG 那套，不读这两项。
     'factors': {'Reg_v2_5': True, 'Sgcz_5': True, 'Er_2': True},
     'weight_list': [1, 1, 1],
     'leverage': 5,
@@ -298,7 +332,13 @@ DEFAULT_STOP_CFG = {
     # 0.045→0.03(2026-07-22 s030):pv 让位(−0.01)后固损从"最后防线"变"亏损主挡板",SWEEP4
     # 阶梯实测 0.03 为内点(0.025 起误杀弹回格,IS 固损 20→126);三窗 ret/Calmar/mdd 全升。
     # 与 2026-07-19 "0.035 留出现形"不矛盾——那是旧底座(pv+0.005 抢跑,固损没活干)的单改。
-    'stop_loss': 0.03,
+    # 0.03→0.025(2026-07-27 S2G0,用户令):链轴束搜索终局候选(stop0.025+mult5+funding0.003
+    # 三值联动)。**如实记档:处女双窗裁决 0/4 未过**(合并 t=+0.57 vs 门槛 2.6,九窗 +10pp
+    # 增益在 HOLD-F/JUL26 只剩 +0.94pp=无统计信号;但非劣性与 MDD≤锚×1.3 全过,S2G0 系四候选
+    # 中唯一九窗 MDD 全≤锚×1.3 且平台轴内点者)。属**违反裁决结论的用户部署决定**,
+    # 记录 spec 2026-07-27-chain-beam-prereg §9/§10。机制:pv 开火减半(mult5)后固损接管
+    # (2.5% 为该底座内点,退出结构 pv:固损 从 621:82 变 288:260,净值两抵)。
+    'stop_loss': 0.025,
     # 连续回撤止盈恢复开启(2026-07-19 重扫v2,推翻 2026-07-15 候选A 的"关"):当年"关掉四窗更优"
     # 是 pv 前视幻觉下的适应——带前视的 pv 料事如神先砍亏损,trailing 显得多余。诚实引擎(pv 去前视,
     # 9199503)实测 trailing 是真保护:关掉则 W1 7.3→0.8、OOS −3.0→−4.2(少亏 3.5pp 没了)、
@@ -309,7 +349,10 @@ DEFAULT_STOP_CFG = {
     # 溢价"(消融实证回撤止盈砍半燃料↔pnl 相关);SWEEP T 阶梯四窗 Σ 单峰于 2%。
     # trailing 本体保留(全关在每窗均非最优)。
     'trailing_floor': 0.02,
-    'fundingRate_stop_loss': 0.0015,   # 资金费率止损（交易所真实 fundingRate）
+    # 0.0015→0.003(2026-07-27 S2G0 联动值):⚠已知代价——该退出类均值 +15bp 为正,放宽一倍
+    # 使其触发 95→34 次,Σ贡献 +1.22→+0.41pp(四窗实测);且资金费率 A 族 sx0.003 曾被双留出
+    # 否决。作为 S2G0 整包一环随包上线,非独立立项。
+    'fundingRate_stop_loss': 0.003,    # 资金费率止损（交易所真实 fundingRate）
     # pv 主动止损（量能尖峰 + pnl 门槛）；2026-07-07 PV 研究终配置（干净数据+对齐费率四窗全正，
     # spec 2026-07-07-pv-legacy-semantics-live）：尖峰时浮盈不足 +0.5% 即撤（策略换形，~70% 格首尖峰退出）
     # +0.005→−0.01(2026-07-22 s030,本轮最大单点发现):+0.005 在磨涨 regime 系统性自伤——
@@ -317,7 +360,10 @@ DEFAULT_STOP_CFG = {
     # 四窗 Σ 单峰于 −0.01(W1 单调向紧/IS 单调向关的 regime 镜像平衡点);pv 全关在每窗均非
     # 最优(崩盘窗保命价值真实,判别器两代参数化均未过线,见 memory grid-fitness-score-research)。
     'pv_pnl_thr': -0.01,               # pv 触发门槛：pv_spike && pnlRatio<thr（evaluate_exit 读此值）
-    'pv_mult': 3,                      # 量能尖峰倍数（LiveSignalProvider 算 pv_spike 用）
+    # 3→5(2026-07-27 S2G0 联动值,链轴主刀):尖峰门槛提高⇒pv 开火 621→288 次(四窗),
+    # 单次深度不变(−138→−143bp);SWEEP3 当年 mult5 劣于冠军系旧底座(stop0.045)单改,
+    # 本次与 stop0.025 联动。pv_thr 保持 −0.01 不动(s030 最大单点发现,S2G0 未回退)。
+    'pv_mult': 5,                      # 量能尖峰倍数（LiveSignalProvider 算 pv_spike 用）
     'pv_period': '15min',              # 量能重采样周期（'15min' 非 '15m'——后者被 pandas 当月）
     'pv_n': 100,                       # 量能基线滚动窗口（15m×100≈25h 真滚动；signals 取 n+8 根前置历史）
 }

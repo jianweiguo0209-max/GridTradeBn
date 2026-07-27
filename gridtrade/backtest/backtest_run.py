@@ -20,7 +20,7 @@ import pandas as pd
 
 from gridtrade.backtest import selection_replay as SR
 from gridtrade.backtest.cache import ParquetCache
-from gridtrade.config import DEFAULT_STOP_CFG, DEFAULT_STRATEGY_CONFIG
+from gridtrade.config import DEFAULT_STOP_CFG, DEFAULT_STRATEGY_CONFIG, DeployConfig
 from gridtrade.core.grid_engine import (FUNDING_STOP_LOOKBACK_H, calc_pv_spike,
                                         simulate_grid_engine)
 
@@ -42,6 +42,10 @@ BT_FACTORS = dict(DEFAULT_STRATEGY_CONFIG['factors'])
 # （spec 2026-07-14-universe-top-volume-pct；绝对地板机制保留可叠加，默认 0=停用）。
 # 票池在 main() 里由 vision.list_archive_symbols 解析全市场（归档含退市，见 main）；此处只放阈值/黑名单常量（可 env 覆写）。
 BT_MIN_QUOTE_VOLUME_24H = float(os.environ.get('BT_MIN_QUOTE_VOLUME_24H', '0'))
+# 选币器/tick 过滤:**默认继承实盘 config**(单一事实源),2026-07-27 起 = eff1 + 3.0。
+# 回测默认口径 ≠ 部署口径是本项目栽过的跟头(回测说好、实盘跑的是另一套),故此处不写死常量。
+BT_SELECTION_RANKER = DeployConfig.__dataclass_fields__['selection_ranker'].default
+BT_MIN_TICKS = float(DeployConfig.__dataclass_fields__['selection_min_ticks'].default)
 BT_UNIVERSE_TOP_PCT = float(os.environ.get('BT_UNIVERSE_TOP_PCT', '0.55'))
 BT_BLACKLIST = tuple(s.strip() for s in os.environ.get('BT_BLACKLIST', '').split(',') if s.strip())
 
@@ -138,9 +142,20 @@ def _simulate_grid_task(payload):
     # amount_to_precision 是 TRUNCATE，wire_qty <= order_num 恒成立）。此前硬传 0.0 把引擎自带的
     # 同款截断关掉了 → 系统性高估下单量。缺表/缺币 → 0.0 = 不取整 = 旧行为（fail-soft）。
     min_amount = float(cfg.get('lot_by_sym', {}).get(sym, 0.0) or 0.0)
+    # 网格线按该币 tickSize 量化(同 min_amount 的 per-symbol 模式)。缺表/缺币 → 0.0 = 关 =
+    # 旧行为(fail-soft)。动机见 grid_order_info docstring:引擎原把价格当连续量,网格线可比
+    # tickSize 还密 ⇒ 实盘挂不出来的线也被记了穿越。
+    # ⚠ tickSize **会被交易所调整**(实证:FLOW 2026-01-28 从 0.001 改到 0.00001,细 100 倍),
+    #   故值可为 float(恒定)或 {'YYYY-MM-DD': tick}(逐日);逐日时按本格 run_time 当天取。
+    _tk = cfg.get('tick_by_sym', {}).get(sym, 0.0)
+    if isinstance(_tk, dict):
+        _tk = _tk.get(str(pd.Timestamp(rt).date()), 0.0)
+    price_tick = float(_tk or 0.0)
     sim = simulate_grid_engine(bars_df, gp, cap=1000.0, leverage=cfg['lev'], fee=cfg['fee_rate'],
                                c_rate_taker=cfg.get('taker_rate', 0.0005),
                                max_rate=cfg['max_rate'], min_amount=min_amount,
+                               price_tick=price_tick,
+                               tick_mode=cfg.get('tick_mode', 'stack'),
                                stop_cfg=cfg['stop_cfg'],
                                funding_df=funding_df, neutral_init=False,
                                pv_spike_df=pv_spike_df,
@@ -165,21 +180,35 @@ def _simulate_grid_task(payload):
 
 def select_grids(cache, universe, window_start, window_end, strategy_config, factors,
                  *, timeframe='1h', min_quote_volume=0.0, top_volume_pct=0.0,
-                 blacklist=(), workers=1, candidates_per_rt=1, log=print):
+                 blacklist=(), workers=1, candidates_per_rt=1, log=print,
+                 ranker=None, min_ticks=None, tick_map=None):
     """只跑选币回放（1h + PIT 成交额过滤(地板/前 pct 相对口径可叠加) + 黑名单），
     返回 [(rt, offset, row)]。offline。
     结果按选币参数 + 每币缓存天范围数据指纹磁盘缓存（BT_SELECT_CACHE=off 旁路）。
     candidates_per_rt>1：三档递补用 top-K 候选——放宽选币截断为 rank<=K（经
     strategy_config.choose_symbols 覆盖，天然进缓存 key、不同 K 不串）；K=1 逐位恒等现状。"""
+    # 必须在 select-cache 查询之前验证：否则旧缓存会掩盖“config 引用了 batch 未实现因子”，
+    # 直到另一个窗口 cache miss 才在子进程晚报 KeyError。
+    from gridtrade.core.selection import validate_factor_support
+    from gridtrade.core.grid_params import GRID_ROW_FACTORS
+    validate_factor_support(factors, GRID_ROW_FACTORS)
     if candidates_per_rt and int(candidates_per_rt) > 1:
         strategy_config = dict(strategy_config, choose_symbols=int(candidates_per_rt))
+    # 选币器/tick 过滤默认**跟随实盘 config**(2026-07-27 起 = eff1 + MIN_TICKS 3.0):
+    # 回测默认口径必须等于部署口径,否则"回测说好"和"实盘在跑"根本不是一回事。
+    # 显式传参可覆盖(研究里跑 rank 对照用);BT_SELECTION_RANKER / BT_MIN_TICKS 也能覆盖。
+    if ranker is None:
+        ranker = os.environ.get('BT_SELECTION_RANKER') or BT_SELECTION_RANKER
+    if min_ticks is None:
+        min_ticks = float(os.environ.get('BT_MIN_TICKS', BT_MIN_TICKS))
     from gridtrade.backtest import select_cache as SC
     use_cache = SC.enabled()
     key = params = None
     if use_cache:
         key, params = SC.compute_key(cache, universe, window_start, window_end, timeframe,
                                      min_quote_volume, blacklist, strategy_config, factors,
-                                     top_volume_pct=top_volume_pct)
+                                     top_volume_pct=top_volume_pct,
+                                     ranker=ranker, min_ticks=min_ticks)
         hit = SC.load(cache, key, params)
         if hit is not None:
             log('[BT] select cache HIT %s (picks=%d)' % (key, len(hit)))
@@ -209,7 +238,8 @@ def select_grids(cache, universe, window_start, window_end, strategy_config, fac
                             timeframe=timeframe, min_quote_volume=min_quote_volume,
                             top_volume_pct=top_volume_pct,
                             blacklist=blacklist, workers=workers, log=log,
-                            on_rt_done=(_on_rt_done if use_cache else None))
+                            on_rt_done=(_on_rt_done if use_cache else None),
+                            ranker=ranker, min_ticks=min_ticks, tick_map=tick_map)
     log('[BT] picks=%d' % len(grids))
     if use_cache:
         SC.save(cache, key, params, grids)
@@ -287,12 +317,14 @@ def assemble_grid_tasks(cache, grids, strategy_config, *, sim_timeframe=None,
 
 def build_grid_tasks(cache, universe, window_start, window_end, strategy_config, factors,
                      *, timeframe='1h', sim_timeframe=None, min_quote_volume=0.0,
-                     top_volume_pct=0.0, blacklist=(), workers=1, log=print):
+                     top_volume_pct=0.0, blacklist=(), workers=1, log=print,
+                     ranker=None, min_ticks=None, tick_map=None):
     """选币 + 组装（offline 便捷组合，run_backtest/测试用）。两段式预热见 main()。"""
     grids = select_grids(cache, universe, window_start, window_end, strategy_config, factors,
                          timeframe=timeframe, min_quote_volume=min_quote_volume,
                          top_volume_pct=top_volume_pct,
-                         blacklist=blacklist, workers=workers, log=log)
+                         blacklist=blacklist, workers=workers, log=log,
+                         ranker=ranker, min_ticks=min_ticks, tick_map=tick_map)
     return assemble_grid_tasks(cache, grids, strategy_config,
                                sim_timeframe=sim_timeframe, timeframe=timeframe, log=log)
 
@@ -300,7 +332,7 @@ def build_grid_tasks(cache, universe, window_start, window_end, strategy_config,
 def simulate_tasks(data_tasks, *, leverage, fee_rate=0.0002, taker_rate=0.0005,
                    max_rate=0.68, stop_cfg=None,
                    active_stop_mode='pv', pv_cfg=None, workers=1, lot_by_sym=None,
-                   pv_idio_thr=None):
+                   pv_idio_thr=None, tick_by_sym=None, tick_mode='stack'):
     """对已组装的 data_tasks 跑仿真（可并行）→ 明细 DataFrame。仿真配置在此传入，故同一批
     data_tasks 可反复用不同 (active_stop_mode/pv_cfg/stop_cfg) 仿真——扫参提速的关键。
     fee_rate=maker（网格挂单成交，默认 2bps）、taker_rate=taker（平仓/止损/破网，默认
@@ -312,7 +344,10 @@ def simulate_tasks(data_tasks, *, leverage, fee_rate=0.0002, taker_rate=0.0005,
     cfg = {'lev': leverage, 'fee_rate': fee_rate, 'taker_rate': taker_rate,
            'max_rate': max_rate, 'stop_cfg': stop_cfg, 'lot_by_sym': lot_by_sym,
            'active_stop_mode': active_stop_mode, 'pv_cfg': pv_cfg or {},
-           'pv_idio_thr': pv_idio_thr}
+           'pv_idio_thr': pv_idio_thr,
+           # 默认 {} ⇒ price_tick=0 ⇒ 量化关闭 ⇒ 与历史逐位一致(不像 lot_by_sym 那样惰性加载:
+           # tick 需逐 (币,窗) 从归档推,由研究侧显式传入)
+           'tick_by_sym': tick_by_sym or {}, 'tick_mode': tick_mode}
     payloads = [(dt, cfg) for dt in data_tasks]
     if workers and workers > 1 and len(payloads) > 1:
         from concurrent.futures import ProcessPoolExecutor
@@ -393,7 +428,7 @@ def run_backtest(cache, universe, window_start, window_end, strategy_config, fac
                  *, timeframe='1h', sim_timeframe=None, fee_rate=0.0002, taker_rate=0.0005,
                  max_rate=0.68, leverage=None, min_quote_volume=0.0, top_volume_pct=0.0,
                  blacklist=(), workers=1, symbol_lock=False, tiers=None, tier_cand_k=5,
-                 shock_brake=None, log=print):
+                 shock_brake=None, log=print, ranker=None, min_ticks=None, tick_map=None):
     """timeframe: 选币因子所用 K 线周期（换仓周期粒度，默认 1h）。
     top_volume_pct: >0 → PIT 票池相对口径（逐 rt 取 24h 量前 ceil(pct×N)，与地板可叠加，
     shock 篮子同步同口径；spec 2026-07-14-universe-top-volume-pct）；0=停用（基线可比）。
@@ -430,7 +465,8 @@ def run_backtest(cache, universe, window_start, window_end, strategy_config, fac
                              min_quote_volume=min_quote_volume,
                              top_volume_pct=top_volume_pct,
                              blacklist=effective_blacklist(blacklist, tiers),
-                             workers=workers, candidates_per_rt=int(tier_cand_k), log=log)
+                             workers=workers, candidates_per_rt=int(tier_cand_k), log=log,
+                             ranker=ranker, min_ticks=min_ticks, tick_map=tick_map)
         if shock_blocked is not None:      # 刹车:blocked rt 整轮剔除(该轮空过,不递补,同实盘)
             picks = [p for p in picks if p[0] not in shock_blocked]
         picks, stats = allocate_with_tiers(picks, tiers,
@@ -450,7 +486,8 @@ def run_backtest(cache, universe, window_start, window_end, strategy_config, fac
                              factors, timeframe=timeframe,
                              sim_timeframe=sim_timeframe, min_quote_volume=min_quote_volume,
                              top_volume_pct=top_volume_pct,
-                             blacklist=blacklist, workers=workers, log=log)
+                             blacklist=blacklist, workers=workers, log=log,
+                             ranker=ranker, min_ticks=min_ticks, tick_map=tick_map)
     if shock_blocked is not None:          # 刹车:blocked rt 的任务剔除(只影响开格)
         tasks = [t for t in tasks if t[0] not in shock_blocked]
     if symbol_lock:
@@ -480,8 +517,14 @@ def _binance_datasource_1h(cache):
                 except (ccxt.ExchangeNotAvailable, ccxt.NetworkError,
                         ccxt.RequestTimeout) as e:
                     last = e
+                    print('[BT] 币安只读接口超时，重试 %d/12: %s' %
+                          (i + 1, type(e).__name__), flush=True)
                     time.sleep(min(2.0 * (i + 1), 8.0))
             raise last
+
+        def retry_read(self, fn, *a, **k):
+            """票池构建使用的 exchangeInfo/杠杆档位也共享预热退避。"""
+            return self._retry(fn, *a, **k)
 
         def fetch_ohlcv(self, symbol, timeframe, start_ms, end_ms):
             return self._retry(super().fetch_ohlcv, symbol, timeframe,
@@ -493,6 +536,14 @@ def _binance_datasource_1h(cache):
 
     adapter = _RetryBinance(ccxt.binanceusdm({'enableRateLimit': True,
                                               'timeout': 30000,
+                                              # ccxt 默认 trust_env=False，会无视终端已验证可用的
+                                              # HTTP(S)_PROXY；Vision/requests 却会继承，造成同一
+                                              # Python 中 requests=200、ccxt TLS 超时。显式对齐。
+                                              'trust_env': True,
+                                              # load_markets 只需期货 exchangeInfo。ccxt 在有 key 时
+                                              # 默认额外取现货钱包 currencies(SAPI capital/getall)，
+                                              # 与回测无关且该私有端点超时会阻断历史数据预热。
+                                              'options': {'fetchCurrencies': False},
                                               # 杠杆档位为私有签名端点(票池 min-leverage 过滤用,
                                               # 2026-07-18);无 key 时公共取数路径不受影响
                                               'apiKey': os.environ.get('BINANCE_API_KEY', ''),
@@ -508,7 +559,11 @@ def exclude_non_coin(symbols, adapter):
     fail-loud:load_markets 降级返回空(未抛异常)不得静默 fail-open 为"保留全量归档"
     (等于放行 TradFi)——此为回测唯一可能与实盘 fail-closed 背离之处,宁可整跑失败。
     返回 (kept: sorted list[str], removed: int)。"""
-    adapter.client.load_markets()
+    retry_read = getattr(adapter, 'retry_read', None)
+    if retry_read is None:                 # 测试桩/非预热适配器保持既有直接调用语义
+        adapter.client.load_markets()
+    else:
+        retry_read(adapter.client.load_markets)
     markets = adapter.client.markets
     if not markets:
         raise RuntimeError('load_markets 返回空 markets,无法做 COIN-only 过滤;'
@@ -564,8 +619,12 @@ def resolve_bt_universe(adapter, blacklist, *, archive_symbols=None, min_lev=Non
     # notional/gearing 与回测 sizing 同源:cap=1000(simulate 硬编)× gearing(旧lev×0.68=3.4)
     # →$3400,与实盘当前 $2555 同档位区间(档界多为 5k/10k+)。
     _gear = BT_STRATEGY['leverage'] * 0.68
+    tiers_fetch = adapter.client.fetch_leverage_tiers
+    retry_read = getattr(adapter, 'retry_read', None)
+    if retry_read is not None:
+        tiers_fetch = lambda: retry_read(adapter.client.fetch_leverage_tiers)
     universe, _n_lowlev = exclude_low_leverage(
-        universe, adapter.client.fetch_leverage_tiers,
+        universe, tiers_fetch,
         notional=1000.0 * _gear, gearing=_gear, min_lev=_minlev)
     # n_blacklist=黑名单原始长度——与原 main() 打印 len(bt_blacklist) 逐字节等价;
     # 交集口径在黑名单含不在归档符号时会少报,破坏统计行语义不变。

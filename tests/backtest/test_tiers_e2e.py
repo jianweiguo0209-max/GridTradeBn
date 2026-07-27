@@ -1,5 +1,8 @@
 # tests/backtest/test_tiers_e2e.py
-"""run_backtest 三档接线 e2e：互斥、cap0 恒等基线、cap1 递补 ⊇ symbol_lock 不递补。"""
+"""run_backtest 三档接线 e2e：互斥、cap0 恒等基线、cap1 递补 ⊇ symbol_lock 不递补。⚠ 全部 select_grids/run_backtest 调用显式传 ranker='rank':本文件测的是 cap/tier 分配语义,
+不是选币器。默认选币器已于 2026-07-27 改为 eff1(跟随实盘),而 eff1 要 1m 归档算标签、
+本文件的合成 cache 只有 1h ⇒ 不显式传就会选不出任何币、测试变成"真空通过"。
+"""
 import pandas as pd
 import pytest
 
@@ -26,9 +29,9 @@ def test_tiers_and_symbol_lock_mutually_exclusive(tmp_path):
 
 def test_cap0_identity_with_baseline(tmp_path):
     cache = _seed_cache(tmp_path, SYMS)
-    base = run_backtest(cache, SYMS, WS, WE, _strategy(), FACTORS, log=_quiet)
+    base = run_backtest(cache, SYMS, WS, WE, _strategy(), FACTORS, log=_quiet, ranker='rank', min_ticks=0.0)
     t0 = run_backtest(cache, SYMS, WS, WE, _strategy(), FACTORS,
-                      tiers=TierPolicy(tier2_cap=0), log=_quiet)
+                      tiers=TierPolicy(tier2_cap=0), log=_quiet, ranker='rank', min_ticks=0.0)
     assert len(base) > 0
     key = lambda df: sorted(zip(df['run_time'].astype(str), df['symbol']))
     assert key(base) == key(t0)                        # 不限 ≡ 无锁基线（同一批网格）
@@ -41,9 +44,9 @@ def test_cap1_beats_symbol_lock_and_respects_cap(tmp_path):
     # ②产出满足并发上限（同币锁窗 [rt, rt+period) 无重叠）。
     cache = _seed_cache(tmp_path, SYMS)
     lock = run_backtest(cache, SYMS, WS, WE, _strategy(), FACTORS,
-                        symbol_lock=True, log=_quiet)
+                        symbol_lock=True, log=_quiet, ranker='rank', min_ticks=0.0)
     t1 = run_backtest(cache, SYMS, WS, WE, _strategy(), FACTORS,
-                      tiers=TierPolicy(tier2_cap=1), log=_quiet)
+                      tiers=TierPolicy(tier2_cap=1), log=_quiet, ranker='rank', min_ticks=0.0)
     assert len(lock) > 0 and len(t1) >= len(lock)
     td = pd.Timedelta('12H')
     for sym, grp in t1.groupby('symbol'):

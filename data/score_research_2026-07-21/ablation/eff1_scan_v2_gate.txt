@@ -1,0 +1,44 @@
+== eff1_scan_v2 MIN_TICKS=0 workers=4 开跑 07-26 18:49 (31臂×1窗) ==
+[W1] blocked=173 tick表=0币 3.5min
+[W1] K1 b2_c16 preload 1.1min 格=1292 剔候选=0
+P1/W1: geo_b2_c16   ret    +3.36 mdd -4.50 calmar     4.866 fills    8.9[OK] 格1292 破0 爆0 0.4min | 窗口结束:959, pv主动:222, 固定止损:56
+P1R/W1: geoRAW_b2_c16 ret    +0.92 mdd-11.97 calmar    0.4693 fills    8.9[OK] 格1292 破46 爆0 0.3min | 窗口结束:1246, 破网:46
+[W1] K1 b2_c22 preload 0.8min 格=1292 剔候选=0
+P1/W1: geo_b2_c22   ret    +5.65 mdd -3.31 calmar     11.77 fills   16.5[存疑] 格1292 破0 爆0 0.4min | 窗口结束:960, pv主动:225, 固定止损:56
+P1R/W1: geoRAW_b2_c22 ret    +6.75 mdd -8.62 calmar     5.551 fills   16.5[存疑] 格1292 破46 爆0 0.3min | 窗口结束:1246, 破网:46
+[W1] K1 b2_c26 preload 0.8min 格=1292 剔候选=0
+P1/W1: geo_b2_c26   ret   +10.57 mdd -3.44 calmar     23.95 fills   24.4[存疑] 格1292 破0 爆0 0.4min | 窗口结束:962, pv主动:218, 固定止损:49
+P1R/W1: geoRAW_b2_c26 ret   +11.85 mdd -8.46 calmar     11.28 fills   24.4[存疑] 格1292 破46 爆0 0.3min | 窗口结束:1246, 破网:46
+[W1] K1 b2.5_c16 preload 0.8min 格=1292 剔候选=0
+P1/W1: geo_b2.5_c16 ret    +4.10 mdd -3.07 calmar     8.847 fills    6.5[OK] 格1292 破0 爆0 0.3min | 窗口结束:999, pv主动:200, 固定止损:42
+P1R/W1: geoRAW_b2.5_c16 ret    +5.48 mdd -6.93 calmar     5.426 fills    6.5[OK] 格1292 破28 爆0 0.3min | 窗口结束:1263, 破网:28, 未触网:1
+[W1] K1 b2.5_c22 preload 0.8min 格=1292 剔候选=0
+P1/W1: geo_b2.5_c22 ret    +5.06 mdd -2.91 calmar      11.8 fills   10.9[OK] 格1292 破0 爆0 0.4min | 窗口结束:1002, pv主动:206, 固定止损:36
+P1R/W1: geoRAW_b2.5_c22 ret    +3.05 mdd -8.80 calmar     2.239 fills   10.9[OK] 格1292 破28 爆0 0.3min | 窗口结束:1264, 破网:28
+[W1] K1 b2.5_c26 preload 0.8min 格=1292 剔候选=0
+P1/W1: geo_b2.5_c26 ret    +5.37 mdd -3.89 calmar     9.445 fills   15.4[存疑] 格1292 破0 爆0 0.4min | 窗口结束:1001, pv主动:201, 固定止损:42
+P1R/W1: geoRAW_b2.5_c26 ret    +8.56 mdd -7.91 calmar     8.027 fills   15.4[存疑] 格1292 破28 爆0 0.3min | 窗口结束:1264, 破网:28
+[W1] K1 b3_c16 preload 0.8min 格=1292 剔候选=0
+P1/W1: geo_b3_c16   ret    +3.77 mdd -3.26 calmar     7.608 fills    5.3[OK] 格1292 破0 爆0 0.3min | 窗口结束:1017, pv主动:193, 固定止损:28
+P1R/W1: geoRAW_b3_c16 ret    -1.48 mdd-10.70 calmar   -0.7968 fills    5.3[OK] 格1292 破24 爆0 0.3min | 窗口结束:1266, 破网:24, 未触网:2
+P3/W1: stop1.0      ret    -0.19 mdd -3.47 calmar   -0.3225 fills    5.3[OK] 格1292 破0 爆0 0.3min | 窗口结束:897, 固定止损:349, 资金费率:25
+P3/W1: stop1.5      ret    +2.22 mdd -4.25 calmar     3.303 fills    5.3[OK] 格1292 破0 爆0 0.3min | 窗口结束:977, 固定止损:142, pv主动:121
+P3/W1: stop2.0      ret    +1.84 mdd -3.82 calmar      3.03 fills    5.3[OK] 格1292 破0 爆0 0.3min | 窗口结束:995, pv主动:159, 固定止损:85
+P3/W1: stop2.5      ret    +2.28 mdd -3.86 calmar      3.75 fills    5.3[OK] 格1292 破0 爆0 0.3min | 窗口结束:1008, pv主动:186, 固定止损:44
+P3/W1: stop3.0      ret    +3.77 mdd -3.26 calmar     7.608 fills    5.3[OK] 格1292 破0 爆0 0.3min | 窗口结束:1017, pv主动:193, 固定止损:28
+P5/W1: trF1         ret    +5.07 mdd -2.94 calmar     11.69 fills    5.3[OK] 格1292 破0 爆0 0.3min | 窗口结束:960, pv主动:173, 连续回撤:108
+P5/W1: trF4         ret    +3.40 mdd -3.27 calmar     6.773 fills    5.3[OK] 格1292 破0 爆0 0.3min | 窗口结束:1027, pv主动:197, 固定止损:33
+P5/W1: trK0.15      ret    +3.77 mdd -3.26 calmar     7.608 fills    5.3[OK] 格1292 破0 爆0 0.3min | 窗口结束:1017, pv主动:193, 固定止损:28
+P5/W1: pvthr-0.5    ret    +5.70 mdd -1.94 calmar      20.3 fills    5.3[OK] 格1292 破0 爆0 0.3min | 窗口结束:935, pv主动:282, 资金费率:25
+P5/W1: pvthr-2      ret    +4.16 mdd -5.23 calmar     5.276 fills    5.3[OK] 格1292 破0 爆0 0.3min | 窗口结束:1100, pv主动:92, 固定止损:44
+P5/W1: pvmult5      ret    +5.45 mdd -4.01 calmar     9.323 fills    5.3[OK] 格1292 破0 爆0 0.3min | 窗口结束:1081, pv主动:97, 固定止损:58
+P5/W1: fund0.3      ret    +3.92 mdd -2.68 calmar     9.664 fills    5.3[OK] 格1292 破0 爆0 0.3min | 窗口结束:1031, pv主动:196, 固定止损:30
+P5/W1: fundOFF      ret    +3.37 mdd -2.65 calmar     8.272 fills    5.3[OK] 格1292 破0 爆0 0.3min | 窗口结束:1034, pv主动:196, 固定止损:32
+[W1] K1 b3_c22 preload 0.8min 格=1292 剔候选=0
+P1/W1: geo_b3_c22   ret    +3.48 mdd -3.77 calmar     6.025 fills    8.0[OK] 格1292 破0 爆0 0.4min | 窗口结束:1033, pv主动:178, 固定止损:34
+P1R/W1: geoRAW_b3_c22 ret    -0.62 mdd-11.40 calmar   -0.3199 fills    8.0[OK] 格1292 破24 爆0 0.3min | 窗口结束:1268, 破网:24
+[W1] K1 b3_c26 preload 0.8min 格=1292 剔候选=0
+P1/W1: geo_b3_c26   ret    +3.19 mdd -3.78 calmar     5.458 fills   10.9[OK] 格1292 破0 爆0 0.4min | 窗口结束:1031, pv主动:188, 固定止损:30
+P1R/W1: geoRAW_b3_c26 ret    +1.08 mdd -9.78 calmar    0.6795 fills   10.9[OK] 格1292 破24 爆0 0.3min | 窗口结束:1268, 破网:24
+[W1] DONE
+EFF1_SCAN_V2_DONE MIN_TICKS=0

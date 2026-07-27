@@ -58,6 +58,58 @@ def test_build_runtime_creates_tables_and_trigger_uses_engine():
                for t in rt.trigger_engine.triggers)
 
 
+def test_build_runtime_rank_ranker_has_no_label_feed():
+    # 回退档 SELECTION_RANKER='rank' → 不装 LabelFeed（rank_sum 线零改变）。
+    # ⚠ 必须显式传 rank：默认已于 2026-07-27 改为 'eff1'（用户令写死），
+    # 不显式传就测不到回退档、反而会在默认翻转时静默变成"测 eff1"。
+    from gridtrade.runtime.factory import build_runtime
+    rt = build_runtime(_cfg(SELECTION_RANKER='rank'))
+    assert rt.label_feed is None
+
+
+def test_build_runtime_default_ranker_is_eff1_and_wires_label_feed():
+    # 默认档（不传 SELECTION_RANKER）= eff1 ⇒ 必须装出 LabelFeed。钉死默认值本身。
+    from gridtrade.runtime.factory import build_runtime
+    from gridtrade.runtime.label_feed import LabelFeed
+    rt = build_runtime(_cfg())
+    assert rt.config.selection_ranker == 'eff1'
+    assert isinstance(rt.label_feed, LabelFeed)
+
+
+def test_build_runtime_eff1_ranker_wires_label_feed_and_p12_trigger():
+    # SELECTION_RANKER=eff1 → 装 LabelFeed + ScheduledSelectionTrigger 换用 p12 三因子
+    # （factors 只是选币轮排序序列，真正筛选逻辑在 build_eff1_select_fn 内）。
+    from gridtrade.runtime.factory import build_runtime
+    from gridtrade.runtime.label_feed import LabelFeed
+    rt = build_runtime(_cfg(SELECTION_RANKER='eff1'))
+    assert isinstance(rt.label_feed, LabelFeed)
+    trigger = rt.trigger_engine.triggers[0]
+    assert trigger.factors == ('p12_eff', 'p12_cross1', 'p12_mae')
+
+
+def test_build_runtime_tick_fn_sourced_from_inner_not_resilient_wrapper():
+    # 回归锁("包装器无此方法而 inner 有"这对事实):ResilientAdapter 逐方法显式转发、
+    # 无 __getattr__,fetch_tick_sizes 未在转发表里——若 factory 把 _tick_fn 改回读
+    # getattr(adapter, 'fetch_tick_sizes', None)(adapter=Resilient 包装后的实例),
+    # 生产 ccxt 也会拿到 None,tick 过滤在实盘静默熄灭。
+    #
+    # 光断言这对环境事实还不够:两条 assert 本身跟 factory 到底从哪个对象取 _tick_fn
+    # 无关(两个对象的能力差异是恒成立的独立事实,mutation 测试证实过——把 factory.py
+    # 的 getattr(inner, ...) 改回 getattr(adapter, ...),这两条照样绿)。真正锁回归的
+    # 是下面用 inspect.getclosurevars 探 select_fn 闭包里 tick_map_fn 实际绑的是谁:
+    # 若 factory 改回读 adapter,这里会变 None,断言炸。
+    import inspect
+    from gridtrade.runtime.factory import build_runtime
+    rt = build_runtime(_cfg(EXCHANGE='binance', BINANCE_API_KEY='k',
+                            BINANCE_API_SECRET='s'))
+    assert getattr(rt.adapter, 'fetch_tick_sizes', None) is None       # 锁 ResilientAdapter 缺口
+    assert getattr(rt.adapter._inner, 'fetch_tick_sizes', None) is not None
+    select_fn = rt.trigger_engine.triggers[0].select_fn
+    tick_map_fn = inspect.getclosurevars(select_fn).nonlocals.get('tick_map_fn')
+    assert tick_map_fn is not None                          # 锁实际生效的 wiring
+    assert tick_map_fn == rt.adapter._inner.fetch_tick_sizes
+
+
 def test_build_runtime_threads_quote_currency_override():
     from gridtrade.runtime.factory import build_runtime
     rt = build_runtime(_cfg(EXCHANGE='binance', BINANCE_API_KEY='k',

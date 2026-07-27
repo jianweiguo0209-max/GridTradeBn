@@ -46,7 +46,11 @@ M1_CAP = 320                 # 1m LRU 上限:须>单轮池币数(~260),否则轮
 def main(wn, stride=1, limit=None):
     out_p = '%s/ablation/cf_%s.parquet' % (RD, wn)
     if os.path.exists(out_p) and limit is None:
-        print('[%s] SKIP(已有产物)' % wn, flush=True)
+        import time as _t
+        print('[%s] SKIP(已有产物 %dB, mtime %s)——SKIP不感知stride,重跑请先删该文件'
+              % (wn, os.path.getsize(out_p),
+                 _t.strftime('%m-%d %H:%M', _t.localtime(os.path.getmtime(out_p)))),
+              flush=True)
         return
     w0, w1 = WD[wn]
     src = SRC.get(wn, wn)
@@ -55,7 +59,7 @@ def main(wn, stride=1, limit=None):
     atr = {(pd.Timestamp(r.rt), r.symbol): float(r.Atr_5) for r in fac.itertuples()}
     rounds = pdet[['run_time', 'offset']].drop_duplicates().sort_values('run_time')
     w0t, w1t = pd.Timestamp(w0), pd.Timestamp(w1) + pd.Timedelta(days=1)
-    rounds = rounds[(rounds['run_time'] >= w0t) & (rounds['run_time'] < w1t)]  # 半窗切片(全窗=无操作)
+    rounds = rounds[(rounds['run_time'] >= w0t) & (rounds['run_time'] < w1t)]  # 半窗切片(全窗仅剔w1+1d边界轮)
     rounds = rounds.iloc[::max(1, int(stride))]
     if limit is not None:
         rounds = rounds.head(limit)
@@ -77,12 +81,17 @@ def main(wn, stride=1, limit=None):
     m1hi = pd.Timestamp(w1) + pd.Timedelta(days=2)
     m1_map, fd_map = {}, {}
     rows, t0 = [], time.time()
+    m1_cap = M1_CAP
     n_skip_atr = n_skip_m1 = n_skip_eval = n_skip_exc = n_pick_skip = 0
     for i, rr in enumerate(rounds.itertuples()):
         rt = pd.Timestamp(rr.run_time)
         pool = set(build_pit_candidates(
             series, rt, max_candle_num=160, min_quote_volume=0.0,
             top_volume_pct=TOP_VOLUME_PCT, blacklist=()).keys())
+        m1_cap = max(m1_cap, len(pool) + 40)   # 动态上限:恒>池尺寸,防轮内清缓存解析税
+        if i == 0:
+            print('[%s] 池尺寸预检: pool=%d m1_cap=%d' % (wn, len(pool), m1_cap),
+                  flush=True)
         picks = picks_by_rt.get(rr.run_time, set())
         for sym in sorted(pool | picks):
             a5 = atr.get((rt, sym))
@@ -93,7 +102,8 @@ def main(wn, stride=1, limit=None):
                 continue
             m1 = m1_map.get(sym)
             if m1 is None:
-                m1 = cache.read_all_days('1m', sym)
+                m1 = cache.read_days_range(   # 按窗读天,替代全史读(税~10-50x,cache.py 注)
+                    '1m', sym, m1lo.strftime('%Y-%m-%d'), m1hi.strftime('%Y-%m-%d'))
                 if m1 is not None and not m1.empty:
                     m1 = m1[(m1['candle_begin_time'] >= m1lo)
                             & (m1['candle_begin_time'] < m1hi)].reset_index(drop=True)
@@ -122,7 +132,7 @@ def main(wn, stride=1, limit=None):
             rows.append({'run_time': rt, 'offset': int(rr.offset), 'symbol': sym,
                          'in_pool': sym in pool, 'picked': sym in picks,
                          'Atr_5': a5, **out})
-        if len(m1_map) > M1_CAP:
+        if len(m1_map) > m1_cap:
             m1_map.clear()
             fd_map.clear()
         if (i + 1) % 10 == 0:
@@ -130,16 +140,16 @@ def main(wn, stride=1, limit=None):
                   % (wn, i + 1, len(rounds), len(rows), n_skip_atr, n_skip_m1,
                      n_skip_eval, n_skip_exc, (time.time() - t0) / (i + 1)), flush=True)
     df = pd.DataFrame(rows)
-    if limit is None:
-        df.to_parquet(out_p)
     n_out = int((df['picked'] & ~df['in_pool']).sum()) if len(df) else 0
     print('[%s] DONE 轮=%d 行=%d skip(atr/m1/eval/exc)=%d/%d/%d/%d 选中跳过=%d 池外选中=%d'
           % (wn, len(rounds), len(df), n_skip_atr, n_skip_m1, n_skip_eval,
              n_skip_exc, n_pick_skip, n_out), flush=True)
     if n_pick_skip:
-        print('[%s] FAIL 选中格被跳过=%d——数据缺口破坏选中vs池对比,fail-loud' % (wn, n_pick_skip),
+        print('[%s] FAIL 选中格被跳过=%d——数据缺口破坏选中vs池对比,fail-loud(不落盘)' % (wn, n_pick_skip),
               flush=True)
         sys.exit(1)
+    if limit is None:                       # 落盘在fail-loud门后:FAIL不产出,防SKIP静默复用毒产物
+        df.to_parquet(out_p)
 
 
 if __name__ == '__main__':
