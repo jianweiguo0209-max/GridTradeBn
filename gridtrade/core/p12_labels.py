@@ -34,5 +34,39 @@ def window_label(bars, w0, w1):
     return float(sd[m].sum()), max(abs(float(hi / o - 1.0)), abs(float(lo / o - 1.0)))
 
 
+def window_labels_batch(bars, starts, hours=12):
+    """同一 symbol 的一串窗口起点批量算标签 —— **与逐窗 window_label 逐位一致**。
+
+    只为回测吞吐存在(选币回放 ~1400 轮 × ~280 币,逐窗调会每次 O(n) 重算掩码)。
+    等价性靠三件事:①dstep 仍在**整段序列**上算一次(与逐窗版看同一前驱,断档处也是);
+    ②cross1 用前缀和取窗内区间和(浮点上与逐窗 sum 同为顺序累加);③mae 用同一 o/hi/lo 定义。
+    parity 由 tests/core/test_p12_labels_batch.py 逐位钉死,动这里必先过它。
+
+    返回与 starts 等长的 list,元素为 (cross1, mae) 或 None(窗内 bar < MIN_WINDOW_BARS)。
+    """
+    out = []
+    n = len(bars)
+    if n == 0:
+        return [None] * len(starts)
+    t = bars['candle_begin_time'].to_numpy(dtype='datetime64[ns]')
+    c = bars['close'].to_numpy(dtype=float)
+    h = bars['high'].to_numpy(dtype=float)
+    lo_arr = bars['low'].to_numpy(dtype=float)
+    csum = np.concatenate([[0.0], np.cumsum(ladder_dstep(c))])
+    span = np.timedelta64(int(hours * 3600 * 1e9), 'ns')
+    for w0 in starts:
+        a = np.datetime64(pd.Timestamp(w0))
+        i0 = int(np.searchsorted(t, a, side='left'))
+        i1 = int(np.searchsorted(t, a + span, side='left'))
+        if i1 - i0 < MIN_WINDOW_BARS:
+            out.append(None)
+            continue
+        o = c[i0]
+        out.append((float(csum[i1] - csum[i0]),
+                    max(abs(float(h[i0:i1].max() / o - 1.0)),
+                        abs(float(lo_arr[i0:i1].min() / o - 1.0)))))
+    return out
+
+
 def p12_eff(cross1, mae):
     return cross1 / (1.0 + 100.0 * mae)
