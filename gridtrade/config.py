@@ -98,7 +98,8 @@ class DeployConfig:
     fuse_min_coverage: float = 1.0  # 保险丝覆盖率门槛（spec 2026-07-15）：<该值即降 cap 护全额；0=停用（仅审计）。合法区间 (0, 1.0]——>1 无意义（覆盖率>1 只是余量，护栏已 clamp 成只降不升）
     min_order_notional: float = 0.0     # >0 → 开仓预检单笔名义额下限（币安按币 5/20/50，与 Instrument.min_cost 取 max）；0=停用
     scheduler_fetch_pace_ms: float = 250.0    # 选币取数币间间隔（币安权重实测重校，见 scheduler.py）；0=关
-    selection_ranker: str = 'rank'      # 选币排名器：'rank'（生产默认）或 'eff1'（显式开启）
+    # 选币排名器：'eff1'（生产默认，2026-07-27 用户令写死）或 'rank'（rank_sum 加权名次，回退档）
+    selection_ranker: str = 'eff1'
     selection_min_ticks: float = 3.0    # 最小 tick 档过滤（>0 启用；0=关）
     label_fetch_pace_ms: float = 300.0  # label 取数节流（ms）；0=关
     monitor_parallel: int = 4           # monitor per-grid 并行 worker 数；1=退回全串行（保底开关）
@@ -181,7 +182,10 @@ def load_deploy_config(env=None) -> DeployConfig:
     if _mgk < 1.0:
         raise RuntimeError('MARGIN_GATE_K=%s 无效：余量系数须 ≥1（=1 即零余量贴边）' % _mgk)
     # 选币排名器校验（spec Task 5）：只接受 'rank' 或 'eff1'，其他值响亮报错。
-    _sr = _s(env, 'SELECTION_RANKER', 'rank')
+    # 默认 'eff1'（2026-07-27 用户令「prod 实盘用 eff1 选币，在代码里写死」）——testnet 全项
+    # 验收通过(274币标签/tick过滤/真开格/权重峰值 438 of 2400/零429)后写死，不再依赖 secret。
+    # 回退仍是一条命令：`fly secrets set SELECTION_RANKER=rank`（无需回代码）。
+    _sr = _s(env, 'SELECTION_RANKER', 'eff1')
     if _sr not in ('rank', 'eff1'):
         raise RuntimeError('SELECTION_RANKER=%s 无效：须为 "rank" 或 "eff1"' % _sr)
     return DeployConfig(

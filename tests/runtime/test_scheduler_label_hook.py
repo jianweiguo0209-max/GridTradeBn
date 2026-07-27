@@ -56,9 +56,11 @@ def test_scheduler_label_feed_update_failure_degrades_without_raising():
 
 
 def test_scheduler_no_label_feed_is_noop():
-    # 默认 ranker='rank' → build_runtime 装出 label_feed=None,选币轮不受影响。
+    # 回退档(ranker='rank')⇒ label_feed=None,选币轮不受影响。
+    # ⚠ stub 显式置 None：默认档已于 2026-07-27 改为 eff1(会装出 LabelFeed)。
     from gridtrade.runtime.scheduler import run_scheduler_once
     rt = _rt()
+    rt.label_feed = None
     assert rt.label_feed is None
     out = run_scheduler_once(rt, now_fn=lambda: 1_750_000_000.0,
                              fetch_candles=_fake_fetch_two)

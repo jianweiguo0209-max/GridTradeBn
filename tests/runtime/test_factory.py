@@ -58,11 +58,22 @@ def test_build_runtime_creates_tables_and_trigger_uses_engine():
                for t in rt.trigger_engine.triggers)
 
 
-def test_build_runtime_default_ranker_has_no_label_feed():
-    # SELECTION_RANKER 默认 'rank'（生产默认）→ 不装 LabelFeed（零改变现有选币线）。
+def test_build_runtime_rank_ranker_has_no_label_feed():
+    # 回退档 SELECTION_RANKER='rank' → 不装 LabelFeed（rank_sum 线零改变）。
+    # ⚠ 必须显式传 rank：默认已于 2026-07-27 改为 'eff1'（用户令写死），
+    # 不显式传就测不到回退档、反而会在默认翻转时静默变成"测 eff1"。
     from gridtrade.runtime.factory import build_runtime
-    rt = build_runtime(_cfg())
+    rt = build_runtime(_cfg(SELECTION_RANKER='rank'))
     assert rt.label_feed is None
+
+
+def test_build_runtime_default_ranker_is_eff1_and_wires_label_feed():
+    # 默认档（不传 SELECTION_RANKER）= eff1 ⇒ 必须装出 LabelFeed。钉死默认值本身。
+    from gridtrade.runtime.factory import build_runtime
+    from gridtrade.runtime.label_feed import LabelFeed
+    rt = build_runtime(_cfg())
+    assert rt.config.selection_ranker == 'eff1'
+    assert isinstance(rt.label_feed, LabelFeed)
 
 
 def test_build_runtime_eff1_ranker_wires_label_feed_and_p12_trigger():
