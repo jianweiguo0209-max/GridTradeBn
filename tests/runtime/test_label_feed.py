@@ -1,10 +1,17 @@
 import pandas as pd
 
+from gridtrade.exchanges.base import CANDLE_COLS
 from gridtrade.runtime.label_feed import LabelFeed
 
 
 class FakeAdapter:
-    """合成 1m 行情:恒价 100,仅 GOOD/USDT 在窗内某分钟拉高 8%。记录取数区间和权重调用。"""
+    """合成 1m 行情:恒价 100,仅 GOOD/USDT 在窗内某分钟拉高 8%。记录取数区间和权重调用。
+
+    ⚠ 必须**恰好**返回 CANDLE_COLS(适配器契约,base.py:13)——**其中没有 `ts` 列**。
+    2026-07-27 testnet 实错:替身多造了一个 `ts` 列,LabelFeed 全程按 `ts` 索引,单测全绿、
+    真适配器(返回 df[CANDLE_COLS])一碰就 KeyError('ts') ⇒ 标签 0 个 ⇒ eff1 整轮无候选。
+    替身与真契约的任何一列偏差都会把集成缺口藏起来,故这里断言列集完全相等。
+    """
     def __init__(self):
         self.calls = []
         self.weight_calls = 0
@@ -19,12 +26,14 @@ class FakeAdapter:
         t = pd.date_range(pd.Timestamp(start_ms, unit='ms'),
                           pd.Timestamp(end_ms, unit='ms'), freq='1min')
         t = t[t <= pd.Timestamp(end_ms, unit='ms')]
-        df = pd.DataFrame({'ts': (t.asi8 // 10**6),
-                           'candle_begin_time': t, 'symbol': sym,
+        df = pd.DataFrame({'candle_begin_time': t, 'symbol': sym,
                            'open': 100.0, 'high': 100.0, 'low': 100.0,
-                           'close': 100.0, 'vol': 1.0})
+                           'close': 100.0, 'vol': 1.0, 'volCcy': 1.0,
+                           'quote_volume': 100.0})
         if sym == 'GOOD/USDT' and len(df) > 400:
             df.loc[400, 'high'] = 108.0
+        df = df[CANDLE_COLS]
+        assert list(df.columns) == CANDLE_COLS, '替身必须与适配器契约同列'
         return df
 
 

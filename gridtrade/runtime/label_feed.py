@@ -20,6 +20,18 @@ REFETCH_TAIL_MS = 120_000        # 尾部回拉 2min:治「上轮末根未定型
 STALE_TOL_MS = 300_000           # 新鲜度容差 5min:健康 fetch 后尾恒≈rt-1min,零误杀
 
 
+def _with_ts(df):
+    """补 epoch-ms 列 `ts` —— **适配器契约 CANDLE_COLS 里没有它**(base.py:13)。
+
+    ⚠ 2026-07-27 testnet 实错:本模块原先直接读 df['ts'],而 CcxtAdapter/BinanceAdapter
+    都以 `return df[CANDLE_COLS]` 收尾、把内部的 ts 列丢掉 ⇒ KeyError('ts') ⇒ 整轮 0 标签
+    ⇒ eff1 无候选(安全降级但功能全哑)。单测没抓到是因为替身多造了 ts 列。
+    这里从契约保证存在的 candle_begin_time 派生,不再依赖任何适配器内部列。
+    """
+    # asi8(ns 整数)而非 .astype('int64'):后者在本版 pandas 已 FutureWarning、将来会报错。
+    return df.assign(ts=pd.DatetimeIndex(df['candle_begin_time']).asi8 // 1_000_000)
+
+
 class LabelFeed:
     def __init__(self, adapter, *, pace_ms=300.0, cold_pace_ms=800.0,
                  log=print, sleep=time.sleep):
@@ -53,6 +65,7 @@ class LabelFeed:
                 continue                                  # fail-open:缺标签不参选
             if df is None or df.empty:
                 continue
+            df = _with_ts(df)
             cur = df if cold else pd.concat([prev, df], ignore_index=True)
             cur = (cur.drop_duplicates(subset=['ts'], keep='last')
                       .sort_values('ts'))
