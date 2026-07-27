@@ -10,8 +10,14 @@
 import numpy as np
 import pandas as pd
 
-LADDER = 1.01
-MIN_WINDOW_BARS = 600
+# ⭐ eff1 因子的**唯一定义处**。实盘(runtime/label_feed)、回测(backtest/p12_replay)、
+#    config 的 DEFAULT_EFF1_CFG 全部引用这四个常量,不得各写各的
+#    (2026-07-27 之前 12h 窗被独立写了三遍 ⇒ 改一处漏两处就实盘/回测静默分叉;
+#     由 tests/core/test_eff1_single_source.py 钉死)。
+LADDER = 1.01            # 对数阶梯步长:cross1 数的是穿过 1% 阶梯的次数
+MIN_WINDOW_BARS = 600    # 窗内 1m 根数下限(满窗 720);不足 ⇒ 该(轮,币)无标签、不参选
+LABEL_HOURS = 12         # 标签窗 = [rt−LABEL_HOURS, rt)
+MAE_COEF = 100.0         # p12_eff = cross1 / (1 + MAE_COEF × mae)
 
 
 def ladder_dstep(close):
@@ -34,7 +40,7 @@ def window_label(bars, w0, w1):
     return float(sd[m].sum()), max(abs(float(hi / o - 1.0)), abs(float(lo / o - 1.0)))
 
 
-def window_labels_batch(bars, starts, hours=12):
+def window_labels_batch(bars, starts, hours=LABEL_HOURS):
     """同一 symbol 的一串窗口起点批量算标签 —— **与逐窗 window_label 逐位一致**。
 
     只为回测吞吐存在(选币回放 ~1400 轮 × ~280 币,逐窗调会每次 O(n) 重算掩码)。
@@ -69,4 +75,4 @@ def window_labels_batch(bars, starts, hours=12):
 
 
 def p12_eff(cross1, mae):
-    return cross1 / (1.0 + 100.0 * mae)
+    return cross1 / (1.0 + MAE_COEF * mae)

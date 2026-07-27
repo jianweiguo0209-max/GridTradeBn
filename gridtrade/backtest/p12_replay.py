@@ -12,10 +12,10 @@ positional 前驱在场(实盘靠 13h 缓冲留的那 1h 余量,这里同理)。
 """
 import pandas as pd
 
-from gridtrade.core.p12_labels import p12_eff, window_labels_batch
+from gridtrade.core.p12_labels import LABEL_HOURS, p12_eff, window_labels_batch
 
-LABEL_HOURS = 12
-PREHEAT_HOURS = 1        # 窗前余量:保证 dstep 的窗首前驱在场(同实盘 13h 缓冲的 1h 富余)
+PREHEAT_HOURS = 1        # 窗前余量:保证 dstep 的窗首前驱在场(同实盘缓冲的那 1h 富余)
+# ⚠ LABEL_HOURS 从 core.p12_labels 引入,**不在这里重定义**——它一度在实盘/回测各写一遍。
 
 
 def build_p12_labels(cache, symbols, run_times, *, log=print):

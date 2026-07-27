@@ -247,7 +247,25 @@ def load_deploy_config(env=None) -> DeployConfig:
 
 
 # ---- 默认策略常量（镜像 account_0/config.py 已验证参数；可在构造触发器/执行器时覆盖）----
+from gridtrade.core.p12_labels import (LABEL_HOURS as _EFF1_HOURS, LADDER as _EFF1_LADDER,
+                                       MAE_COEF as _EFF1_MAE_COEF,
+                                       MIN_WINDOW_BARS as _EFF1_MIN_BARS)
 from gridtrade.core.tier_policy import TierPolicy
+
+# eff1 选币因子（默认 ranker，2026-07-27 起）的参数。
+# ⚠ **这是聚合视图，不是第二份定义**：值从 gridtrade/core/p12_labels.py 引入——那里是唯一
+#   定义处，实盘 runtime/label_feed 与回测 backtest/p12_replay 也都引用同一批常量。
+#   放在这里是为了让"策略参数看 config"这条约定继续成立、且改动可审计。
+#   想改因子定义 → 改 core/p12_labels.py 的常量（一处生效三处），别在这里覆写。
+#   不变式由 tests/core/test_eff1_single_source.py 钉死。
+#     p12_eff = cross1 / (1 + mae_coef × mae)，窗 = [rt − label_hours, rt)
+#     cross1  = 收盘价穿越 ladder(=1%) 对数阶梯的次数；mae = 窗内相对窗首收盘的最大单边逆行
+DEFAULT_EFF1_CFG = {
+    'ladder': _EFF1_LADDER,
+    'mae_coef': _EFF1_MAE_COEF,
+    'label_hours': _EFF1_HOURS,
+    'min_window_bars': _EFF1_MIN_BARS,
+}
 
 # 三档名单唯一事实源（spec 2026-07-06-tiered-*）：实盘默认与回测默认都取此处；
 # env（实盘 BLACKLIST_SYMBOLS / 回测 BT_TIER0 等）只作覆盖（运维紧急面/扫参面）。
@@ -269,6 +287,8 @@ DEFAULT_STRATEGY_CONFIG = {
     'strategy_tag': 'gt0',          # 不含中文/下划线/特殊字符
     'period': '12H',
     'max_candle_num': 160,
+    # ⚠ factors/weight_list 只服务**回退档 ranker='rank'**(rank_sum 加权名次)。
+    #   2026-07-27 起默认 ranker='eff1'，走的是 DEFAULT_EFF1_CFG 那套，不读这两项。
     'factors': {'Reg_v2_5': True, 'Sgcz_5': True, 'Er_2': True},
     'weight_list': [1, 1, 1],
     'leverage': 5,

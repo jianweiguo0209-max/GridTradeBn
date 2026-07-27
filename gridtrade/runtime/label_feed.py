@@ -13,9 +13,10 @@ import time
 
 import pandas as pd
 
-from gridtrade.core.p12_labels import p12_eff, window_label
+from gridtrade.core.p12_labels import LABEL_HOURS, p12_eff, window_label
 
-BUFFER_HOURS = 13
+PREHEAT_HOURS = 1                # 窗前余量:保证窗首根的 positional 前驱在场
+BUFFER_HOURS = LABEL_HOURS + PREHEAT_HOURS   # 派生,勿写死——改窗宽时缓冲要跟着变
 REFETCH_TAIL_MS = 120_000        # 尾部回拉 2min:治「上轮末根未定型」的陈旧半根
 STALE_TOL_MS = 300_000           # 新鲜度容差 5min:健康 fetch 后尾恒≈rt-1min,零误杀
 
@@ -78,7 +79,7 @@ class LabelFeed:
 
     def labels(self, run_time):
         w1 = pd.Timestamp(run_time)
-        w0 = w1 - pd.Timedelta(hours=12)
+        w0 = w1 - pd.Timedelta(hours=LABEL_HOURS)
         stale_before_ms = int(w1.value // 1_000_000) - STALE_TOL_MS
         out = {}
         for sym, df in self._buf.items():
